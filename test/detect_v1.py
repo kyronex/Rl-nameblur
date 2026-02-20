@@ -1,4 +1,4 @@
-# detect.py
+# detect_v1.py
 import cv2
 import numpy as np
 
