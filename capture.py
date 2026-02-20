@@ -8,7 +8,9 @@ import time
 # ─────────────────────────────────────────
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
-TARGET_FPS = 60
+
+CAPTURE_FPS = 60      # DXCam : juste au-dessus du FPS réel (~38)
+VCAM_FPS = 120        # pyvirtualcam : haut pour ne jamais bloquer send()
 
 # ─────────────────────────────────────────
 # INIT
@@ -41,14 +43,14 @@ def reset_stats():
 # ─────────────────────────────────────────
 # INITIALISATION
 # ─────────────────────────────────────────
-# camera = dxcam.create()
 
 def start():
     """Démarre la capture d'écran"""
     global camera
     camera = dxcam.create(output_color="BGR")
-    camera.start(target_fps=TARGET_FPS)
-    print(f"📸 Capture lancée → {SCREEN_WIDTH}x{SCREEN_HEIGHT} @ {TARGET_FPS}fps")
+    camera.start(target_fps=CAPTURE_FPS)
+    print(f"📸 Capture lancée → {SCREEN_WIDTH}x{SCREEN_HEIGHT} @ {CAPTURE_FPS}fps (capture)")
+    print(f"🎥 Vcam déclarée @ {VCAM_FPS}fps (pas de blocage send)")
 
 def capture_screen():
     """Récupère la dernière frame"""

@@ -6,12 +6,7 @@ import time
 # PARAMÈTRES DU FLOU
 # ─────────────────────────────────────────
 
-# Taille du kernel de flou (doit être impair)
-# 51 = illisible, 99 = complètement opaque
 BLUR_STRENGTH = 51
-
-# Marge autour de la zone détectée (en pixels)
-# Pour être sûr de couvrir toute la plaque
 MARGIN = -2
 
 # ─────────────────────────────────────────
@@ -20,6 +15,7 @@ MARGIN = -2
 
 _stats = {
     "blur_ms":      0.0,
+    "cvt_ms":       0.0,
     "total_ms":     0.0,
     "total_calls":  0,
     "zones_blurred": 0,
@@ -29,6 +25,7 @@ def get_stats():
     n = max(_stats["total_calls"], 1)
     return {
         "blur_avg_ms":    round(_stats["blur_ms"] / n, 2),
+        "cvt_avg_ms":     round(_stats["cvt_ms"] / n, 2),
         "total_avg_ms":   round(_stats["total_ms"] / n, 2),
         "total_calls":    _stats["total_calls"],
         "zones_blurred":  _stats["zones_blurred"],
@@ -42,10 +39,11 @@ def reset_stats():
 # FONCTION PRINCIPALE
 # ─────────────────────────────────────────
 
-def apply_blur(frame, plates):
+def apply_blur(frame, plates, rgb_buffer=None):
     """
     Prend une frame (BGR) et une liste de rectangles [(x, y, w, h), ...]
-    Retourne la frame avec les zones floutées
+    Floute les zones + convertit BGR → RGB
+    Retourne la frame RGB prête pour vcam.send()
     """
     _stats["total_calls"] += 1
     t0 = time.perf_counter()
@@ -53,35 +51,32 @@ def apply_blur(frame, plates):
     h_frame, w_frame = frame.shape[:2]
 
     for (x, y, w, h) in plates:
-        # ──────────────────────────────
-        # Ajouter la marge
-        # ──────────────────────────────
+
         x1 = max(0, x - MARGIN)
         y1 = max(0, y - MARGIN)
         x2 = min(w_frame, x + w + MARGIN)
         y2 = min(h_frame, y + h + MARGIN)
 
-        # ──────────────────────────────
-        # Extraire la zone
-        # ──────────────────────────────
         roi = frame[y1:y2, x1:x2]
 
-        # ──────────────────────────────
-        # Appliquer le flou gaussien
-        # ──────────────────────────────
         t_blur = time.perf_counter()
-        blurred = cv2.GaussianBlur(roi, (BLUR_STRENGTH, BLUR_STRENGTH), 0)
+        cv2.GaussianBlur(roi, (BLUR_STRENGTH, BLUR_STRENGTH), 0, dst=roi)
         _stats["blur_ms"] += (time.perf_counter() - t_blur) * 1000
 
-        # ──────────────────────────────
-        # Remettre la zone floutée
-        # ──────────────────────────────
-        frame[y1:y2, x1:x2] = blurred
         _stats["zones_blurred"] += 1
+
+    # ── Conversion BGR → RGB (fusionnée ici) ──
+    t_cvt = time.perf_counter()
+    if rgb_buffer is not None:
+        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=rgb_buffer)
+        result = rgb_buffer
+    else:
+        result = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    _stats["cvt_ms"] += (time.perf_counter() - t_cvt) * 1000
 
     _stats["total_ms"] += (time.perf_counter() - t0) * 1000
 
-    return frame
+    return result
 
 # ─────────────────────────────────────────
 # TEST INDÉPENDANT
