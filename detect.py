@@ -1,4 +1,4 @@
-# detect_v2.py
+# detect.py
 import cv2
 import numpy as np
 import time

@@ -9,12 +9,8 @@ import time
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 
-CAPTURE_FPS = 60      # DXCam : juste au-dessus du FPS réel (~38)
+CAPTURE_FPS = 120      # DXCam : juste au-dessus du FPS réel (~38)
 VCAM_FPS = 120        # pyvirtualcam : haut pour ne jamais bloquer send()
-
-# ─────────────────────────────────────────
-# INIT
-# ─────────────────────────────────────────
 
 camera = None
 
