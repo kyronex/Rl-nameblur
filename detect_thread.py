@@ -44,6 +44,11 @@ class DetectThread:
         with self._zones_lock:
             return self._latest_zones.copy()
 
+    def get_detect_count(self):
+        """Nombre de détections terminées (sert de version)."""
+        with self._detect_lock:
+            return self._detect_count
+
     # ──────────── Benchmark ────────────
 
     def get_stats(self):
@@ -64,7 +69,6 @@ class DetectThread:
 
     def _worker(self):
         while self._running:
-            # Prendre la frame
             with self._frame_lock:
                 frame = self._latest_frame
                 self._latest_frame = None
@@ -73,16 +77,13 @@ class DetectThread:
                 time.sleep(0.001)
                 continue
 
-            # Detect + bench
             t0 = time.perf_counter()
             zones = detect_plates(frame)
             dt = (time.perf_counter() - t0) * 1000
 
-            # Mettre à jour zones
             with self._zones_lock:
                 self._latest_zones = zones
 
-            # Mettre à jour bench
             with self._detect_lock:
                 self._total_detect_ms += dt
                 self._detect_count += 1
