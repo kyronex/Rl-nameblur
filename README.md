@@ -6,7 +6,7 @@ Script Python pour anonymiser en temps réel les noms des joueurs dans Rocket Le
 
 ## Fonctionnement général
 
-```
+```text
 Écran (Rocket League)
         │
         ▼
@@ -45,7 +45,7 @@ Script Python pour anonymiser en temps réel les noms des joueurs dans Rocket Le
 
 ## Architecture des fichiers
 
-```
+```text
 rl-nameblur/
 ├── main.py              # Boucle principale, orchestration des threads, TTL + IoU
 ├── capture_thread.py    # Thread de capture écran via dxcam (non bloquant)
@@ -62,7 +62,7 @@ rl-nameblur/
 
 ### V2 HSV dual-pass (pipeline actif)
 
-```
+```text
 Frame BGR
     │
     ▼
@@ -103,7 +103,7 @@ plates [(x, y, w, h), ...]
 
 ### V1 Sobel (pipeline legacy, conservé pour comparaison)
 
-```
+```text
 Frame BGR → Resize → Grayscale → GaussianBlur
     → Sobel Y → Threshold → Dilate → Contours
     → Filtre forme → Filtre enfants → Validation HSV → plates
@@ -118,7 +118,7 @@ Frame BGR → Resize → Grayscale → GaussianBlur
 Chaque zone détectée reçoit un compteur de vie. Si la détection disparaît
 (mouvement rapide, faux négatif), le masque reste actif quelques frames.
 
-```
+```python
 TTL_MAX = 8         → durée de vie initiale
 TTL décrément       → -1 à chaque nouvelle détection reçue
 TTL = 0             → masque supprimé
@@ -129,7 +129,7 @@ TTL = 0             → masque supprimé
 Quand une nouvelle détection arrive, on cherche si elle correspond à un
 masque existant via l'Intersection over Union.
 
-```
+```text
 IoU ≥ IOU_THRESH (0.15) → mise à jour du masque existant (TTL reset)
 IoU < IOU_THRESH        → nouveau masque créé
 ```
@@ -140,7 +140,7 @@ l'IoU sous le seuil → doublon créé → l'ancien masque meurt → scintilleme
 
 ### Cycle complet par frame
 
-```
+```text
 1. get_frame()          → dernière frame capturée (non bloquant)
 2. give_frame()         → envoi au DetectThread
 3. get_detect_count()   → vérifier si nouvelle détection disponible
@@ -200,7 +200,7 @@ Activé via `DEBUG_DRAW = True` dans `main.py`.
 Affiche les rectangles de détection sans appliquer le flou.
 Utile pour valider la détection avant de passer en production.
 
-```
+```text
 🟩 Vert   TTL ≥ 3   détection fraîche et stable
 🟨 Jaune  TTL = 2   masque en train de vieillir
 🟥 Rouge  TTL = 1   masque mourant (sera supprimé à la prochaine détection)
@@ -223,7 +223,7 @@ Utile pour valider la détection avant de passer en production.
 
 ## Dépendances
 
-```
+```python
 dxcam          # Capture écran GPU (Windows uniquement)
 opencv-python  # Traitement image (HSV, morpho, blur, contours)
 pyvirtualcam   # Caméra virtuelle → OBS
