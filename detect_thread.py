@@ -1,7 +1,7 @@
 # detect_thread.py
 import threading
 import time
-from detect import detect_plates
+from detect import detect_plates_v2
 
 
 class DetectThread:
@@ -78,7 +78,7 @@ class DetectThread:
                 continue
 
             t0 = time.perf_counter()
-            zones = detect_plates(frame)
+            zones = detect_plates_v2(frame)
             dt = (time.perf_counter() - t0) * 1000
 
             with self._zones_lock:

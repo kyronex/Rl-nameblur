@@ -1,67 +1,77 @@
-# detect.py
+# detect.py — v2 : pipeline HSV dual-pass (orange/bleu) + texte blanc
+
 import cv2
 import numpy as np
 import time
 
-SCALE = 2.0   # 2.0 = safe, 2.5 = plus rapide, teste les deux
-
-ORANGE_LOW  = np.array([12, 190, 220])
-ORANGE_HIGH = np.array([17, 255, 255])
-
-BLUE_LOW  = np.array([105, 180, 200])
-BLUE_HIGH = np.array([115, 255, 255])
-
 # ─────────────────────────────────────────
-# PARAMÈTRES FORME — CARTOUCHE ÉGYPTIEN
-# ─── adaptés auto à SCALE ───────────────
+# PARAMÈTRES
+# ─────────────────────────────────────────
+SCALE = 2.0
 
-MIN_AREA   = int(500 / (SCALE * SCALE))     # ← adapté
+# HSV — fond des cartouches
+ORANGE_LOW  = np.array([8, 140, 170])
+ORANGE_HIGH = np.array([22, 255, 255])
+BLUE_LOW    = np.array([100, 130, 150])
+BLUE_HIGH   = np.array([125, 255, 255])
 
+# HSV — texte blanc/lumineux
+WHITE_LOW   = np.array([0, 0, 200])
+WHITE_HIGH  = np.array([180, 60, 255])
+
+# Morpho — fermeture des masques couleur
+KERNEL_CLOSE_H = cv2.getStructuringElement(
+    cv2.MORPH_ELLIPSE,
+    (max(int(15 / SCALE), 3), 1)
+)
+KERNEL_CLOSE_V = cv2.getStructuringElement(
+    cv2.MORPH_RECT,
+    (1, max(int(4 / SCALE), 1))
+)
+KERNEL_WHITE_DILATE = cv2.getStructuringElement(
+    cv2.MORPH_ELLIPSE, (11, 11)
+)
+
+# Filtre forme (coordonnées ÷SCALE)
+MIN_AREA   = int(800 / (SCALE * SCALE))
+MIN_WIDTH  = int(50 / SCALE)
+MAX_WIDTH  = int(800 / SCALE)
 MIN_HEIGHT = int(10 / SCALE)
 MAX_HEIGHT = int(100 / SCALE)
-MIN_WIDTH  = int(40 / SCALE)
-MAX_WIDTH  = int(950 / SCALE)
-
-MIN_RATIO = 2.0
-MAX_RATIO = 15.0
-
-MIN_FILL = 0.50
-MIN_CONVEXITY = 0.70
-
-# ─────────────────────────────────────────
-# MORPHO KERNELS — adaptés à SCALE
-# ─────────────────────────────────────────
-
-KERNEL_LINK  = cv2.getStructuringElement(
-    cv2.MORPH_RECT, (max(int(10 / SCALE), 3), max(int(2 / SCALE), 1))
-)
-KERNEL_CLEAN = np.ones((max(int(3 / SCALE), 1), max(int(3 / SCALE), 1)), np.uint8)
+MIN_RATIO  = 2.0
+MAX_RATIO  = 15.0
+MIN_FILL   = 0.35
 
 # ─────────────────────────────────────────
 # BENCHMARK
 # ─────────────────────────────────────────
-
 _stats = {
+    "resize_ms":    0.0,
     "hsv_ms":       0.0,
-    "mask_ms":      0.0,
-    "morph_ms":     0.0,
+    "masks_ms":     0.0,
+    "morpho_ms":    0.0,
+    "white_ms":     0.0,
     "contour_ms":   0.0,
-    "filter_ms":    0.0,
+    "shape_ms":     0.0,
     "total_ms":     0.0,
     "total_calls":  0,
+    "candidates":   0,
     "plates_found": 0,
 }
 
 def get_stats():
     n = max(_stats["total_calls"], 1)
     return {
+        "resize_avg_ms":   round(_stats["resize_ms"] / n, 2),
         "hsv_avg_ms":      round(_stats["hsv_ms"] / n, 2),
-        "mask_avg_ms":     round(_stats["mask_ms"] / n, 2),
-        "morph_avg_ms":    round(_stats["morph_ms"] / n, 2),
+        "masks_avg_ms":    round(_stats["masks_ms"] / n, 2),
+        "morpho_avg_ms":   round(_stats["morpho_ms"] / n, 2),
+        "white_avg_ms":    round(_stats["white_ms"] / n, 2),
         "contour_avg_ms":  round(_stats["contour_ms"] / n, 2),
-        "filter_avg_ms":   round(_stats["filter_ms"] / n, 2),
+        "shape_avg_ms":    round(_stats["shape_ms"] / n, 2),
         "total_avg_ms":    round(_stats["total_ms"] / n, 2),
         "total_calls":     _stats["total_calls"],
+        "candidates_avg":  round(_stats["candidates"] / n, 1),
         "plates_found":    _stats["plates_found"],
     }
 
@@ -70,11 +80,17 @@ def reset_stats():
         _stats[k] = 0
 
 # ─────────────────────────────────────────
-# SOUS-FILTRE : FORME CARTOUCHE
+# MORPHO SUR MASQUE COULEUR
 # ─────────────────────────────────────────
+def process_single_mask(mask_raw):
+    closed = cv2.morphologyEx(mask_raw, cv2.MORPH_CLOSE, KERNEL_CLOSE_H)
+    closed = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, KERNEL_CLOSE_V)
+    return closed
 
+# ─────────────────────────────────────────
+# FILTRE FORME : CARTOUCHE
+# ─────────────────────────────────────────
 def is_cartouche(contour):
-
     x, y, w, h = cv2.boundingRect(contour)
 
     if w < MIN_WIDTH or w > MAX_WIDTH:
@@ -86,147 +102,236 @@ def is_cartouche(contour):
     if ratio < MIN_RATIO or ratio > MAX_RATIO:
         return False, None
 
-    area_contour = cv2.contourArea(contour)
-    area_rect = w * h
-    if area_rect == 0:
+    area = cv2.contourArea(contour)
+    if area < MIN_AREA:
         return False, None
 
-    fill = area_contour / area_rect
+    rect_area = w * h
+    if rect_area == 0:
+        return False, None
+
+    fill = area / rect_area
     if fill < MIN_FILL:
-        return False, None
-
-    hull = cv2.convexHull(contour)
-    area_hull = cv2.contourArea(hull)
-    if area_hull == 0:
-        return False, None
-
-    convexity = area_contour / area_hull
-    if convexity < MIN_CONVEXITY:
         return False, None
 
     return True, (x, y, w, h)
 
 # ─────────────────────────────────────────
-# FONCTION PRINCIPALE
+# FONCTION PRINCIPALE — V2
 # ─────────────────────────────────────────
-
-def detect_plates(frame):
-
+def detect_plates_v2(frame):
+    """
+    Pipeline V2 : Resize → HSV → Masques orange/bleu → Morpho →
+                  Fusion → Filtre blanc → Contours → Forme → Remap
+    """
     _stats["total_calls"] += 1
     plates = []
-
-    # ── RESIZE ──
     t_start = time.perf_counter()
+
     h_orig, w_orig = frame.shape[:2]
-    small = cv2.resize(frame, (int(w_orig / SCALE), int(h_orig / SCALE)),interpolation=cv2.INTER_LINEAR)
 
-    # ── HSV ──
+    # ── 1. Resize ──
     t0 = time.perf_counter()
-    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)          # ← small
-    t1 = time.perf_counter()
-    _stats["hsv_ms"] += (t1 - t0) * 1000
+    small = cv2.resize(
+        frame,
+        (int(w_orig / SCALE), int(h_orig / SCALE)),
+        interpolation=cv2.INTER_LINEAR
+    )
+    _stats["resize_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── Masques couleur ──
+    # ── 2. HSV ──
+    t0 = time.perf_counter()
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    _stats["hsv_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── 3. Masques couleur ──
+    t0 = time.perf_counter()
     mask_orange = cv2.inRange(hsv, ORANGE_LOW, ORANGE_HIGH)
     mask_blue   = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
-    mask = cv2.bitwise_or(mask_orange, mask_blue)
-    t2 = time.perf_counter()
-    _stats["mask_ms"] += (t2 - t1) * 1000
+    mask_white  = cv2.inRange(hsv, WHITE_LOW, WHITE_HIGH)
+    _stats["masks_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── Morphologie ──
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL_LINK)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL_CLEAN)
-    t3 = time.perf_counter()
-    _stats["morph_ms"] += (t3 - t2) * 1000
+    # ── 4. Morpho sur chaque couleur ──
+    t0 = time.perf_counter()
+    closed_orange = process_single_mask(mask_orange)
+    closed_blue   = process_single_mask(mask_blue)
+    blob_mask     = cv2.bitwise_or(closed_orange, closed_blue)
+    _stats["morpho_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── Contours ──
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    t4 = time.perf_counter()
-    _stats["contour_ms"] += (t4 - t3) * 1000
+    # ── 5. Filtre blanc (trim blobs autour du texte) ──
+    t0 = time.perf_counter()
+    white_dilated = cv2.dilate(mask_white, KERNEL_WHITE_DILATE, iterations=1)
+    blob_trimmed  = cv2.bitwise_and(blob_mask, white_dilated)
+    _stats["white_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── Filtrage ──
-    if hierarchy is None:
-        _stats["filter_ms"] += 0
-        _stats["total_ms"] += (t4 - t_start) * 1000
-        return plates
+    # ── 6. Contours ──
+    t0 = time.perf_counter()
+    contours, _ = cv2.findContours(
+        blob_trimmed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    _stats["contour_ms"] += (time.perf_counter() - t0) * 1000
 
-    for i, contour in enumerate(contours):
-        area = cv2.contourArea(contour)
-        if area < MIN_AREA:
+    # ── 7. Filtrage forme ──
+    t0 = time.perf_counter()
+    candidates = 0
+
+    for contour in contours:
+        valid, bbox = is_cartouche(contour)
+        if not valid:
             continue
 
-        is_valid, bbox = is_cartouche(contour)
-        if not is_valid:
-            x, y, w, h = cv2.boundingRect(contour)
-            if h == 0:
-                continue
-            ratio = w / h
-            if (MIN_WIDTH * 0.7 <= w <= MAX_WIDTH and
-                MIN_HEIGHT <= h <= MAX_HEIGHT and
-                ratio >= MIN_RATIO):
-                bbox = (x, y, w, h)
-            else:
-                continue
+        x, y, w, h = bbox
+        candidates += 1
 
-        # ── Enfants (lettres) ──
-        child_count = 0
-        child_idx = hierarchy[0][i][2]
-        while child_idx != -1:
-            child_count += 1
-            child_idx = hierarchy[0][child_idx][0]
-
-        if child_count < 1:
-            continue
-
-        # ── REMAP coordonnées vers résolution originale ──  ← NOUVEAU
-        bx, by, bw, bh = bbox
+        # Remap vers résolution originale
         plates.append((
-            int(bx * SCALE),
-            int(by * SCALE),
-            int(bw * SCALE),
-            int(bh * SCALE),
+            int(x * SCALE),
+            int(y * SCALE),
+            int(w * SCALE),
+            int(h * SCALE),
         ))
 
-    t5 = time.perf_counter()
-    _stats["filter_ms"] += (t5 - t4) * 1000
-    _stats["total_ms"]  += (t5 - t_start) * 1000
+    _stats["shape_ms"]    += (time.perf_counter() - t0) * 1000
+    _stats["candidates"]  += candidates
     _stats["plates_found"] += len(plates)
+    _stats["total_ms"]    += (time.perf_counter() - t_start) * 1000
+
+    return plates
+
+# ─────────────────────────────────────────
+# ANCIEN PIPELINE V1 (inchangé)
+# ─────────────────────────────────────────
+BLUR_KERNEL    = (3, 3)
+SOBEL_THRESH   = 50
+DILATE_KERNEL  = cv2.getStructuringElement(
+    cv2.MORPH_RECT,
+    (max(int(15 / SCALE), 3), max(int(2 / SCALE), 1))
+)
+
+V1_MIN_AREA   = int(400 / (SCALE * SCALE))
+V1_MIN_WIDTH  = int(50 / SCALE)
+V1_MAX_WIDTH  = int(400 / SCALE)
+V1_MIN_HEIGHT = int(12 / SCALE)
+V1_MAX_HEIGHT = int(50 / SCALE)
+V1_MIN_RATIO  = 2.5
+V1_MAX_RATIO  = 14.0
+V1_MIN_FILL   = 0.45
+V1_MIN_CHILDREN = 1
+
+V1_ORANGE_LOW  = np.array([8, 150, 180])
+V1_ORANGE_HIGH = np.array([22, 255, 255])
+V1_BLUE_LOW    = np.array([100, 140, 160])
+V1_BLUE_HIGH   = np.array([125, 255, 255])
+V1_HSV_MIN_COVERAGE = 0.20
+
+def detect_plates(frame):
+    """Pipeline V1 : Sobel → Dilate → Contours → Forme → Enfants → HSV"""
+    h_orig, w_orig = frame.shape[:2]
+    small = cv2.resize(frame, (int(w_orig / SCALE), int(h_orig / SCALE)),
+                       interpolation=cv2.INTER_LINEAR)
+
+    gray    = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, BLUR_KERNEL, 0)
+
+    sobel     = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    sobel_abs = cv2.convertScaleAbs(sobel)
+    _, binary = cv2.threshold(sobel_abs, SOBEL_THRESH, 255, cv2.THRESH_BINARY)
+
+    dilated = cv2.dilate(binary, DILATE_KERNEL, iterations=2)
+
+    contours, hierarchy = cv2.findContours(
+        dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if hierarchy is None:
+        return []
+
+    hsv_small = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    plates = []
+
+    for i, contour in enumerate(contours):
+        x, y, w, h = cv2.boundingRect(contour)
+
+        if w < V1_MIN_WIDTH or w > V1_MAX_WIDTH:
+            continue
+        if h < V1_MIN_HEIGHT or h > V1_MAX_HEIGHT:
+            continue
+        if (w / h) < V1_MIN_RATIO or (w / h) > V1_MAX_RATIO:
+            continue
+
+        area = cv2.contourArea(contour)
+        if area < V1_MIN_AREA:
+            continue
+
+        rect_area = w * h
+        if rect_area == 0:
+            continue
+        if (area / rect_area) < V1_MIN_FILL:
+            continue
+
+        # Enfants
+        count = 0
+        child = hierarchy[0][i][2]
+        while child != -1:
+            count += 1
+            child = hierarchy[0][child][0]
+        if count < V1_MIN_CHILDREN:
+            continue
+
+        # HSV validation
+        roi = hsv_small[y:y+h, x:x+w]
+        if roi.size == 0:
+            continue
+        total_px = roi.shape[0] * roi.shape[1]
+        m_o = cv2.inRange(roi, V1_ORANGE_LOW, V1_ORANGE_HIGH)
+        m_b = cv2.inRange(roi, V1_BLUE_LOW, V1_BLUE_HIGH)
+        if (cv2.countNonZero(m_o) + cv2.countNonZero(m_b)) / total_px < V1_HSV_MIN_COVERAGE:
+            continue
+
+        plates.append((
+            int(x * SCALE), int(y * SCALE),
+            int(w * SCALE), int(h * SCALE),
+        ))
 
     return plates
 
 # ─────────────────────────────────────────
 # TEST INDÉPENDANT
 # ─────────────────────────────────────────
-
 if __name__ == "__main__":
     import dxcam
 
-    camera = dxcam.create()
+    camera = dxcam.create(output_color="BGR")
+    time.sleep(0.5)
     frame = camera.grab()
+    if frame is None:
+        time.sleep(1.0)
+        frame = camera.grab()
 
-    if frame is not None:
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-        # Bench sur 100 appels
-        reset_stats()
-        for _ in range(100):
-            plates = detect_plates(frame_bgr)
-
-        stats = get_stats()
-        print("=" * 50)
-        print(f"  BENCHMARK detect.py — SCALE ÷{SCALE}")
-        print("=" * 50)
-        for k, v in stats.items():
-            print(f"  {k:20s} : {v}")
-        print("=" * 50)
-
-        print(f"\n🔍 {len(plates)} cartouche(s) détecté(s)")
-        for (x, y, w, h) in plates:
-            cv2.rectangle(frame_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            print(f"   📍 x={x} y={y} w={w} h={h} ratio={w/h:.1f}")
-
-        cv2.imshow("Detections", frame_bgr)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    else:
+    if frame is None:
         print("❌ Pas de frame capturée")
+        exit(1)
+
+    print(f"✅ Frame : {frame.shape[1]}x{frame.shape[0]}")
+
+    # ── Bench V2 — 100 appels ──
+    reset_stats()
+    for _ in range(100):
+        plates = detect_plates_v2(frame)
+
+    stats = get_stats()
+    print("=" * 55)
+    print(f"  BENCHMARK detect.py — V2 HSV dual-pass — SCALE ÷{SCALE}")
+    print("=" * 55)
+    for k, v in stats.items():
+        print(f"  {k:22s} : {v}")
+    print("=" * 55)
+
+    print(f"\n🔍 {len(plates)} cartouche(s) détecté(s)")
+    for (x, y, w, h) in plates:
+        print(f"   📍 x={x} y={y} w={w} h={h} ratio={w/h:.1f}")
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    cv2.imshow("V2 — Detections", frame)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
