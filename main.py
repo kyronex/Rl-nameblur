@@ -5,32 +5,37 @@ import cv2
 import numpy as np
 import pyvirtualcam
 
-from capture import capture_screen, start, stop, SCREEN_WIDTH, SCREEN_HEIGHT
-from capture import CAPTURE_FPS, VCAM_FPS
-from capture import get_stats as capture_stats, reset_stats as capture_reset
+from capture_thread import CaptureThread
 from detect_thread import DetectThread
 from send_thread import SendThread
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
 
 # ─────────────────────────────────────────
+# PARAMÈTRES ÉCRAN
+# ─────────────────────────────────────────
+SCREEN_WIDTH = 1920
+SCREEN_HEIGHT = 1080
+CAPTURE_FPS = 120
+VCAM_FPS = 120
+
+# ─────────────────────────────────────────
 # CONFIG ROCKET LEAGUE
 # ─────────────────────────────────────────
-TTL_MAX    = 10        # frames de survie sans re-détection
-MARGIN     = 6       # pixels de padding autour du rect
-SKIP       = 2        # blur 1 frame sur N
-IOU_THRESH = 0.35     # seuil pour considérer 2 rects comme le même
-MAX_MASKS  = 10
+TTL_MAX    = 8
+MARGIN     = 6
+SKIP       = 1
+IOU_THRESH = 0.15
+MAX_MASKS  = 20
 
-DEBUG_DRAW = False     # ← True = rectangles colorés visibles dans OBS
-                      #   False = blur normal (production)
+DEBUG_DRAW = True
 
 # ─────────────────────────────────────────
 # COULEURS DEBUG (BGR)
 # ─────────────────────────────────────────
-COLOR_FRESH   = (0, 255, 0)     # vert
-COLOR_PERSIST = (0, 255, 255)   # jaune
-COLOR_DYING   = (0, 0, 255)     # rouge
+COLOR_FRESH   = (0, 255, 0)
+COLOR_PERSIST = (0, 255, 255)
+COLOR_DYING   = (0, 0, 255)
 
 def ttl_color(ttl):
     if ttl >= 3:
@@ -47,7 +52,6 @@ def ttl_label(ttl):
 # IoU (Intersection over Union)
 # ─────────────────────────────────────────
 def compute_iou(r1, r2):
-    """Calcule l'IoU entre deux rects (x, y, w, h)."""
     x1, y1, w1, h1 = r1
     x2, y2, w2, h2 = r2
 
@@ -67,11 +71,6 @@ def compute_iou(r1, r2):
 
 
 def match_or_add(active_masks, new_rect, ttl_max, iou_thresh):
-    """
-    Cherche dans active_masks un rect qui chevauche new_rect (IoU > seuil).
-      → Si trouvé : reset TTL + met à jour la position
-      → Si pas trouvé : ajoute comme nouveau masque
-    """
     best_iou = 0.0
     best_idx = -1
 
@@ -82,11 +81,9 @@ def match_or_add(active_masks, new_rect, ttl_max, iou_thresh):
             best_idx = i
 
     if best_iou >= iou_thresh and best_idx >= 0:
-        # Match trouvé → update position + reset TTL
         active_masks[best_idx]['rect'] = new_rect
         active_masks[best_idx]['ttl'] = ttl_max
     else:
-        # Nouveau masque
         active_masks.append({
             'rect': new_rect,
             'ttl':  ttl_max,
@@ -126,7 +123,9 @@ def draw_debug(frame, active_masks):
 # ─────────────────────────────────────────
 # LANCEMENT
 # ─────────────────────────────────────────
-start()
+capturer = CaptureThread(target_fps=CAPTURE_FPS)
+capturer.start()
+
 detector = DetectThread()
 detector.start()
 
@@ -143,16 +142,16 @@ _main_stats = {
 
 def print_all_stats():
     n = max(_main_stats["total_frames"], 1)
-    cs = capture_stats()
+    cs = capturer.get_stats()
     ds = detector.get_stats()
     bs = blur_stats()
     ss = sender.get_stats()
 
     print("\n" + "=" * 55)
-    print("        BENCHMARK PIPELINE v5.1 (TTL + IoU)")
+    print("        BENCHMARK PIPELINE v6.0 (capture threadée)")
     print("=" * 55)
 
-    print(f"\n  📷 CAPTURE (DXCam @ {CAPTURE_FPS}fps)")
+    print(f"\n  📷 CAPTURE (thread @ {CAPTURE_FPS}fps cible)")
     for k, v in cs.items():
         print(f"    {k:22s} : {v}")
 
@@ -179,15 +178,15 @@ def print_all_stats():
     print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
     print(f"    {'debug_draw':22s} : {DEBUG_DRAW}")
 
-    old_loop = 35.81
+    old_loop = 32.66
     new_loop = loop_avg
     saved = round(old_loop - new_loop, 2)
     old_fps = round(1000 / old_loop, 1)
     new_fps = round(1000 / max(new_loop, 0.01), 1)
 
-    print(f"\n  📉 GAIN vs v1")
-    print(f"    {'v1 loop_avg':22s} : {old_loop} ms ({old_fps} FPS)")
-    print(f"    {'v5.1 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
+    print(f"\n  📉 GAIN vs v5.1")
+    print(f"    {'v5.1 loop_avg':22s} : {old_loop} ms ({old_fps} FPS)")
+    print(f"    {'v6.0 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
     print(f"    {'économisé':22s} : {saved} ms/frame")
     print(f"    {'accélération':22s} : x{round(old_loop / max(new_loop, 0.01), 2)}")
 
@@ -208,9 +207,9 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     try:
         active_masks = []
         frame_id = 0
-        last_detect_version = 0    # ← nouveau
+        last_detect_version = 0
 
-        capture_reset()
+        capturer.reset_stats()
         detector.reset_stats()
         blur_reset()
         sender.reset_stats()
@@ -218,9 +217,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         while True:
             t_loop = time.perf_counter()
 
-            # ── 1. Capture ──
-            frame = capture_screen()
+            # ── 1. Capture (NON BLOQUANT) ──
+            frame = capturer.get_frame()
             if frame is None:
+                time.sleep(0.001)
                 continue
 
             # ── 2. Donner frame au detect thread ──
@@ -241,14 +241,14 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                                     SCREEN_WIDTH, SCREEN_HEIGHT)
                     match_or_add(active_masks, padded, TTL_MAX, IOU_THRESH)
 
-                # ── 5. Décrémenter TTL UNIQUEMENT ici ──
+                # ── 5. Décrémenter TTL ──
                 for m in active_masks:
                     m['ttl'] -= 1
 
                 # ── 6. Purger les morts ──
                 active_masks = [m for m in active_masks if m['ttl'] > 0]
 
-                # ── 7. Cap max masques (garder les + récents) ──
+                # ── 7. Cap max masques ──
                 if len(active_masks) > MAX_MASKS:
                     active_masks.sort(key=lambda m: m['ttl'], reverse=True)
                     active_masks = active_masks[:MAX_MASKS]
@@ -296,4 +296,4 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     finally:
         sender.stop()
         detector.stop()
-        stop()
+        capturer.stop()
