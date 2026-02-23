@@ -2,6 +2,7 @@
 import time
 
 import cv2
+import numpy as np
 import pyvirtualcam
 
 from capture_thread import CaptureThread
@@ -202,7 +203,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
     if DEBUG_DRAW:
         print("🎨 MODE DEBUG VISUEL ACTIVÉ")
-        print("   🟩 Vert   = détection fraîche (TTL 3-4)")
+        print("   🟩 Vert   = détection fraîche (TTL 3+)")
         print("   🟨 Jaune  = masque persisté   (TTL 2)")
         print("   🟥 Rouge  = masque mourant    (TTL 1)")
     print("📸 En cours... (Ctrl+C pour arrêter)")
@@ -265,10 +266,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             # ── 6. Envoi vers OBS (zéro copie) ──
             buf = sender.borrow()
+            np.copyto(buf, frame)          # copie frame → buf (8 ms, mesurée dans send)
+
             if DEBUG_DRAW:
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=buf)
+                draw_debug(buf, active_masks)
             else:
-                apply_blur(frame, blur_zones, dst=buf)
+                apply_blur(buf, blur_zones) # blur in-place sur buf (5 ms)
+
             sender.publish()
 
             # ── 7. Stats loop ──

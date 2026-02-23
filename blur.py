@@ -1,6 +1,7 @@
 # blur.py
 import cv2
 import time
+import numpy as np
 
 # ─────────────────────────────────────────
 # PARAMÈTRES
@@ -8,8 +9,8 @@ import time
 
 BLUR_MODE = "pixelate"  # "gaussian" ou "pixelate"
 BLUR_STRENGTH = 31      # kernel gaussian (si mode gaussian)
-PIXEL_SIZE = 10         # taille des blocs (si mode pixelate)
-MARGIN = 0
+PIXEL_SIZE = 11         # taille des blocs (si mode pixelate)
+MARGIN = -6
 
 # ─────────────────────────────────────────
 # BENCHMARK
@@ -17,7 +18,6 @@ MARGIN = 0
 
 _stats = {
     "blur_ms":      0.0,
-    "cvt_ms":       0.0,
     "total_ms":     0.0,
     "total_calls":  0,
     "zones_blurred": 0,
@@ -27,7 +27,6 @@ def get_stats():
     n = max(_stats["total_calls"], 1)
     return {
         "blur_avg_ms":    round(_stats["blur_ms"] / n, 2),
-        "cvt_avg_ms":     round(_stats["cvt_ms"] / n, 2),
         "total_avg_ms":   round(_stats["total_ms"] / n, 2),
         "total_calls":    _stats["total_calls"],
         "zones_blurred":  _stats["zones_blurred"],
@@ -57,12 +56,7 @@ def _pixelate_roi(roi, pixel_size):
 # FONCTION PRINCIPALE
 # ─────────────────────────────────────────
 
-def apply_blur(frame, plates, dst=None):
-    """
-    Prend une frame (BGR) et une liste de rectangles [(x, y, w, h), ...]
-    Floute ou pixelise les zones + convertit BGR → RGB.
-    Si dst est fourni, écrit directement dedans (zéro alloc).
-    """
+def apply_blur(frame, plates):
     _stats["total_calls"] += 1
     t0 = time.perf_counter()
 
@@ -85,18 +79,7 @@ def apply_blur(frame, plates, dst=None):
 
         _stats["blur_ms"] += (time.perf_counter() - t_blur) * 1000
         _stats["zones_blurred"] += 1
-
-    # ── Conversion BGR → RGB ──
-    t_cvt = time.perf_counter()
-    if dst is not None:
-        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=dst)
-        result = dst
-    else:
-        result = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    _stats["cvt_ms"] += (time.perf_counter() - t_cvt) * 1000
-
     _stats["total_ms"] += (time.perf_counter() - t0) * 1000
-    return result
 
 # ─────────────────────────────────────────
 # TEST INDÉPENDANT
@@ -105,28 +88,27 @@ def apply_blur(frame, plates, dst=None):
 if __name__ == "__main__":
     import dxcam
     import numpy as np
-    from detect import detect_plates
+    from detect import detect_plates_v2
 
-    camera = dxcam.create()
+    camera = dxcam.create(output_color="RGB")
     frame = camera.grab()
 
     if frame is not None:
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        plates = detect_plates(frame_bgr)
+        plates = detect_plates_v2(frame)
         print(f"🔍 {len(plates)} plaque(s) détectée(s)")
 
         # Bench gaussian
         BLUR_MODE = "gaussian"
         reset_stats()
         for _ in range(100):
-            apply_blur(frame_bgr.copy(), plates)
+            apply_blur(frame.copy(), plates)
         g_stats = get_stats()
 
         # Bench pixelate
         BLUR_MODE = "pixelate"
         reset_stats()
         for _ in range(100):
-            apply_blur(frame_bgr.copy(), plates)
+            apply_blur(frame.copy(), plates)
         p_stats = get_stats()
 
         print("=" * 50)
@@ -140,8 +122,9 @@ if __name__ == "__main__":
             print(f"    {k:20s} : {v}")
         print("=" * 50)
 
-        frame_result = apply_blur(frame_bgr, plates)
-        cv2.imshow("Pixelate", frame_result)
+        frame_result = apply_blur(frame, plates)
+        # Affichage : imshow attend BGR → conversion uniquement ici pour le debug
+        cv2.imshow("Pixelate", cv2.cvtColor(frame_result, cv2.COLOR_RGB2BGR))
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     else:

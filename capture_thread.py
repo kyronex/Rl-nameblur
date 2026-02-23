@@ -24,7 +24,7 @@ class CaptureThread:
         self._stats_lock = threading.Lock()
 
     def start(self):
-        self._camera = dxcam.create(output_color="BGR")
+        self._camera = dxcam.create(output_color="RGB")
         self._camera.start(target_fps=self._target_fps)
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)

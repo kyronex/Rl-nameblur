@@ -4,9 +4,7 @@ import cv2
 import numpy as np
 import time
 
-# ─────────────────────────────────────────
 # PARAMÈTRES
-# ─────────────────────────────────────────
 SCALE = 2.0
 
 # HSV — fond des cartouches
@@ -24,13 +22,8 @@ KERNEL_CLOSE_H = cv2.getStructuringElement(
     cv2.MORPH_ELLIPSE,
     (max(int(15 / SCALE), 3), 1)
 )
-KERNEL_CLOSE_V = cv2.getStructuringElement(
-    cv2.MORPH_RECT,
-    (1, max(int(4 / SCALE), 1))
-)
-KERNEL_WHITE_DILATE = cv2.getStructuringElement(
-    cv2.MORPH_ELLIPSE, (11, 11)
-)
+KERNEL_CLOSE_V = cv2.getStructuringElement(cv2.MORPH_RECT,(1, max(int(4 / SCALE), 1)))
+KERNEL_WHITE_DILATE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
 
 # Filtre forme (coordonnées ÷SCALE)
 MIN_AREA   = int(800 / (SCALE * SCALE))
@@ -42,9 +35,7 @@ MIN_RATIO  = 2.0
 MAX_RATIO  = 15.0
 MIN_FILL   = 0.35
 
-# ─────────────────────────────────────────
 # BENCHMARK
-# ─────────────────────────────────────────
 _stats = {
     "resize_ms":    0.0,
     "hsv_ms":       0.0,
@@ -79,17 +70,13 @@ def reset_stats():
     for k in _stats:
         _stats[k] = 0
 
-# ─────────────────────────────────────────
 # MORPHO SUR MASQUE COULEUR
-# ─────────────────────────────────────────
 def process_single_mask(mask_raw):
     closed = cv2.morphologyEx(mask_raw, cv2.MORPH_CLOSE, KERNEL_CLOSE_H)
     closed = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, KERNEL_CLOSE_V)
     return closed
 
-# ─────────────────────────────────────────
 # FILTRE FORME : CARTOUCHE
-# ─────────────────────────────────────────
 def is_cartouche(contour):
     x, y, w, h = cv2.boundingRect(contour)
 
@@ -116,13 +103,12 @@ def is_cartouche(contour):
 
     return True, (x, y, w, h)
 
-# ─────────────────────────────────────────
 # FONCTION PRINCIPALE — V2
-# ─────────────────────────────────────────
 def detect_plates_v2(frame):
     """
     Pipeline V2 : Resize → HSV → Masques orange/bleu → Morpho →
                   Fusion → Filtre blanc → Contours → Forme → Remap
+    Attend une frame RGB.
     """
     _stats["total_calls"] += 1
     plates = []
@@ -132,16 +118,12 @@ def detect_plates_v2(frame):
 
     # ── 1. Resize ──
     t0 = time.perf_counter()
-    small = cv2.resize(
-        frame,
-        (int(w_orig / SCALE), int(h_orig / SCALE)),
-        interpolation=cv2.INTER_LINEAR
-    )
+    small = cv2.resize(frame,(int(w_orig / SCALE), int(h_orig / SCALE)),interpolation=cv2.INTER_LINEAR)
     _stats["resize_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 2. HSV ──
     t0 = time.perf_counter()
-    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
     _stats["hsv_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 3. Masques couleur ──
@@ -198,13 +180,12 @@ def detect_plates_v2(frame):
 
     return plates
 
-# ─────────────────────────────────────────
 # TEST INDÉPENDANT
-# ─────────────────────────────────────────
 if __name__ == "__main__":
     import dxcam
 
-    camera = dxcam.create(output_color="BGR")
+    # ── output_color="RGB" : cohérent avec COLOR_RGB2HSV dans detect_plates_v2 ──
+    camera = dxcam.create(output_color="RGB")
     time.sleep(0.5)
     frame = camera.grab()
     if frame is None:
@@ -235,6 +216,7 @@ if __name__ == "__main__":
         print(f"   📍 x={x} y={y} w={w} h={h} ratio={w/h:.1f}")
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    cv2.imshow("V2 — Detections", frame)
+    # Affichage : imshow attend BGR → conversion uniquement ici pour le debug
+    cv2.imshow("V2 — Detections", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     cv2.waitKey(0)
     cv2.destroyAllWindows()
