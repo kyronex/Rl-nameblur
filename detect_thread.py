@@ -36,8 +36,9 @@ class DetectThread:
 
     def give_frame(self, frame):
         """Donne une frame (non bloquant, écrase la précédente)."""
+        copy = frame.copy()
         with self._frame_lock:
-            self._latest_frame = frame
+            self._latest_frame = copy
 
     def get_zones(self):
         """Récupère les dernières zones détectées."""

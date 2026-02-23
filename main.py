@@ -2,7 +2,6 @@
 import time
 
 import cv2
-import numpy as np
 import pyvirtualcam
 
 from capture_thread import CaptureThread
@@ -11,36 +10,26 @@ from send_thread import SendThread
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
 
-# ─────────────────────────────────────────
 # PARAMÈTRES ÉCRAN
-# ─────────────────────────────────────────
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 CAPTURE_FPS = 120
 VCAM_FPS = 120
 
-# ─────────────────────────────────────────
 # CONFIG ROCKET LEAGUE
-# ─────────────────────────────────────────
 TTL_MAX    = 10
-MARGIN     = 1
-SKIP       = 1
+MARGIN     = 0
 MAX_MASKS  = 10
+DEBUG_DRAW = False
 
-DEBUG_DRAW = True
-
-# ─────────────────────────────────────────
 # CONFIG MATCHING
-# ─────────────────────────────────────────
 #   "iou"      → ancien algo
 #   "distance" → nouvel algo
 MATCHING_MODE = "distance"
 IOU_THRESH = 0.15
 DIST_THRESH = 60
 
-# ─────────────────────────────────────────
 # COULEURS DEBUG (BGR)
-# ─────────────────────────────────────────
 COLOR_FRESH   = (0, 255, 0)
 COLOR_PERSIST = (0, 255, 255)
 COLOR_DYING   = (0, 0, 255)
@@ -56,9 +45,7 @@ def ttl_color(ttl):
 def ttl_label(ttl):
     return f"TTL={ttl}"
 
-# ─────────────────────────────────────────
 # IoU (Intersection over Union)
-# ─────────────────────────────────────────
 def compute_iou(r1, r2):
     x1, y1, w1, h1 = r1
     x2, y2, w2, h2 = r2
@@ -77,9 +64,7 @@ def compute_iou(r1, r2):
     union = area1 + area2 - inter
     return inter / union if union > 0 else 0.0
 
-# ─────────────────────────────────────────
 # DISTANCE CENTRE (nouveau)
-# ─────────────────────────────────────────
 def center_distance(r1, r2):
     """Distance euclidienne entre les centres de deux rectangles (x,y,w,h)."""
     cx1 = r1[0] + r1[2] / 2
@@ -115,10 +100,7 @@ def match_or_add(active_masks, new_rect, ttl_max):
     else:
         active_masks.append({'rect': new_rect, 'ttl': ttl_max})
 
-
-# ─────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────
 def pad_rect(x, y, w, h, margin, max_w, max_h):
     x2 = max(x - margin, 0)
     y2 = max(y - margin, 0)
@@ -146,9 +128,7 @@ def draw_debug(frame, active_masks):
 
     return frame
 
-# ─────────────────────────────────────────
 # LANCEMENT
-# ─────────────────────────────────────────
 capturer = CaptureThread(target_fps=CAPTURE_FPS)
 capturer.start()
 
@@ -157,8 +137,6 @@ detector.start()
 
 fps_timer = time.time()
 frame_count = 0
-
-rgb_buffer = np.empty((SCREEN_HEIGHT, SCREEN_WIDTH, 3), dtype=np.uint8)
 
 _main_stats = {
     "loop_ms":      0.0,
@@ -176,7 +154,6 @@ def print_all_stats():
     print("\n" + "=" * 55)
     print("        BENCHMARK PIPELINE v6.0 (capture threadée)")
     print("=" * 55)
-
     print(f"\n  📷 CAPTURE (thread @ {CAPTURE_FPS}fps cible)")
     for k, v in cs.items():
         print(f"    {k:22s} : {v}")
@@ -200,7 +177,6 @@ def print_all_stats():
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
     print(f"    {'ttl_max':22s} : {TTL_MAX}")
     print(f"    {'margin_px':22s} : {MARGIN}")
-    print(f"    {'skip':22s} : {SKIP}")
     print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
     print(f"    {'debug_draw':22s} : {DEBUG_DRAW}")
 
@@ -231,13 +207,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         print("   🟥 Rouge  = masque mourant    (TTL 1)")
     print("📸 En cours... (Ctrl+C pour arrêter)")
 
-    sender = SendThread(vcam)
+    sender = SendThread(vcam, SCREEN_WIDTH, SCREEN_HEIGHT)
     sender.start()
 
     try:
         active_masks = []
-        frame_id = 0
         last_detect_version = 0
+        last_frame_id = 0
 
         capturer.reset_stats()
         detector.reset_stats()
@@ -253,12 +229,14 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 time.sleep(0.001)
                 continue
 
-            # ── 2. Donner frame au detect thread ──
-            detector.give_frame(frame)
+            # ── 2. Ne donner au detect QUE si frame nouvelle ──
+            frame_id = capturer.get_frame_id()
+            if frame_id > last_frame_id:
+                last_frame_id = frame_id
+                detector.give_frame(frame)
 
             # ── 3. Vérifier si nouvelle détection disponible ──
             current_version = detector.get_detect_count()
-            # has_new_detect = current_version > last_detect_version
 
             if current_version > last_detect_version:
                 last_detect_version = current_version
@@ -266,13 +244,12 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
                 for p in new_plates:
                     x, y, w, h = p
-                    padded = pad_rect(x, y, w, h, MARGIN,SCREEN_WIDTH, SCREEN_HEIGHT)
+                    padded = pad_rect(x, y, w, h, MARGIN, SCREEN_WIDTH, SCREEN_HEIGHT)
                     match_or_add(active_masks, padded, TTL_MAX)
 
                 for m in active_masks:
                     m['ttl'] -= 1
 
-                # ── Purger
                 active_masks = [m for m in active_masks if m['ttl'] > 0]
 
             # ── 4. Cap max masques ──
@@ -280,35 +257,32 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 active_masks.sort(key=lambda m: m['ttl'], reverse=True)
                 active_masks = active_masks[:MAX_MASKS]
 
-            # ── 5. Construire liste rects pour blur ──
+            # ── 5. Blur ou debug ──
             blur_zones = [m['rect'] for m in active_masks]
 
-            if frame_id % SKIP == 0:
-                if DEBUG_DRAW:
-                    draw_debug(frame, active_masks)
-                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=rgb_buffer)
-                    frame_rgb = rgb_buffer
-                else:
-                    frame_rgb = apply_blur(frame, blur_zones,rgb_buffer=rgb_buffer)
+            if DEBUG_DRAW:
+                draw_debug(frame, active_masks)
 
-            # ── 6. Envoi vers OBS ──
-            sender.give_frame(frame_rgb)
+            # ── 6. Envoi vers OBS (zéro copie) ──
+            buf = sender.borrow()
+            if DEBUG_DRAW:
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=buf)
+            else:
+                apply_blur(frame, blur_zones, dst=buf)
+            sender.publish()
 
             # ── 7. Stats loop ──
             _main_stats["loop_ms"] += (time.perf_counter() - t_loop) * 1000
             _main_stats["total_frames"] += 1
-            _main_stats["mask_peak"] = max(_main_stats["mask_peak"],len(active_masks))
-            frame_id += 1
+            _main_stats["mask_peak"] = max(_main_stats["mask_peak"], len(active_masks))
 
             # ── 8. FPS counter ──
             frame_count += 1
             elapsed = time.time() - fps_timer
             if elapsed >= 2.0:
                 fps = frame_count / elapsed
-                skipped = (SKIP - 1) / SKIP * 100
                 mode = "DEBUG" if DEBUG_DRAW else "PROD"
-                print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | "
-                    f"skip {skipped:.0f}% | {mode}")
+                print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode}")
                 frame_count = 0
                 fps_timer = time.time()
 

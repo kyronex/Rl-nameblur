@@ -199,6 +199,103 @@ def detect_plates_v2(frame):
     return plates
 
 # ─────────────────────────────────────────
+# ANCIEN PIPELINE V1 (inchangé)
+# ─────────────────────────────────────────
+BLUR_KERNEL    = (3, 3)
+SOBEL_THRESH   = 50
+DILATE_KERNEL  = cv2.getStructuringElement(
+    cv2.MORPH_RECT,
+    (max(int(15 / SCALE), 3), max(int(2 / SCALE), 1))
+)
+
+V1_MIN_AREA   = int(400 / (SCALE * SCALE))
+V1_MIN_WIDTH  = int(50 / SCALE)
+V1_MAX_WIDTH  = int(400 / SCALE)
+V1_MIN_HEIGHT = int(12 / SCALE)
+V1_MAX_HEIGHT = int(50 / SCALE)
+V1_MIN_RATIO  = 2.5
+V1_MAX_RATIO  = 14.0
+V1_MIN_FILL   = 0.45
+V1_MIN_CHILDREN = 1
+
+V1_ORANGE_LOW  = np.array([8, 150, 180])
+V1_ORANGE_HIGH = np.array([22, 255, 255])
+V1_BLUE_LOW    = np.array([100, 140, 160])
+V1_BLUE_HIGH   = np.array([125, 255, 255])
+V1_HSV_MIN_COVERAGE = 0.20
+
+def detect_plates(frame):
+    """Pipeline V1 : Sobel → Dilate → Contours → Forme → Enfants → HSV"""
+    h_orig, w_orig = frame.shape[:2]
+    small = cv2.resize(frame, (int(w_orig / SCALE), int(h_orig / SCALE)),
+                       interpolation=cv2.INTER_LINEAR)
+
+    gray    = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, BLUR_KERNEL, 0)
+
+    sobel     = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    sobel_abs = cv2.convertScaleAbs(sobel)
+    _, binary = cv2.threshold(sobel_abs, SOBEL_THRESH, 255, cv2.THRESH_BINARY)
+
+    dilated = cv2.dilate(binary, DILATE_KERNEL, iterations=2)
+
+    contours, hierarchy = cv2.findContours(
+        dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if hierarchy is None:
+        return []
+
+    hsv_small = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    plates = []
+
+    for i, contour in enumerate(contours):
+        x, y, w, h = cv2.boundingRect(contour)
+
+        if w < V1_MIN_WIDTH or w > V1_MAX_WIDTH:
+            continue
+        if h < V1_MIN_HEIGHT or h > V1_MAX_HEIGHT:
+            continue
+        if (w / h) < V1_MIN_RATIO or (w / h) > V1_MAX_RATIO:
+            continue
+
+        area = cv2.contourArea(contour)
+        if area < V1_MIN_AREA:
+            continue
+
+        rect_area = w * h
+        if rect_area == 0:
+            continue
+        if (area / rect_area) < V1_MIN_FILL:
+            continue
+
+        # Enfants
+        count = 0
+        child = hierarchy[0][i][2]
+        while child != -1:
+            count += 1
+            child = hierarchy[0][child][0]
+        if count < V1_MIN_CHILDREN:
+            continue
+
+        # HSV validation
+        roi = hsv_small[y:y+h, x:x+w]
+        if roi.size == 0:
+            continue
+        total_px = roi.shape[0] * roi.shape[1]
+        m_o = cv2.inRange(roi, V1_ORANGE_LOW, V1_ORANGE_HIGH)
+        m_b = cv2.inRange(roi, V1_BLUE_LOW, V1_BLUE_HIGH)
+        if (cv2.countNonZero(m_o) + cv2.countNonZero(m_b)) / total_px < V1_HSV_MIN_COVERAGE:
+            continue
+
+        plates.append((
+            int(x * SCALE), int(y * SCALE),
+            int(w * SCALE), int(h * SCALE),
+        ))
+
+    return plates
+
+# ─────────────────────────────────────────
 # TEST INDÉPENDANT
 # ─────────────────────────────────────────
 if __name__ == "__main__":

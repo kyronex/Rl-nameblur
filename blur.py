@@ -3,11 +3,13 @@ import cv2
 import time
 
 # ─────────────────────────────────────────
-# PARAMÈTRES DU FLOU
+# PARAMÈTRES
 # ─────────────────────────────────────────
 
-BLUR_STRENGTH = 51
-MARGIN = -2
+BLUR_MODE = "pixelate"  # "gaussian" ou "pixelate"
+BLUR_STRENGTH = 31      # kernel gaussian (si mode gaussian)
+PIXEL_SIZE = 10         # taille des blocs (si mode pixelate)
+MARGIN = 0
 
 # ─────────────────────────────────────────
 # BENCHMARK
@@ -29,21 +31,37 @@ def get_stats():
         "total_avg_ms":   round(_stats["total_ms"] / n, 2),
         "total_calls":    _stats["total_calls"],
         "zones_blurred":  _stats["zones_blurred"],
+        "blur_mode":      BLUR_MODE,
     }
 
 def reset_stats():
     for k in _stats:
-        _stats[k] = 0
+        if isinstance(_stats[k], (int, float)):
+            _stats[k] = 0
+
+# ─────────────────────────────────────────
+# PIXELISATION
+# ─────────────────────────────────────────
+
+def _pixelate_roi(roi, pixel_size):
+    """Resize down → resize up = effet mosaïque."""
+    h, w = roi.shape[:2]
+    if h < 2 or w < 2:
+        return
+    small_w = max(1, w // pixel_size)
+    small_h = max(1, h // pixel_size)
+    small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+    cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST, dst=roi)
 
 # ─────────────────────────────────────────
 # FONCTION PRINCIPALE
 # ─────────────────────────────────────────
 
-def apply_blur(frame, plates, rgb_buffer=None):
+def apply_blur(frame, plates, dst=None):
     """
     Prend une frame (BGR) et une liste de rectangles [(x, y, w, h), ...]
-    Floute les zones + convertit BGR → RGB
-    Retourne la frame RGB prête pour vcam.send()
+    Floute ou pixelise les zones + convertit BGR → RGB.
+    Si dst est fourni, écrit directement dedans (zéro alloc).
     """
     _stats["total_calls"] += 1
     t0 = time.perf_counter()
@@ -51,7 +69,6 @@ def apply_blur(frame, plates, rgb_buffer=None):
     h_frame, w_frame = frame.shape[:2]
 
     for (x, y, w, h) in plates:
-
         x1 = max(0, x - MARGIN)
         y1 = max(0, y - MARGIN)
         x2 = min(w_frame, x + w + MARGIN)
@@ -60,22 +77,25 @@ def apply_blur(frame, plates, rgb_buffer=None):
         roi = frame[y1:y2, x1:x2]
 
         t_blur = time.perf_counter()
-        cv2.GaussianBlur(roi, (BLUR_STRENGTH, BLUR_STRENGTH), 0, dst=roi)
-        _stats["blur_ms"] += (time.perf_counter() - t_blur) * 1000
 
+        if BLUR_MODE == "pixelate":
+            _pixelate_roi(roi, PIXEL_SIZE)
+        else:
+            cv2.GaussianBlur(roi, (BLUR_STRENGTH, BLUR_STRENGTH), 0, dst=roi)
+
+        _stats["blur_ms"] += (time.perf_counter() - t_blur) * 1000
         _stats["zones_blurred"] += 1
 
-    # ── Conversion BGR → RGB (fusionnée ici) ──
+    # ── Conversion BGR → RGB ──
     t_cvt = time.perf_counter()
-    if rgb_buffer is not None:
-        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=rgb_buffer)
-        result = rgb_buffer
+    if dst is not None:
+        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=dst)
+        result = dst
     else:
         result = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     _stats["cvt_ms"] += (time.perf_counter() - t_cvt) * 1000
 
     _stats["total_ms"] += (time.perf_counter() - t0) * 1000
-
     return result
 
 # ─────────────────────────────────────────
@@ -92,27 +112,36 @@ if __name__ == "__main__":
 
     if frame is not None:
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
         plates = detect_plates(frame_bgr)
         print(f"🔍 {len(plates)} plaque(s) détectée(s)")
 
-        # Bench sur 100 appels
+        # Bench gaussian
+        BLUR_MODE = "gaussian"
         reset_stats()
         for _ in range(100):
-            test_frame = frame_bgr.copy()
-            apply_blur(test_frame, plates)
+            apply_blur(frame_bgr.copy(), plates)
+        g_stats = get_stats()
 
-        stats = get_stats()
+        # Bench pixelate
+        BLUR_MODE = "pixelate"
+        reset_stats()
+        for _ in range(100):
+            apply_blur(frame_bgr.copy(), plates)
+        p_stats = get_stats()
+
         print("=" * 50)
         print("  BENCHMARK blur.py (100 appels)")
         print("=" * 50)
-        for k, v in stats.items():
-            print(f"  {k:20s} : {v}")
+        print("  GAUSSIAN:")
+        for k, v in g_stats.items():
+            print(f"    {k:20s} : {v}")
+        print("  PIXELATE:")
+        for k, v in p_stats.items():
+            print(f"    {k:20s} : {v}")
         print("=" * 50)
 
-        # Affiche le résultat final
-        frame_blurred = apply_blur(frame_bgr, plates)
-        cv2.imshow("Avant/Apres flou", frame_blurred)
+        frame_result = apply_blur(frame_bgr, plates)
+        cv2.imshow("Pixelate", frame_result)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     else:
