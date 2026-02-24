@@ -44,13 +44,7 @@ class SendThread:
     # ──────────── Interface ────────────
 
     def borrow(self):
-        """Retourne le buffer d'écriture pour que main écrive directement dedans.
-
-        Usage:
-            buf = sender.get_write_buffer()
-            apply_blur(frame, zones, dst=buf)
-            sender.publish()
-        """
+        #Retourne le buffer d'écriture pour que main écrive directement dedans.
         return self._write_buf
 
     def publish(self):

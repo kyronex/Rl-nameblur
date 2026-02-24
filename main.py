@@ -1,6 +1,5 @@
 # main.py
 import time
-
 import cv2
 import numpy as np
 import pyvirtualcam
@@ -18,10 +17,12 @@ CAPTURE_FPS = 120
 VCAM_FPS = 120
 
 # CONFIG ROCKET LEAGUE
-TTL_MAX    = 10
+TTL_MAX    = 4
 MARGIN     = 0
-MAX_MASKS  = 10
+MAX_MASKS  = 8
 DEBUG_DRAW = False
+# CONFIG SMOOTH
+SMOOTH_ALPHA = 1.0   # 0.0 = figé, 1.0 = instantané
 
 # CONFIG MATCHING
 #   "iou"      → ancien algo
@@ -74,9 +75,9 @@ def center_distance(r1, r2):
     cy2 = r2[1] + r2[3] / 2
     return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
-def match_or_add(active_masks, new_rect, ttl_max):
-    """Trouve le masque le plus proche, le met à jour ou en crée un nouveau."""
+def match_or_add(active_masks, new_rect,frame_id, ttl_max):
     best_idx = -1
+    nx, ny, nw, nh = new_rect
 
     if MATCHING_MODE == "distance":
         best_val = float('inf')
@@ -96,10 +97,45 @@ def match_or_add(active_masks, new_rect, ttl_max):
         matched = best_val >= IOU_THRESH and best_idx >= 0
 
     if matched:
-        active_masks[best_idx]['rect'] = new_rect
-        active_masks[best_idx]['ttl'] = ttl_max
+        m = active_masks[best_idx]
+        ox, oy, ow, oh = m['rect']
+
+        # Vélocité basée sur last_detected (pas sur rect prédit)
+        lx, ly, _, _ = m['last_detected_rect']
+        dt = frame_id - m['last_detected_frame']
+        if dt > 0:
+            m['vx'] = (nx - lx) / dt
+            m['vy'] = (ny - ly) / dt
+
+        # Smooth exponentiel — stockage float
+        sx = SMOOTH_ALPHA * nx + (1 - SMOOTH_ALPHA) * ox
+        sy = SMOOTH_ALPHA * ny + (1 - SMOOTH_ALPHA) * oy
+        sw = SMOOTH_ALPHA * nw + (1 - SMOOTH_ALPHA) * ow
+        sh = SMOOTH_ALPHA * nh + (1 - SMOOTH_ALPHA) * oh
+
+        m['last_detected_rect']  = (float(nx), float(ny), float(nw), float(nh))
+        m['last_detected_frame'] = frame_id
+        m['rect'] = (sx, sy, sw, sh)
+        m['ttl']  = ttl_max
     else:
-        active_masks.append({'rect': new_rect, 'ttl': ttl_max})
+        # Première détection → pas de smooth, float dès la création
+        active_masks.append({
+            'rect': (float(nx), float(ny), float(nw), float(nh)),
+            'ttl':  ttl_max,
+            'vx':   0.0,
+            'vy':   0.0,
+            'last_detected_rect': (float(nx), float(ny), float(nw), float(nh)),
+            'last_detected_frame': frame_id
+        })
+
+def predict(active_masks):
+    for mask in active_masks:
+        if mask['ttl'] < TTL_MAX * 0.3:
+            continue
+        x, y, w, h = mask['rect']
+        x += mask['vx']
+        y += mask['vy']
+        mask['rect'] = (x, y, w, h)
 
 # HELPERS
 def pad_rect(x, y, w, h, margin, max_w, max_h):
@@ -111,7 +147,7 @@ def pad_rect(x, y, w, h, margin, max_w, max_h):
 
 def draw_debug(frame, active_masks):
     for m in active_masks:
-        x, y, w, h = m['rect']
+        x, y, w, h = (int(v) for v in m['rect'])
         ttl = m['ttl']
         color = ttl_color(ttl)
         thickness = 2 if ttl >= 3 else 1
@@ -196,7 +232,6 @@ def print_all_stats():
         print(f"    {'dist_thresh':22s} : {DIST_THRESH}")
     else:
         print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
-
     print("=" * 55)
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
@@ -223,7 +258,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
         while True:
             t_loop = time.perf_counter()
-
             # ── 1. Capture (NON BLOQUANT) ──
             frame = capturer.get_frame()
             if frame is None:
@@ -240,18 +274,19 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             current_version = detector.get_detect_count()
 
             if current_version > last_detect_version:
+                for m in active_masks:
+                    m['ttl'] -= 1
+                active_masks = [m for m in active_masks if m['ttl'] > 0]
+
                 last_detect_version = current_version
                 new_plates = detector.get_zones()
-
                 for p in new_plates:
                     x, y, w, h = p
                     padded = pad_rect(x, y, w, h, MARGIN, SCREEN_WIDTH, SCREEN_HEIGHT)
-                    match_or_add(active_masks, padded, TTL_MAX)
+                    match_or_add(active_masks, padded,frame_id,TTL_MAX)
 
-                for m in active_masks:
-                    m['ttl'] -= 1
-
-                active_masks = [m for m in active_masks if m['ttl'] > 0]
+            else:
+                predict(active_masks)
 
             # ── 4. Cap max masques ──
             if len(active_masks) > MAX_MASKS:
@@ -259,19 +294,16 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 active_masks = active_masks[:MAX_MASKS]
 
             # ── 5. Blur ou debug ──
-            blur_zones = [m['rect'] for m in active_masks]
-
-            if DEBUG_DRAW:
-                draw_debug(frame, active_masks)
+            blur_zones = [(int(m['rect'][0]), int(m['rect'][1]),int(m['rect'][2]), int(m['rect'][3]))for m in active_masks]
 
             # ── 6. Envoi vers OBS (zéro copie) ──
             buf = sender.borrow()
-            np.copyto(buf, frame)          # copie frame → buf (8 ms, mesurée dans send)
+            np.copyto(buf, frame)
 
             if DEBUG_DRAW:
                 draw_debug(buf, active_masks)
             else:
-                apply_blur(buf, blur_zones) # blur in-place sur buf (5 ms)
+                apply_blur(buf, blur_zones)
 
             sender.publish()
 
