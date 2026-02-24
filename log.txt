@@ -4,25 +4,37 @@
 ✅ Caméra virtuelle prête → OBS Virtual Camera
 📸 En cours... (Ctrl+C pour arrêter)
 [SendThread] Démarré
-⚡ 32.7 FPS | 1 masque(s) | skip 0% | PROD
-⚡ 36.2 FPS | 4 masque(s) | skip 0% | PROD
-⚡ 38.0 FPS | 5 masque(s) | skip 0% | PROD
-⚡ 29.0 FPS | 7 masque(s) | skip 0% | PROD
-⚡ 44.5 FPS | 2 masque(s) | skip 0% | PROD
-⚡ 57.3 FPS | 2 masque(s) | skip 0% | PROD
-⚡ 50.9 FPS | 5 masque(s) | skip 0% | PROD
-⚡ 35.8 FPS | 2 masque(s) | skip 0% | PROD
-⚡ 64.0 FPS | 7 masque(s) | skip 0% | PROD
-⚡ 32.4 FPS | 9 masque(s) | skip 0% | PROD
-⚡ 29.6 FPS | 5 masque(s) | skip 0% | PROD
-⚡ 39.4 FPS | 4 masque(s) | skip 0% | PROD
-⚡ 41.7 FPS | 2 masque(s) | skip 0% | PROD
-⚡ 33.6 FPS | 7 masque(s) | skip 0% | PROD
-⚡ 27.3 FPS | 4 masque(s) | skip 0% | PROD
-⚡ 31.0 FPS | 2 masque(s) | skip 0% | PROD
-⚡ 48.0 FPS | 7 masque(s) | skip 0% | PROD
-⚡ 37.5 FPS | 5 masque(s) | skip 0% | PROD
-⚡ 33.8 FPS | 3 masque(s) | skip 0% | PROD
+⚡ 54.9 FPS | 3 masque(s) | PROD
+⚡ 50.9 FPS | 3 masque(s) | PROD
+⚡ 49.2 FPS | 6 masque(s) | PROD
+⚡ 44.0 FPS | 6 masque(s) | PROD
+⚡ 44.4 FPS | 4 masque(s) | PROD
+⚡ 52.4 FPS | 4 masque(s) | PROD
+⚡ 48.3 FPS | 4 masque(s) | PROD
+⚡ 46.2 FPS | 6 masque(s) | PROD
+⚡ 38.9 FPS | 3 masque(s) | PROD
+⚡ 43.4 FPS | 5 masque(s) | PROD
+⚡ 46.0 FPS | 3 masque(s) | PROD
+⚡ 43.3 FPS | 6 masque(s) | PROD
+⚡ 44.7 FPS | 8 masque(s) | PROD
+⚡ 43.5 FPS | 5 masque(s) | PROD
+⚡ 43.9 FPS | 8 masque(s) | PROD
+⚡ 45.1 FPS | 4 masque(s) | PROD
+⚡ 47.2 FPS | 5 masque(s) | PROD
+⚡ 47.4 FPS | 5 masque(s) | PROD
+⚡ 52.4 FPS | 2 masque(s) | PROD
+⚡ 48.7 FPS | 7 masque(s) | PROD
+⚡ 52.8 FPS | 7 masque(s) | PROD
+⚡ 52.3 FPS | 5 masque(s) | PROD
+⚡ 56.5 FPS | 0 masque(s) | PROD
+⚡ 59.2 FPS | 6 masque(s) | PROD
+⚡ 50.2 FPS | 6 masque(s) | PROD
+⚡ 49.6 FPS | 5 masque(s) | PROD
+⚡ 49.5 FPS | 3 masque(s) | PROD
+⚡ 49.7 FPS | 4 masque(s) | PROD
+⚡ 50.9 FPS | 5 masque(s) | PROD
+⚡ 47.7 FPS | 3 masque(s) | PROD
+⚡ 57.5 FPS | 4 masque(s) | PROD
 
 🛑 Arrêt propre
 
@@ -31,76 +43,76 @@
 =======================================================
 
   📷 CAPTURE (thread @ 120fps cible)
-    grab_avg_ms            : 21.02
-    grab_count             : 1315
+    grab_avg_ms            : 28.42
+    grab_count             : 1547
     none_count             : 0
 
   🔍 DETECT (thread)
-    detect_avg_ms          : 57.79
-    detect_count           : 664
-    detect_total_ms        : 38373.64
+    detect_avg_ms          : 101.64
+    detect_count           : 623
+    detect_total_ms        : 63320.51
 
   🌀 BLUR + CVT (fusionnés)
-    blur_avg_ms            : 16.19
-    cvt_avg_ms             : 5.52
-    total_avg_ms           : 21.88
-    total_calls            : 1522
-    zones_blurred          : 5207
+    blur_avg_ms            : 2.72
+    total_avg_ms           : 2.84
+    total_calls            : 3128
+    zones_blurred          : 12906
+    blur_mode              : pixelate
 
   📤 SEND (thread, vcam @ 120fps déclaré)
-    send_avg_ms            : 11.6
-    send_count             : 1495
-    send_total_ms          : 17346.99
+    send_avg_ms            : 12.53
+    send_count             : 3114
+    send_total_ms          : 39012.36
+    publish_avg_ms         : 0.01
+    publish_count          : 3128
 
   🎬 MAIN LOOP
-    loop_avg_ms            : 25.59
-    total_frames           : 1521
-    mask_peak              : 10
-    ttl_max                : 10
-    margin_px              : 1
-    skip                   : 1
+    loop_avg_ms            : 20.35
+    total_frames           : 3128
+    mask_peak              : 8
+    ttl_max                : 4
+    margin_px              : 0
     iou_thresh             : 0.15
     debug_draw             : False
 
   📉 GAIN vs v5.1
     v5.1 loop_avg          : 32.66 ms (30.6 FPS)
-    v6.0 loop_avg          : 25.59 ms (39.1 FPS)
-    économisé              : 7.07 ms/frame
-    accélération           : x1.28
+    v6.0 loop_avg          : 20.35 ms (49.1 FPS)
+    économisé              : 12.31 ms/frame
+    accélération           : x1.6
     dist_thresh            : 60
 =======================================================
 [SendThread] Arrêté
 [DetectThread] Arrêté
-Screen Capture FPS: 33
+Screen Capture FPS: 24
 [CaptureThread] Arrêté
 (venv) Rl-nameblur>  python main.py
 [CaptureThread] Démarré @ 120 fps cible
 [DetectThread] Démarré
 ✅ Caméra virtuelle prête → OBS Virtual Camera
 🎨 MODE DEBUG VISUEL ACTIVÉ
-   🟩 Vert   = détection fraîche (TTL 3-4)
+   🟩 Vert   = détection fraîche (TTL 3+)
    🟨 Jaune  = masque persisté   (TTL 2)
    🟥 Rouge  = masque mourant    (TTL 1)
 📸 En cours... (Ctrl+C pour arrêter)
 [SendThread] Démarré
-⚡ 51.0 FPS | 10 masque(s) | skip 0% | DEBUG
-⚡ 49.5 FPS | 3 masque(s) | skip 0% | DEBUG
-⚡ 51.2 FPS | 2 masque(s) | skip 0% | DEBUG
-⚡ 51.2 FPS | 4 masque(s) | skip 0% | DEBUG
-⚡ 47.1 FPS | 5 masque(s) | skip 0% | DEBUG
-⚡ 50.4 FPS | 9 masque(s) | skip 0% | DEBUG
-⚡ 48.4 FPS | 10 masque(s) | skip 0% | DEBUG
-⚡ 50.5 FPS | 9 masque(s) | skip 0% | DEBUG
-⚡ 54.9 FPS | 3 masque(s) | skip 0% | DEBUG
-⚡ 51.0 FPS | 3 masque(s) | skip 0% | DEBUG
-⚡ 50.0 FPS | 10 masque(s) | skip 0% | DEBUG
-⚡ 50.9 FPS | 8 masque(s) | skip 0% | DEBUG
-⚡ 51.8 FPS | 6 masque(s) | skip 0% | DEBUG
-⚡ 55.9 FPS | 6 masque(s) | skip 0% | DEBUG
-⚡ 54.0 FPS | 5 masque(s) | skip 0% | DEBUG
-⚡ 50.8 FPS | 8 masque(s) | skip 0% | DEBUG
-⚡ 50.1 FPS | 9 masque(s) | skip 0% | DEBUG
-⚡ 55.7 FPS | 4 masque(s) | skip 0% | DEBUG
+⚡ 49.7 FPS | 4 masque(s) | DEBUG
+⚡ 49.6 FPS | 4 masque(s) | DEBUG
+⚡ 53.7 FPS | 3 masque(s) | DEBUG
+⚡ 51.9 FPS | 1 masque(s) | DEBUG
+⚡ 54.9 FPS | 2 masque(s) | DEBUG
+⚡ 53.5 FPS | 8 masque(s) | DEBUG
+⚡ 51.4 FPS | 3 masque(s) | DEBUG
+⚡ 53.4 FPS | 3 masque(s) | DEBUG
+⚡ 53.5 FPS | 4 masque(s) | DEBUG
+⚡ 50.9 FPS | 3 masque(s) | DEBUG
+⚡ 52.3 FPS | 8 masque(s) | DEBUG
+⚡ 49.1 FPS | 1 masque(s) | DEBUG
+⚡ 52.2 FPS | 0 masque(s) | DEBUG
+⚡ 53.3 FPS | 6 masque(s) | DEBUG
+⚡ 54.6 FPS | 3 masque(s) | DEBUG
+⚡ 51.1 FPS | 5 masque(s) | DEBUG
+⚡ 53.2 FPS | 7 masque(s) | DEBUG
 
 🛑 Arrêt propre
 
@@ -109,46 +121,47 @@ Screen Capture FPS: 33
 =======================================================
 
   📷 CAPTURE (thread @ 120fps cible)
-    grab_avg_ms            : 30.11
-    grab_count             : 908
+    grab_avg_ms            : 25.83
+    grab_count             : 962
     none_count             : 0
 
   🔍 DETECT (thread)
-    detect_avg_ms          : 99.89
-    detect_count           : 375
-    detect_total_ms        : 37456.95
+    detect_avg_ms          : 87.55
+    detect_count           : 407
+    detect_total_ms        : 35630.86
 
   🌀 BLUR + CVT (fusionnés)
     blur_avg_ms            : 0.0
-    cvt_avg_ms             : 0.0
     total_avg_ms           : 0.0
     total_calls            : 0
     zones_blurred          : 0
+    blur_mode              : pixelate
 
   📤 SEND (thread, vcam @ 120fps déclaré)
-    send_avg_ms            : 12.07
-    send_count             : 1917
-    send_total_ms          : 23139.69
+    send_avg_ms            : 11.89
+    send_count             : 1880
+    send_total_ms          : 22352.03
+    publish_avg_ms         : 0.01
+    publish_count          : 1883
 
   🎬 MAIN LOOP
-    loop_avg_ms            : 19.37
-    total_frames           : 1943
-    mask_peak              : 10
-    ttl_max                : 10
-    margin_px              : 1
-    skip                   : 1
+    loop_avg_ms            : 19.01
+    total_frames           : 1883
+    mask_peak              : 8
+    ttl_max                : 4
+    margin_px              : 0
     iou_thresh             : 0.15
     debug_draw             : True
 
   📉 GAIN vs v5.1
     v5.1 loop_avg          : 32.66 ms (30.6 FPS)
-    v6.0 loop_avg          : 19.37 ms (51.6 FPS)
-    économisé              : 13.29 ms/frame
-    accélération           : x1.69
+    v6.0 loop_avg          : 19.01 ms (52.6 FPS)
+    économisé              : 13.65 ms/frame
+    accélération           : x1.72
     dist_thresh            : 60
 =======================================================
 [SendThread] Arrêté
 [DetectThread] Arrêté
-Screen Capture FPS: 24
+Screen Capture FPS: 26
 [CaptureThread] Arrêté
 (venv) Rl-nameblur>

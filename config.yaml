@@ -1,0 +1,52 @@
+screen:
+  width: 1920
+  height: 1080
+  capture_fps: 120
+  vcam_fps: 120
+
+masks:
+  ttl_max: 4
+  margin: 0
+  max_masks: 8
+  smooth_alpha: 1.0
+
+matching:
+  mode: "distance" # "distance" ou "iou"
+  iou_thresh: 0.15
+  dist_thresh: 60
+
+debug:
+  draw: false
+  colors:
+    fresh: [0, 255, 0]
+    persist: [0, 255, 255]
+    dying: [0, 0, 255]
+
+blur:
+  mode: "pixelate" # "pixelate" ou "gaussian"
+  pixel_size: 11
+  strength: 31
+
+detect:
+  scale: 2.0
+
+  hsv:
+    orange:
+      lower: [8, 140, 170]
+      upper: [22, 255, 255]
+    blue:
+      lower: [100, 130, 150]
+      upper: [125, 255, 255]
+    white:
+      lower: [0, 0, 200]
+      upper: [180, 60, 255]
+
+  filters:
+    min_area: 800
+    min_width: 50
+    max_width: 800
+    min_height: 10
+    max_height: 100
+    min_ratio: 2.0
+    max_ratio: 15.0
+    min_fill: 0.35

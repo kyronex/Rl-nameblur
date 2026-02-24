@@ -3,37 +3,35 @@
 import cv2
 import numpy as np
 import time
+from config import cfg
 
 # PARAMÈTRES
-SCALE = 2.0
+SCALE = cfg.get("detect.scale", 2.0)
 
 # HSV — fond des cartouches
-ORANGE_LOW  = np.array([8, 140, 170])
-ORANGE_HIGH = np.array([22, 255, 255])
-BLUE_LOW    = np.array([100, 130, 150])
-BLUE_HIGH   = np.array([125, 255, 255])
+ORANGE_LOW  = np.array(cfg.get("detect.hsv.orange.lower", [8,  140, 170]))
+ORANGE_HIGH = np.array(cfg.get("detect.hsv.orange.upper", [22, 255, 255]))
+BLUE_LOW    = np.array(cfg.get("detect.hsv.blue.lower",   [100, 130, 150]))
+BLUE_HIGH   = np.array(cfg.get("detect.hsv.blue.upper",   [125, 255, 255]))
 
 # HSV — texte blanc/lumineux
-WHITE_LOW   = np.array([0, 0, 200])
-WHITE_HIGH  = np.array([180, 60, 255])
+WHITE_LOW   = np.array(cfg.get("detect.hsv.white.lower",  [0,   0,  200]))
+WHITE_HIGH  = np.array(cfg.get("detect.hsv.white.upper",  [180, 60, 255]))
 
 # Morpho — fermeture des masques couleur
-KERNEL_CLOSE_H = cv2.getStructuringElement(
-    cv2.MORPH_ELLIPSE,
-    (max(int(15 / SCALE), 3), 1)
-)
-KERNEL_CLOSE_V = cv2.getStructuringElement(cv2.MORPH_RECT,(1, max(int(4 / SCALE), 1)))
+KERNEL_CLOSE_H = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(max(int(15 / SCALE), 3), 1))
+KERNEL_CLOSE_V = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(int(4 / SCALE), 1)))
 KERNEL_WHITE_DILATE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
 
 # Filtre forme (coordonnées ÷SCALE)
-MIN_AREA   = int(800 / (SCALE * SCALE))
-MIN_WIDTH  = int(50 / SCALE)
-MAX_WIDTH  = int(800 / SCALE)
-MIN_HEIGHT = int(10 / SCALE)
-MAX_HEIGHT = int(100 / SCALE)
-MIN_RATIO  = 2.0
-MAX_RATIO  = 15.0
-MIN_FILL   = 0.35
+MIN_AREA   = int(cfg.get("detect.filters.min_area",   800) / (SCALE * SCALE))
+MIN_WIDTH  = int(cfg.get("detect.filters.min_width",   50) / SCALE)
+MAX_WIDTH  = int(cfg.get("detect.filters.max_width",  800) / SCALE)
+MIN_HEIGHT = int(cfg.get("detect.filters.min_height",  10) / SCALE)
+MAX_HEIGHT = int(cfg.get("detect.filters.max_height", 100) / SCALE)
+MIN_RATIO  = cfg.get("detect.filters.min_ratio", 2.0)
+MAX_RATIO  = cfg.get("detect.filters.max_ratio", 15.0)
+MIN_FILL   = cfg.get("detect.filters.min_fill",  0.35)
 
 # BENCHMARK
 _stats = {

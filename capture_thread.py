@@ -2,8 +2,6 @@
 import threading
 import time
 import dxcam
-import numpy as np
-
 
 class CaptureThread:
     """Capture en continu, la main loop prend la dernière frame sans bloquer."""

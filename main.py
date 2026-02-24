@@ -4,37 +4,34 @@ import cv2
 import numpy as np
 import pyvirtualcam
 
+from config import cfg
 from capture_thread import CaptureThread
 from detect_thread import DetectThread
 from send_thread import SendThread
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
 
-# PARAMÈTRES ÉCRAN
-SCREEN_WIDTH = 1920
-SCREEN_HEIGHT = 1080
-CAPTURE_FPS = 120
-VCAM_FPS = 120
+# PARAMÈTRES — lus depuis config.yaml
+SCREEN_WIDTH  = cfg.get("screen.width")
+SCREEN_HEIGHT = cfg.get("screen.height")
+CAPTURE_FPS   = cfg.get("screen.capture_fps")
+VCAM_FPS      = cfg.get("screen.vcam_fps")
 
-# CONFIG ROCKET LEAGUE
-TTL_MAX    = 4
-MARGIN     = 0
-MAX_MASKS  = 8
-DEBUG_DRAW = False
-# CONFIG SMOOTH
-SMOOTH_ALPHA = 1.0   # 0.0 = figé, 1.0 = instantané
+TTL_MAX       = cfg.get("masks.ttl_max")
+MARGIN        = cfg.get("masks.margin")
+MAX_MASKS     = cfg.get("masks.max_masks")
+SMOOTH_ALPHA  = cfg.get("masks.smooth_alpha")
+DEBUG_DRAW    = cfg.get("debug.draw")
 
-# CONFIG MATCHING
-#   "iou"      → ancien algo
-#   "distance" → nouvel algo
-MATCHING_MODE = "distance"
-IOU_THRESH = 0.15
-DIST_THRESH = 60
+MATCHING_MODE = cfg.get("matching.mode")
+IOU_THRESH    = cfg.get("matching.iou_thresh")
+DIST_THRESH   = cfg.get("matching.dist_thresh")
 
-# COULEURS DEBUG (BGR)
-COLOR_FRESH   = (0, 255, 0)
-COLOR_PERSIST = (0, 255, 255)
-COLOR_DYING   = (0, 0, 255)
+COLOR_FRESH   = tuple(cfg.get("debug.colors.fresh"))
+COLOR_PERSIST = tuple(cfg.get("debug.colors.persist"))
+COLOR_DYING   = tuple(cfg.get("debug.colors.dying"))
+
+cfg.start_watcher()
 
 def ttl_color(ttl):
     if ttl >= 3:
@@ -118,7 +115,7 @@ def match_or_add(active_masks, new_rect,frame_id, ttl_max):
         m['rect'] = (sx, sy, sw, sh)
         m['ttl']  = ttl_max
     else:
-        # Première détection → pas de smooth, float dès la création
+        # Première détection
         active_masks.append({
             'rect': (float(nx), float(ny), float(nw), float(nh)),
             'ttl':  ttl_max,
@@ -130,14 +127,13 @@ def match_or_add(active_masks, new_rect,frame_id, ttl_max):
 
 def predict(active_masks):
     for mask in active_masks:
-        if mask['ttl'] < TTL_MAX * 0.3:
+        if mask['ttl'] < TTL_MAX * 0.5:
             continue
         x, y, w, h = mask['rect']
         x += mask['vx']
         y += mask['vy']
         mask['rect'] = (x, y, w, h)
 
-# HELPERS
 def pad_rect(x, y, w, h, margin, max_w, max_h):
     x2 = max(x - margin, 0)
     y2 = max(y - margin, 0)
@@ -156,8 +152,7 @@ def draw_debug(frame, active_masks):
 
         label = ttl_label(ttl)
         label_y = max(y - 6, 14)
-        cv2.putText(frame, label, (x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.putText(frame, label, (x, label_y),cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
     total = len(active_masks)
     cv2.putText(frame, f"Masks: {total}", (10, 30),

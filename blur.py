@@ -1,36 +1,27 @@
 # blur.py
 import cv2
 import time
-import numpy as np
-
-# ─────────────────────────────────────────
-# PARAMÈTRES
-# ─────────────────────────────────────────
-
-BLUR_MODE = "pixelate"  # "gaussian" ou "pixelate"
-BLUR_STRENGTH = 31      # kernel gaussian (si mode gaussian)
-PIXEL_SIZE = 11         # taille des blocs (si mode pixelate)
-MARGIN = -6
+from config import cfg
 
 # ─────────────────────────────────────────
 # BENCHMARK
 # ─────────────────────────────────────────
 
 _stats = {
-    "blur_ms":      0.0,
-    "total_ms":     0.0,
-    "total_calls":  0,
+    "blur_ms":       0.0,
+    "total_ms":      0.0,
+    "total_calls":   0,
     "zones_blurred": 0,
 }
 
 def get_stats():
     n = max(_stats["total_calls"], 1)
     return {
-        "blur_avg_ms":    round(_stats["blur_ms"] / n, 2),
-        "total_avg_ms":   round(_stats["total_ms"] / n, 2),
-        "total_calls":    _stats["total_calls"],
-        "zones_blurred":  _stats["zones_blurred"],
-        "blur_mode":      BLUR_MODE,
+        "blur_avg_ms":   round(_stats["blur_ms"] / n, 2),
+        "total_avg_ms":  round(_stats["total_ms"] / n, 2),
+        "total_calls":   _stats["total_calls"],
+        "zones_blurred": _stats["zones_blurred"],
+        "blur_mode":     cfg.get("blur.mode", "pixelate"),
     }
 
 def reset_stats():
@@ -60,25 +51,32 @@ def apply_blur(frame, plates):
     _stats["total_calls"] += 1
     t0 = time.perf_counter()
 
+    blur_mode   = cfg.get("blur.mode",          "pixelate")
+    pixel_size  = cfg.get("blur.pixel_size",    11)
+    blur_strength = cfg.get("blur.strength",    31)
+    margin      = cfg.get("blur.margin",        0)
+
     h_frame, w_frame = frame.shape[:2]
 
     for (x, y, w, h) in plates:
-        x1 = max(0, x - MARGIN)
-        y1 = max(0, y - MARGIN)
-        x2 = min(w_frame, x + w + MARGIN)
-        y2 = min(h_frame, y + h + MARGIN)
+        x1 = max(0, x - margin)
+        y1 = max(0, y - margin)
+        x2 = min(w_frame, x + w + margin)
+        y2 = min(h_frame, y + h + margin)
 
         roi = frame[y1:y2, x1:x2]
 
         t_blur = time.perf_counter()
 
-        if BLUR_MODE == "pixelate":
-            _pixelate_roi(roi, PIXEL_SIZE)
+        if blur_mode == "pixelate":
+            _pixelate_roi(roi, pixel_size)
         else:
-            cv2.GaussianBlur(roi, (BLUR_STRENGTH, BLUR_STRENGTH), 0, dst=roi)
+            ksize = blur_strength if blur_strength % 2 == 1 else blur_strength + 1
+            cv2.GaussianBlur(roi, (ksize, ksize), 0, dst=roi)
 
-        _stats["blur_ms"] += (time.perf_counter() - t_blur) * 1000
+        _stats["blur_ms"]      += (time.perf_counter() - t_blur) * 1000
         _stats["zones_blurred"] += 1
+
     _stats["total_ms"] += (time.perf_counter() - t0) * 1000
 
 # ─────────────────────────────────────────
@@ -87,7 +85,6 @@ def apply_blur(frame, plates):
 
 if __name__ == "__main__":
     import dxcam
-    import numpy as np
     from detect import detect_plates_v2
 
     camera = dxcam.create(output_color="RGB")
@@ -97,34 +94,23 @@ if __name__ == "__main__":
         plates = detect_plates_v2(frame)
         print(f"🔍 {len(plates)} plaque(s) détectée(s)")
 
-        # Bench gaussian
-        BLUR_MODE = "gaussian"
-        reset_stats()
-        for _ in range(100):
-            apply_blur(frame.copy(), plates)
-        g_stats = get_stats()
-
         # Bench pixelate
-        BLUR_MODE = "pixelate"
         reset_stats()
         for _ in range(100):
             apply_blur(frame.copy(), plates)
         p_stats = get_stats()
 
+        # Bench gaussian (override temporaire via cfg non supporté ici → test direct)
         print("=" * 50)
         print("  BENCHMARK blur.py (100 appels)")
         print("=" * 50)
-        print("  GAUSSIAN:")
-        for k, v in g_stats.items():
-            print(f"    {k:20s} : {v}")
         print("  PIXELATE:")
         for k, v in p_stats.items():
             print(f"    {k:20s} : {v}")
         print("=" * 50)
 
-        frame_result = apply_blur(frame, plates)
-        # Affichage : imshow attend BGR → conversion uniquement ici pour le debug
-        cv2.imshow("Pixelate", cv2.cvtColor(frame_result, cv2.COLOR_RGB2BGR))
+        apply_blur(frame, plates)
+        cv2.imshow("Blur", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     else:
