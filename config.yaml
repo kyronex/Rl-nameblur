@@ -1,9 +1,12 @@
+# config.yaml
+
 screen:
   width: 1920
   height: 1080
   capture_fps: 120
   vcam_fps: 120
 
+# ── Tracking des masques de flou ──
 masks:
   ttl_max: 4
   margin: 0
@@ -13,23 +16,26 @@ masks:
 matching:
   mode: "distance" # "distance" ou "iou"
   iou_thresh: 0.15
-  dist_thresh: 60
+  dist_thresh: 60 #
 
-debug:
-  draw: false
-  colors:
-    fresh: [0, 255, 0]
-    persist: [0, 255, 255]
-    dying: [0, 0, 255]
-
+# ── Floutage ──
 blur:
   mode: "pixelate" # "pixelate" ou "gaussian"
   pixel_size: 11
   strength: 31
 
+# ── Debug / affichage ──
+debug:
+  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
+  draw: true
+  colors:
+    fresh: [0, 255, 0]
+    persist: [0, 255, 255]
+    dying: [0, 0, 255]
+
+# ── Détection des cartouches de noms ──
 detect:
   scale: 2.0
-
   hsv:
     orange:
       lower: [8, 140, 170]
@@ -37,16 +43,32 @@ detect:
     blue:
       lower: [100, 130, 150]
       upper: [125, 255, 255]
-    white:
+    white_core:
       lower: [0, 0, 200]
-      upper: [180, 60, 255]
+      upper: [230, 15, 255]
+    white_ext:
+      lower: [0, 0, 210]
+      upper: [180, 35, 255]
+  morpho:
+    white_dilate:
+      width: 25
+      height: 3
+      iterations: 2
+    close:
+      width: 25
+      height: 1
+    open_noise:
+      width: 4
+      height: 2
+    pre_open:
+      size: 1
 
-  filters:
+  geometry:
     min_area: 800
-    min_width: 50
-    max_width: 800
-    min_height: 10
-    max_height: 100
-    min_ratio: 2.0
-    max_ratio: 15.0
-    min_fill: 0.35
+    max_area: 80000
+    min_width: 80
+    min_height: 16
+    min_ratio: 1.5
+    max_ratio: 18.0
+    min_fill: 0.15
+    max_fill: 0.85

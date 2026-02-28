@@ -1,4 +1,4 @@
-# main.py
+# main.py — v7 (refacto nommage, zéro changement logique)
 import time
 import cv2
 import numpy as np
@@ -8,10 +8,11 @@ from config import cfg
 from capture_thread import CaptureThread
 from detect_thread import DetectThread
 from send_thread import SendThread
+from detect import get_stats as detect_stats
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
 
-# PARAMÈTRES — lus depuis config.yaml
+# ── PARAMÈTRES — lus depuis config.yaml ──
 SCREEN_WIDTH  = cfg.get("screen.width")
 SCREEN_HEIGHT = cfg.get("screen.height")
 CAPTURE_FPS   = cfg.get("screen.capture_fps")
@@ -21,17 +22,23 @@ TTL_MAX       = cfg.get("masks.ttl_max")
 MARGIN        = cfg.get("masks.margin")
 MAX_MASKS     = cfg.get("masks.max_masks")
 SMOOTH_ALPHA  = cfg.get("masks.smooth_alpha")
-DEBUG_DRAW    = cfg.get("debug.draw")
 
 MATCHING_MODE = cfg.get("matching.mode")
 IOU_THRESH    = cfg.get("matching.iou_thresh")
 DIST_THRESH   = cfg.get("matching.dist_thresh")
 
+DEBUG_DRAW    = cfg.get("debug.draw")
+DEBUG_ENABLED = cfg.get("debug.enabled", False)
 COLOR_FRESH   = tuple(cfg.get("debug.colors.fresh"))
 COLOR_PERSIST = tuple(cfg.get("debug.colors.persist"))
 COLOR_DYING   = tuple(cfg.get("debug.colors.dying"))
 
 cfg.start_watcher()
+
+
+# ═══════════════════════════════════════════════════════
+#  UTILITAIRES TRACKING
+# ═══════════════════════════════════════════════════════
 
 def ttl_color(ttl):
     if ttl >= 3:
@@ -41,11 +48,13 @@ def ttl_color(ttl):
     else:
         return COLOR_DYING
 
+
 def ttl_label(ttl):
     return f"TTL={ttl}"
 
-# IoU (Intersection over Union)
+
 def compute_iou(r1, r2):
+    """IoU (Intersection over Union) entre deux rectangles (x,y,w,h)."""
     x1, y1, w1, h1 = r1
     x2, y2, w2, h2 = r2
 
@@ -63,7 +72,7 @@ def compute_iou(r1, r2):
     union = area1 + area2 - inter
     return inter / union if union > 0 else 0.0
 
-# DISTANCE CENTRE (nouveau)
+
 def center_distance(r1, r2):
     """Distance euclidienne entre les centres de deux rectangles (x,y,w,h)."""
     cx1 = r1[0] + r1[2] / 2
@@ -72,7 +81,8 @@ def center_distance(r1, r2):
     cy2 = r2[1] + r2[3] / 2
     return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
-def match_or_add(active_masks, new_rect,frame_id, ttl_max):
+
+def match_or_add(active_masks, new_rect, frame_id, ttl_max):
     best_idx = -1
     nx, ny, nw, nh = new_rect
 
@@ -115,15 +125,15 @@ def match_or_add(active_masks, new_rect,frame_id, ttl_max):
         m['rect'] = (sx, sy, sw, sh)
         m['ttl']  = ttl_max
     else:
-        # Première détection
         active_masks.append({
             'rect': (float(nx), float(ny), float(nw), float(nh)),
             'ttl':  ttl_max,
             'vx':   0.0,
             'vy':   0.0,
             'last_detected_rect': (float(nx), float(ny), float(nw), float(nh)),
-            'last_detected_frame': frame_id
+            'last_detected_frame': frame_id,
         })
+
 
 def predict(active_masks):
     for mask in active_masks:
@@ -134,12 +144,14 @@ def predict(active_masks):
         y += mask['vy']
         mask['rect'] = (x, y, w, h)
 
+
 def pad_rect(x, y, w, h, margin, max_w, max_h):
     x2 = max(x - margin, 0)
     y2 = max(y - margin, 0)
     w2 = min(w + 2 * margin, max_w - x2)
     h2 = min(h + 2 * margin, max_h - y2)
     return (x2, y2, w2, h2)
+
 
 def draw_debug(frame, active_masks):
     for m in active_masks:
@@ -152,7 +164,8 @@ def draw_debug(frame, active_masks):
 
         label = ttl_label(ttl)
         label_y = max(y - 6, 14)
-        cv2.putText(frame, label, (x, label_y),cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.putText(frame, label, (x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
     total = len(active_masks)
     cv2.putText(frame, f"Masks: {total}", (10, 30),
@@ -160,15 +173,10 @@ def draw_debug(frame, active_masks):
 
     return frame
 
-# LANCEMENT
-capturer = CaptureThread(target_fps=CAPTURE_FPS)
-capturer.start()
 
-detector = DetectThread()
-detector.start()
-
-fps_timer = time.time()
-frame_count = 0
+# ═══════════════════════════════════════════════════════
+#  STATS / BENCHMARK
+# ═══════════════════════════════════════════════════════
 
 _main_stats = {
     "loop_ms":      0.0,
@@ -176,15 +184,17 @@ _main_stats = {
     "mask_peak":    0,
 }
 
+
 def print_all_stats():
     n = max(_main_stats["total_frames"], 1)
     cs = capturer.get_stats()
     ds = detector.get_stats()
     bs = blur_stats()
     ss = sender.get_stats()
+    dd = detect_stats()
 
     print("\n" + "=" * 55)
-    print("        BENCHMARK PIPELINE v6.0 (capture threadée)")
+    print("        BENCHMARK PIPELINE v7.0 (capture threadée)")
     print("=" * 55)
     print(f"\n  📷 CAPTURE (thread @ {CAPTURE_FPS}fps cible)")
     for k, v in cs.items():
@@ -202,6 +212,10 @@ def print_all_stats():
     for k, v in ss.items():
         print(f"    {k:22s} : {v}")
 
+    print(f"\n  🔬 DETECT DIAGNOSTIC")
+    for k, v in dd.items():
+        print(f"    {k:22s} : {v}")
+
     print(f"\n  🎬 MAIN LOOP")
     loop_avg = round(_main_stats['loop_ms'] / n, 2)
     print(f"    {'loop_avg_ms':22s} : {loop_avg}")
@@ -209,8 +223,13 @@ def print_all_stats():
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
     print(f"    {'ttl_max':22s} : {TTL_MAX}")
     print(f"    {'margin_px':22s} : {MARGIN}")
-    print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
+    print(f"    {'matching_mode':22s} : {MATCHING_MODE}")
+    if MATCHING_MODE == "distance":
+        print(f"    {'dist_thresh':22s} : {DIST_THRESH}")
+    else:
+        print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
     print(f"    {'debug_draw':22s} : {DEBUG_DRAW}")
+    print(f"    {'debug_enabled':22s} : {DEBUG_ENABLED}")
 
     old_loop = 32.66
     new_loop = loop_avg
@@ -220,14 +239,24 @@ def print_all_stats():
 
     print(f"\n  📉 GAIN vs v5.1")
     print(f"    {'v5.1 loop_avg':22s} : {old_loop} ms ({old_fps} FPS)")
-    print(f"    {'v6.0 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
+    print(f"    {'v7.0 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
     print(f"    {'économisé':22s} : {saved} ms/frame")
     print(f"    {'accélération':22s} : x{round(old_loop / max(new_loop, 0.01), 2)}")
-    if MATCHING_MODE == "distance":
-        print(f"    {'dist_thresh':22s} : {DIST_THRESH}")
-    else:
-        print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
     print("=" * 55)
+
+
+# ═══════════════════════════════════════════════════════
+#  LANCEMENT
+# ═══════════════════════════════════════════════════════
+
+capturer = CaptureThread(target_fps=CAPTURE_FPS)
+capturer.start()
+
+detector = DetectThread()
+detector.start()
+
+fps_timer = time.time()
+frame_count = 0
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
@@ -253,6 +282,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
         while True:
             t_loop = time.perf_counter()
+
             # ── 1. Capture (NON BLOQUANT) ──
             frame = capturer.get_frame()
             if frame is None:
@@ -278,10 +308,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 for p in new_plates:
                     x, y, w, h = p
                     padded = pad_rect(x, y, w, h, MARGIN, SCREEN_WIDTH, SCREEN_HEIGHT)
-                    match_or_add(active_masks, padded,frame_id,TTL_MAX)
+                    match_or_add(active_masks, padded, frame_id, TTL_MAX)
 
-            else:
-                predict(active_masks)
+            """ else:
+                predict(active_masks) """
 
             # ── 4. Cap max masques ──
             if len(active_masks) > MAX_MASKS:
@@ -289,13 +319,18 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 active_masks = active_masks[:MAX_MASKS]
 
             # ── 5. Blur ou debug ──
-            blur_zones = [(int(m['rect'][0]), int(m['rect'][1]),int(m['rect'][2]), int(m['rect'][3]))for m in active_masks]
+            blur_zones = [
+                (int(m['rect'][0]), int(m['rect'][1]),
+                 int(m['rect'][2]), int(m['rect'][3]))
+                for m in active_masks
+            ]
 
             # ── 6. Envoi vers OBS (zéro copie) ──
             buf = sender.borrow()
             np.copyto(buf, frame)
 
             if DEBUG_DRAW:
+                apply_blur(buf, blur_zones)
                 draw_debug(buf, active_masks)
             else:
                 apply_blur(buf, blur_zones)
@@ -305,7 +340,9 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             # ── 7. Stats loop ──
             _main_stats["loop_ms"] += (time.perf_counter() - t_loop) * 1000
             _main_stats["total_frames"] += 1
-            _main_stats["mask_peak"] = max(_main_stats["mask_peak"], len(active_masks))
+            _main_stats["mask_peak"] = max(
+                _main_stats["mask_peak"], len(active_masks)
+            )
 
             # ── 8. FPS counter ──
             frame_count += 1

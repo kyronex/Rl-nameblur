@@ -1,220 +1,169 @@
-# detect.py — v2 : pipeline HSV dual-pass (orange/bleu) + texte blanc
-
+# detect.py — v7
 import cv2
 import numpy as np
 import time
+import logging
 from config import cfg
+from detect_stats import _stats, get_stats, reset_stats
+from detect_tools import process_channel
 
-# PARAMÈTRES
+log = logging.getLogger("detect")
+
+_log_level = cfg.get("debug.log_level", "WARNING")
+log.setLevel(getattr(logging, _log_level))
+
+# ── Handler console ──
+if not log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(name)s | %(message)s"))
+    log.addHandler(_handler)
+
+# ── PARAMÈTRES ──
 SCALE = cfg.get("detect.scale", 2.0)
 
-# HSV — fond des cartouches
+# ── FILTRES COULEUR ──
 ORANGE_LOW  = np.array(cfg.get("detect.hsv.orange.lower", [8,  140, 170]))
 ORANGE_HIGH = np.array(cfg.get("detect.hsv.orange.upper", [22, 255, 255]))
+
 BLUE_LOW    = np.array(cfg.get("detect.hsv.blue.lower",   [100, 130, 150]))
 BLUE_HIGH   = np.array(cfg.get("detect.hsv.blue.upper",   [125, 255, 255]))
 
-# HSV — texte blanc/lumineux
-WHITE_LOW   = np.array(cfg.get("detect.hsv.white.lower",  [0,   0,  200]))
-WHITE_HIGH  = np.array(cfg.get("detect.hsv.white.upper",  [180, 60, 255]))
+WHITE_CORE_LOW  = np.array(cfg.get("detect.hsv.white_core.lower", [0,   0,  200]))
+WHITE_CORE_HIGH = np.array(cfg.get("detect.hsv.white_core.upper", [230, 30, 255]))
+WHITE_EXT_LOW   = np.array(cfg.get("detect.hsv.white_ext.lower",  [0,   0,  200]))
+WHITE_EXT_HIGH  = np.array(cfg.get("detect.hsv.white_ext.upper",  [230, 30, 255]))
 
-# Morpho — fermeture des masques couleur
-KERNEL_CLOSE_H = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(max(int(15 / SCALE), 3), 1))
-KERNEL_CLOSE_V = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(int(4 / SCALE), 1)))
-KERNEL_WHITE_DILATE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+# ── MORPHO : white dilate ──
+WHITE_DILATE_W    = max(round(cfg.get("detect.morpho.white_dilate.width",  28) / SCALE), 5)
+WHITE_DILATE_H    = max(round(cfg.get("detect.morpho.white_dilate.height",  9) / SCALE), 3)
+WHITE_DILATE_ITER = cfg.get("detect.morpho.white_dilate.iterations", 1)
+KERNEL_WHITE_DILATE = cv2.getStructuringElement(cv2.MORPH_RECT, (WHITE_DILATE_W, WHITE_DILATE_H))
 
-# Filtre forme (coordonnées ÷SCALE)
-MIN_AREA   = int(cfg.get("detect.filters.min_area",   800) / (SCALE * SCALE))
-MIN_WIDTH  = int(cfg.get("detect.filters.min_width",   50) / SCALE)
-MAX_WIDTH  = int(cfg.get("detect.filters.max_width",  800) / SCALE)
-MIN_HEIGHT = int(cfg.get("detect.filters.min_height",  10) / SCALE)
-MAX_HEIGHT = int(cfg.get("detect.filters.max_height", 100) / SCALE)
-MIN_RATIO  = cfg.get("detect.filters.min_ratio", 2.0)
-MAX_RATIO  = cfg.get("detect.filters.max_ratio", 15.0)
-MIN_FILL   = cfg.get("detect.filters.min_fill",  0.35)
+# ── MORPHO : close + open ──
 
-# BENCHMARK
-_stats = {
-    "resize_ms":    0.0,
-    "hsv_ms":       0.0,
-    "masks_ms":     0.0,
-    "morpho_ms":    0.0,
-    "white_ms":     0.0,
-    "contour_ms":   0.0,
-    "shape_ms":     0.0,
-    "total_ms":     0.0,
-    "total_calls":  0,
-    "candidates":   0,
-    "plates_found": 0,
+PRE_OPEN_SIZE = max(round(cfg.get("detect.morpho.pre_open.size",4) / SCALE), 1)
+KERNEL_PRE_OPEN  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (PRE_OPEN_SIZE, PRE_OPEN_SIZE))
+
+CLOSE_H_WIDTH   = max(round(cfg.get("detect.morpho.close.width", 25) / SCALE), 3)
+CLOSE_H_HEIGHT   = max(round(cfg.get("detect.morpho.close.height", 2) / SCALE), 1)
+KERNEL_CLOSE_H  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (CLOSE_H_WIDTH, CLOSE_H_HEIGHT))
+
+OPEN_NOISE_W    = max(round(cfg.get("detect.morpho.open_noise.width",  24) / SCALE), 1)
+OPEN_NOISE_H    = max(round(cfg.get("detect.morpho.open_noise.height",  4) / SCALE), 1)
+KERNEL_OPEN_NOISE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (OPEN_NOISE_W, OPEN_NOISE_H))
+
+# ── GÉOMÉTRIE (seuils scalés) ──
+_params = {
+    "min_area":   max(round(cfg.get("detect.geometry.min_area",   800)   / (SCALE**2)), 1),
+    "max_area":   max(round(cfg.get("detect.geometry.max_area",   20000) / (SCALE**2)), 1),
+    "min_width":  max(round(cfg.get("detect.geometry.min_width",  80)    / SCALE), 1),
+    "min_height": max(round(cfg.get("detect.geometry.min_height", 16)    / SCALE), 1),
+    "min_ratio":  cfg.get("detect.geometry.min_ratio",  3.5),
+    "max_ratio":  cfg.get("detect.geometry.max_ratio",  18.0),
+    "min_fill":   cfg.get("detect.geometry.min_fill",   0.15),
+    "max_fill":   cfg.get("detect.geometry.max_fill",   0.85),
 }
 
-def get_stats():
-    n = max(_stats["total_calls"], 1)
-    return {
-        "resize_avg_ms":   round(_stats["resize_ms"] / n, 2),
-        "hsv_avg_ms":      round(_stats["hsv_ms"] / n, 2),
-        "masks_avg_ms":    round(_stats["masks_ms"] / n, 2),
-        "morpho_avg_ms":   round(_stats["morpho_ms"] / n, 2),
-        "white_avg_ms":    round(_stats["white_ms"] / n, 2),
-        "contour_avg_ms":  round(_stats["contour_ms"] / n, 2),
-        "shape_avg_ms":    round(_stats["shape_ms"] / n, 2),
-        "total_avg_ms":    round(_stats["total_ms"] / n, 2),
-        "total_calls":     _stats["total_calls"],
-        "candidates_avg":  round(_stats["candidates"] / n, 1),
-        "plates_found":    _stats["plates_found"],
-    }
+_kernels = {
+    "close_h":      KERNEL_CLOSE_H,
+    "open_noise":   KERNEL_OPEN_NOISE,
+    "pre_open_noise":   KERNEL_PRE_OPEN,
+}
 
-def reset_stats():
-    for k in _stats:
-        _stats[k] = 0
+# ── DEBUG ──
+LOG_LEVEL = cfg.get("debug.log_level", "INFO")
 
-# MORPHO SUR MASQUE COULEUR
-def process_single_mask(mask_raw):
-    closed = cv2.morphologyEx(mask_raw, cv2.MORPH_CLOSE, KERNEL_CLOSE_H)
-    closed = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, KERNEL_CLOSE_V)
-    return closed
-
-# FILTRE FORME : CARTOUCHE
-def is_cartouche(contour):
-    x, y, w, h = cv2.boundingRect(contour)
-
-    if w < MIN_WIDTH or w > MAX_WIDTH:
-        return False, None
-    if h < MIN_HEIGHT or h > MAX_HEIGHT:
-        return False, None
-
-    ratio = w / h
-    if ratio < MIN_RATIO or ratio > MAX_RATIO:
-        return False, None
-
-    area = cv2.contourArea(contour)
-    if area < MIN_AREA:
-        return False, None
-
-    rect_area = w * h
-    if rect_area == 0:
-        return False, None
-
-    fill = area / rect_area
-    if fill < MIN_FILL:
-        return False, None
-
-    return True, (x, y, w, h)
-
-# FONCTION PRINCIPALE — V2
-def detect_plates_v2(frame):
+# ═══════════════════════════════════════════════════════
+#  PIPELINE PRINCIPAL
+# ═══════════════════════════════════════════════════════
+log.debug(f"KERNEL_CLOSE_H  : {KERNEL_CLOSE_H.shape}  (width={CLOSE_H_WIDTH})")
+log.debug(f"KERNEL_OPEN     : {KERNEL_OPEN_NOISE.shape}  (w={OPEN_NOISE_W}, h={OPEN_NOISE_H})")
+log.debug(f"KERNEL_WHITE_D  : {KERNEL_WHITE_DILATE.shape}  (w={WHITE_DILATE_W}, h={WHITE_DILATE_H})")
+log.debug(f"SCALE={SCALE}  params={_params}")
+def detect_plates(frame):
     """
-    Pipeline V2 : Resize → HSV → Masques orange/bleu → Morpho →
-                  Fusion → Filtre blanc → Contours → Forme → Remap
-    Attend une frame RGB.
+    Détecte les cartouches via fusion orange|blue AND white_dilated.
     """
-    _stats["total_calls"] += 1
-    plates = []
+
     t_start = time.perf_counter()
-
-    h_orig, w_orig = frame.shape[:2]
+    plates = []
 
     # ── 1. Resize ──
     t0 = time.perf_counter()
+    h_orig, w_orig = frame.shape[:2]
     small = cv2.resize(frame,(int(w_orig / SCALE), int(h_orig / SCALE)),interpolation=cv2.INTER_LINEAR)
     _stats["resize_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 2. HSV ──
     t0 = time.perf_counter()
-    hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     _stats["hsv_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 3. Masques couleur ──
     t0 = time.perf_counter()
     mask_orange = cv2.inRange(hsv, ORANGE_LOW, ORANGE_HIGH)
-    mask_blue   = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
-    mask_white  = cv2.inRange(hsv, WHITE_LOW, WHITE_HIGH)
-    _stats["masks_ms"] += (time.perf_counter() - t0) * 1000
+    _stats["mask_orange_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 4. Morpho sur chaque couleur ──
     t0 = time.perf_counter()
-    closed_orange = process_single_mask(mask_orange)
-    closed_blue   = process_single_mask(mask_blue)
-    blob_mask     = cv2.bitwise_or(closed_orange, closed_blue)
-    _stats["morpho_ms"] += (time.perf_counter() - t0) * 1000
+    mask_blue = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
+    _stats["mask_blue_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 5. Filtre blanc (trim blobs autour du texte) ──
+    # ── 4. Fusion orange + blue ──
     t0 = time.perf_counter()
-    white_dilated = cv2.dilate(mask_white, KERNEL_WHITE_DILATE, iterations=1)
-    blob_trimmed  = cv2.bitwise_and(blob_mask, white_dilated)
-    _stats["white_ms"] += (time.perf_counter() - t0) * 1000
+    mask_combined = cv2.bitwise_or(mask_orange, mask_blue)
+    _stats["combine_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 6. Contours ──
+    # ── 5. Blanc : core dilaté + ext qualifié ──
     t0 = time.perf_counter()
-    contours, _ = cv2.findContours(
-        blob_trimmed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    _stats["contour_ms"] += (time.perf_counter() - t0) * 1000
+    mask_white_core = cv2.inRange(hsv, WHITE_CORE_LOW, WHITE_CORE_HIGH)
+    mask_white_ext  = cv2.inRange(hsv, WHITE_EXT_LOW,  WHITE_EXT_HIGH)
 
-    # ── 7. Filtrage forme ──
+    white_core_dilated = cv2.dilate(mask_white_core,KERNEL_WHITE_DILATE,iterations=WHITE_DILATE_ITER)
+
+    mask_white_ext_qualified = cv2.bitwise_and(mask_white_ext, white_core_dilated)
+    _stats["mask_white_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── 6. AND couleur + blanc dilaté, puis OR bords qualifiés ──
+
+    t0 = time.perf_counter()                          # ← FIX : t0 reset ici
+    mask_and_color = cv2.bitwise_and(mask_combined, white_core_dilated)
+    mask_and = cv2.bitwise_or(mask_and_color, mask_white_ext_qualified)
+    _stats["combine_wd_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── DEBUG pixels par canal ──
+    log.debug(f"pixels orange          : {cv2.countNonZero(mask_orange)}")
+    log.debug(f"pixels blue            : {cv2.countNonZero(mask_blue)}")
+    log.debug(f"pixels white_core      : {cv2.countNonZero(mask_white_core)}")
+    log.debug(f"pixels white_dilated   : {cv2.countNonZero(white_core_dilated)}")
+    log.debug(f"pixels AND orange+wd   : {cv2.countNonZero(cv2.bitwise_and(mask_orange, white_core_dilated))}")
+    log.debug(f"pixels AND blue+wd     : {cv2.countNonZero(cv2.bitwise_and(mask_blue, white_core_dilated))}")
+    log.debug(f"pixels mask_and final  : {cv2.countNonZero(mask_and)}")
+
+    """
+    cv2.imshow("mask_white_core", mask_white_core)
+    cv2.imshow("mask_white_ext", mask_white_ext)
+    cv2.imshow("white_core_dilated", white_core_dilated)
+    cv2.imshow("mask_white_ext_qualified", mask_white_ext_qualified)
+    cv2.imshow("mask_combined", mask_combined)
+    cv2.imshow("mask_and_color", mask_and_color)
+    """
+
+    # ── 7. Passe morpho + contours ──
     t0 = time.perf_counter()
-    candidates = 0
+    raw_plates = process_channel(mask_and, _kernels, _params, _stats)
+    _stats["channel_ms"] += (time.perf_counter() - t0) * 1000
 
-    for contour in contours:
-        valid, bbox = is_cartouche(contour)
-        if not valid:
-            continue
-
-        x, y, w, h = bbox
-        candidates += 1
-
-        # Remap vers résolution originale
+    # ── 8. Remap vers résolution originale ──
+    for (px, py, pw, ph) in raw_plates:
         plates.append((
-            int(x * SCALE),
-            int(y * SCALE),
-            int(w * SCALE),
-            int(h * SCALE),
+            int(px * SCALE),
+            int(py * SCALE),
+            int(pw * SCALE),
+            int(ph * SCALE),
         ))
 
-    _stats["shape_ms"]    += (time.perf_counter() - t0) * 1000
-    _stats["candidates"]  += candidates
     _stats["plates_found"] += len(plates)
-    _stats["total_ms"]    += (time.perf_counter() - t_start) * 1000
+    _stats["total_ms"]     += (time.perf_counter() - t_start) * 1000
+    _stats["total_calls"]  += 1
 
     return plates
-
-# TEST INDÉPENDANT
-if __name__ == "__main__":
-    import dxcam
-
-    # ── output_color="RGB" : cohérent avec COLOR_RGB2HSV dans detect_plates_v2 ──
-    camera = dxcam.create(output_color="RGB")
-    time.sleep(0.5)
-    frame = camera.grab()
-    if frame is None:
-        time.sleep(1.0)
-        frame = camera.grab()
-
-    if frame is None:
-        print("❌ Pas de frame capturée")
-        exit(1)
-
-    print(f"✅ Frame : {frame.shape[1]}x{frame.shape[0]}")
-
-    # ── Bench V2 — 100 appels ──
-    reset_stats()
-    for _ in range(100):
-        plates = detect_plates_v2(frame)
-
-    stats = get_stats()
-    print("=" * 55)
-    print(f"  BENCHMARK detect.py — V2 HSV dual-pass — SCALE ÷{SCALE}")
-    print("=" * 55)
-    for k, v in stats.items():
-        print(f"  {k:22s} : {v}")
-    print("=" * 55)
-
-    print(f"\n🔍 {len(plates)} cartouche(s) détecté(s)")
-    for (x, y, w, h) in plates:
-        print(f"   📍 x={x} y={y} w={w} h={h} ratio={w/h:.1f}")
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-    # Affichage : imshow attend BGR → conversion uniquement ici pour le debug
-    cv2.imshow("V2 — Detections", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()

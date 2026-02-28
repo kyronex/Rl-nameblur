@@ -1,4 +1,4 @@
-# detect.py — v2 : pipeline HSV dual-pass (orange/bleu) + texte blanc
+# detect.py — v3 : pipeline HSV dual-pass (orange/bleu) + texte blanc
 
 import cv2
 import numpy as np
