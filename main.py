@@ -147,13 +147,14 @@ def predict(active_masks):
         mask['rect'] = (x, y, w, h)
 
 
-def pad_rect(x, y, w, h, max_w, max_h):
-    x2 = max(x - cfg.get("masks.margin"), 0)
-    y2 = max(y - cfg.get("masks.margin"), 0)
-    w2 = min(w + 2 * cfg.get("masks.margin"), max_w - x2)
-    h2 = min(h + 2 * cfg.get("masks.margin"), max_h - y2)
-    return (x2, y2, w2, h2)
 
+def pad_rect(x, y, w, h, max_w, max_h):
+    return (
+        max(x, 0),
+        max(y, 0),
+        min(w, max_w - max(x, 0)),
+        min(h, max_h - max(y, 0)),
+    )
 
 def draw_debug(frame, active_masks):
     for m in active_masks:
@@ -188,9 +189,7 @@ _main_stats = {
 
 
 def print_all_stats():
-
     matching_mode = cfg.get("matching.mode")
-
     n = max(_main_stats["total_frames"], 1)
     cs = capturer.get_stats()
     ds = detector.get_stats()
@@ -227,7 +226,6 @@ def print_all_stats():
     print(f"    {'total_frames':22s} : {_main_stats['total_frames']}")
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
     print(f"    {'ttl_max':22s} : {cfg.get("masks.ttl_max")}")
-    print(f"    {'margin_px':22s} : {cfg.get("masks.margin")}")
     print(f"    {'matching_mode':22s} : {matching_mode}")
     if matching_mode == "distance":
         print(f"    {'dist_thresh':22s} : {cfg.get("matching.dist_thresh")}")

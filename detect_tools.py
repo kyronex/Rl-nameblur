@@ -33,6 +33,7 @@ def process_channel(masked, kernels, params, stats):
     plates = []
 
     # ── DEBUG pixels ──
+    """
     if log.isEnabledFor(logging.DEBUG):
         log.debug(f"AND pixels actifs     : {cv2.countNonZero(masked)}")
         log.debug(f"après PRE OPEN pixels    : {cv2.countNonZero(pre_opened)}")
@@ -40,11 +41,12 @@ def process_channel(masked, kernels, params, stats):
         log.debug(f"après OPEN pixels     : {cv2.countNonZero(opened)}")
         log.debug(f"contours bruts        : {len(contours)}")
 
-    """ cv2.imshow("masked", masked)
+    cv2.imshow("masked", masked)
     cv2.imshow("pre_opened", pre_opened)
     cv2.imshow("closed", closed)
     cv2.imshow("opened", opened)
-    cv2.waitKey(0) """
+    cv2.waitKey(0)
+    """
 
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)

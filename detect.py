@@ -49,7 +49,7 @@ def _build_params():
             "white_dilate": cv2.getStructuringElement(cv2.MORPH_RECT,    (wd_w,   wd_h)),
             "close_h":      cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (cl_w,   cl_h)),
             "open_noise":   cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (on_w,   on_h)),
-            "pre_open_noise": cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pre_sz, pre_sz)),
+            "pre_open_noise": cv2.getStructuringElement(cv2.MORPH_RECT, (pre_sz, pre_sz)),
         }
 
     # ── Géométrie ──
@@ -115,24 +115,19 @@ def detect_plates(frame):
     mask_combined = cv2.bitwise_or(mask_orange, mask_blue)
     _stats["combine_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 5. Blanc : core dilaté + ext qualifié ──
+      # ── 5. Blanc : masque unique + dilatation ──
     t0 = time.perf_counter()
-    mask_white_core = cv2.inRange(hsv, colors["wc_low"], colors["wc_high"])
-    mask_white_ext  = cv2.inRange(hsv, colors["we_low"], colors["we_high"])
-
-    white_core_dilated = cv2.dilate(mask_white_core,kernels["white_dilate"],iterations=wd_iter)
-
-    mask_white_ext_qualified = cv2.bitwise_and(mask_white_ext, white_core_dilated)
+    mask_white = cv2.inRange(hsv, colors["wc_low"], colors["wc_high"])
+    white_dilated = cv2.dilate(mask_white, kernels["white_dilate"], iterations=wd_iter)
     _stats["mask_white_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 6. AND couleur + blanc dilaté, puis OR bords qualifiés ──
-
-    t0 = time.perf_counter()                          # ← FIX : t0 reset ici
-    mask_and_color = cv2.bitwise_and(mask_combined, white_core_dilated)
-    mask_and = cv2.bitwise_or(mask_and_color, mask_white_ext_qualified)
+    # ── 6. AND couleur + blanc dilaté ──
+    t0 = time.perf_counter()
+    mask_and = cv2.bitwise_and(mask_combined, white_dilated)
     _stats["combine_wd_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── DEBUG pixels ──
+    """
     if log.isEnabledFor(logging.DEBUG):
         log.debug(f"pixels orange        : {cv2.countNonZero(mask_orange)}")
         log.debug(f"pixels blue          : {cv2.countNonZero(mask_blue)}")
@@ -140,13 +135,13 @@ def detect_plates(frame):
         log.debug(f"pixels white_dilated : {cv2.countNonZero(white_core_dilated)}")
         log.debug(f"pixels mask_and final: {cv2.countNonZero(mask_and)}")
 
-    """
     cv2.imshow("mask_white_core", mask_white_core)
     cv2.imshow("mask_white_ext", mask_white_ext)
     cv2.imshow("white_core_dilated", white_core_dilated)
     cv2.imshow("mask_white_ext_qualified", mask_white_ext_qualified)
     cv2.imshow("mask_combined", mask_combined)
     cv2.imshow("mask_and_color", mask_and_color)
+    cv2.waitKey(0)
     """
 
     # ── 7. Passe morpho + contours ──

@@ -70,6 +70,11 @@ def apply_blur(frame, plates):
 
         if blur_mode == "pixelate":
             _pixelate_roi(roi, pixel_size)
+        elif blur_mode == "box":
+            ksize = blur_strength if blur_strength % 2 == 1 else blur_strength + 1
+            cv2.blur(roi, (ksize, ksize), dst=roi)
+        elif blur_mode == "fill":
+            roi[:] = cfg.get("blur.fill_color", (80, 80, 80))
         else:
             ksize = blur_strength if blur_strength % 2 == 1 else blur_strength + 1
             cv2.GaussianBlur(roi, (ksize, ksize), 0, dst=roi)

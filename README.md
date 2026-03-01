@@ -401,7 +401,3 @@ python main.py
 ```
 
 Ctrl+C pour arrêter proprement — le benchmark complet s'affiche à la sortie.
-
-> [!NOTE]
-> **v6.1** — Config centralisée dans `config.yaml` + `config.py` singleton. Pensez a faire un hot-loader
-> Tous les paramètres modifiables sans toucher au code.
