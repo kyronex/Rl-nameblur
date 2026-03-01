@@ -4,30 +4,23 @@ import cv2
 import time
 import logging
 
-log = logging.getLogger("detect")
-
+log = logging.getLogger("detect_tools")
 
 def process_channel(masked, kernels, params, stats):
-
     # ── A. Pixels actifs avant traitement ──
-    log.debug(f"AND pixels actifs     : {cv2.countNonZero(masked)}")
-
     t0 = time.perf_counter()
     pre_opened = cv2.morphologyEx(masked, cv2.MORPH_OPEN, kernels["pre_open_noise"])
     stats["pre_open_ms"] += (time.perf_counter() - t0) * 1000
-    log.debug(f"après PRE OPEN pixels    : {cv2.countNonZero(pre_opened)}")
 
     # ── B. Fermeture horizontale ──
     t0 = time.perf_counter()
     closed = cv2.morphologyEx(pre_opened, cv2.MORPH_CLOSE, kernels["close_h"])
     stats["close_ms"] += (time.perf_counter() - t0) * 1000
-    log.debug(f"après CLOSE pixels    : {cv2.countNonZero(closed)}")
 
     # ── C. Ouverture bruit ──
     t0 = time.perf_counter()
     opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernels["open_noise"])
     stats["open_ms"] += (time.perf_counter() - t0) * 1000
-    log.debug(f"après OPEN pixels     : {cv2.countNonZero(opened)}")
 
     # ── D. Contours ──
     t0 = time.perf_counter()
@@ -35,11 +28,17 @@ def process_channel(masked, kernels, params, stats):
     stats["contour_ms"] += (time.perf_counter() - t0) * 1000
     stats["contours_raw"] += len(contours)
 
-    log.debug(f"contours bruts        : {len(contours)}")
-
     # ── E. Filtre géométrique ──
     t0 = time.perf_counter()
     plates = []
+
+    # ── DEBUG pixels ──
+    if log.isEnabledFor(logging.DEBUG):
+        log.debug(f"AND pixels actifs     : {cv2.countNonZero(masked)}")
+        log.debug(f"après PRE OPEN pixels    : {cv2.countNonZero(pre_opened)}")
+        log.debug(f"après CLOSE pixels    : {cv2.countNonZero(closed)}")
+        log.debug(f"après OPEN pixels     : {cv2.countNonZero(opened)}")
+        log.debug(f"contours bruts        : {len(contours)}")
 
     """ cv2.imshow("masked", masked)
     cv2.imshow("pre_opened", pre_opened)

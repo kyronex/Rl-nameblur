@@ -1,10 +1,10 @@
 # config.yaml
 
 screen:
-  width: 1920
-  height: 1080
-  capture_fps: 120
-  vcam_fps: 120
+  width: 1920 #
+  height: 1080 #
+  capture_fps: 120 #
+  vcam_fps: 120 #
 
 # ── Tracking des masques de flou ──
 masks:
@@ -16,7 +16,7 @@ masks:
 matching:
   mode: "distance" # "distance" ou "iou"
   iou_thresh: 0.15
-  dist_thresh: 60 #
+  dist_thresh: 60
 
 # ── Floutage ──
 blur:
@@ -35,7 +35,7 @@ debug:
 
 # ── Détection des cartouches de noms ──
 detect:
-  scale: 2.0
+  scale: 2.0 #
   hsv:
     orange:
       lower: [8, 140, 170]

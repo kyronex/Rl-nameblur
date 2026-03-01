@@ -1,10 +1,22 @@
 # main.py — v7 (refacto nommage, zéro changement logique)
+import logging
+from config import cfg
+
+def setup_logging():
+    level_str = cfg.get("debug.log_level", "WARNING")
+    level = getattr(logging, level_str.upper(), logging.WARNING)
+
+    logging.basicConfig(
+        level=level,
+        format="%(name)s | %(levelname)s | %(message)s"
+    )
+setup_logging()
+
 import time
 import cv2
 import numpy as np
 import pyvirtualcam
 
-from config import cfg
 from capture_thread import CaptureThread
 from detect_thread import DetectThread
 from send_thread import SendThread
@@ -18,21 +30,6 @@ SCREEN_HEIGHT = cfg.get("screen.height")
 CAPTURE_FPS   = cfg.get("screen.capture_fps")
 VCAM_FPS      = cfg.get("screen.vcam_fps")
 
-TTL_MAX       = cfg.get("masks.ttl_max")
-MARGIN        = cfg.get("masks.margin")
-MAX_MASKS     = cfg.get("masks.max_masks")
-SMOOTH_ALPHA  = cfg.get("masks.smooth_alpha")
-
-MATCHING_MODE = cfg.get("matching.mode")
-IOU_THRESH    = cfg.get("matching.iou_thresh")
-DIST_THRESH   = cfg.get("matching.dist_thresh")
-
-DEBUG_DRAW    = cfg.get("debug.draw")
-DEBUG_ENABLED = cfg.get("debug.enabled", False)
-COLOR_FRESH   = tuple(cfg.get("debug.colors.fresh"))
-COLOR_PERSIST = tuple(cfg.get("debug.colors.persist"))
-COLOR_DYING   = tuple(cfg.get("debug.colors.dying"))
-
 cfg.start_watcher()
 
 
@@ -42,11 +39,11 @@ cfg.start_watcher()
 
 def ttl_color(ttl):
     if ttl >= 3:
-        return COLOR_FRESH
+        return tuple(cfg.get("debug.colors.fresh"))
     elif ttl >= 2:
-        return COLOR_PERSIST
+        return tuple(cfg.get("debug.colors.persist"))
     else:
-        return COLOR_DYING
+        return tuple(cfg.get("debug.colors.dying"))
 
 
 def ttl_label(ttl):
@@ -82,18 +79,23 @@ def center_distance(r1, r2):
     return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
 
-def match_or_add(active_masks, new_rect, frame_id, ttl_max):
+def match_or_add(active_masks, new_rect, frame_id):
     best_idx = -1
     nx, ny, nw, nh = new_rect
 
-    if MATCHING_MODE == "distance":
+    ttl_max = cfg.get("masks.ttl_max")
+    smooth_alpha = cfg.get("masks.smooth_alpha")
+    iou_thresh   = cfg.get("matching.iou_thresh")
+    dist_thresh  = cfg.get("matching.dist_thresh")
+
+    if cfg.get("matching.mode") == "distance":
         best_val = float('inf')
         for i, m in enumerate(active_masks):
             d = center_distance(m['rect'], new_rect)
             if d < best_val:
                 best_val = d
                 best_idx = i
-        matched = best_val <= DIST_THRESH and best_idx >= 0
+        matched = best_val <= dist_thresh and best_idx >= 0
     else:
         best_val = 0.0
         for i, m in enumerate(active_masks):
@@ -101,7 +103,7 @@ def match_or_add(active_masks, new_rect, frame_id, ttl_max):
             if iou > best_val:
                 best_val = iou
                 best_idx = i
-        matched = best_val >= IOU_THRESH and best_idx >= 0
+        matched = best_val >= iou_thresh and best_idx >= 0
 
     if matched:
         m = active_masks[best_idx]
@@ -115,10 +117,10 @@ def match_or_add(active_masks, new_rect, frame_id, ttl_max):
             m['vy'] = (ny - ly) / dt
 
         # Smooth exponentiel — stockage float
-        sx = SMOOTH_ALPHA * nx + (1 - SMOOTH_ALPHA) * ox
-        sy = SMOOTH_ALPHA * ny + (1 - SMOOTH_ALPHA) * oy
-        sw = SMOOTH_ALPHA * nw + (1 - SMOOTH_ALPHA) * ow
-        sh = SMOOTH_ALPHA * nh + (1 - SMOOTH_ALPHA) * oh
+        sx = smooth_alpha * nx + (1 - smooth_alpha) * ox
+        sy = smooth_alpha * ny + (1 - smooth_alpha) * oy
+        sw = smooth_alpha * nw + (1 - smooth_alpha) * ow
+        sh = smooth_alpha * nh + (1 - smooth_alpha) * oh
 
         m['last_detected_rect']  = (float(nx), float(ny), float(nw), float(nh))
         m['last_detected_frame'] = frame_id
@@ -137,7 +139,7 @@ def match_or_add(active_masks, new_rect, frame_id, ttl_max):
 
 def predict(active_masks):
     for mask in active_masks:
-        if mask['ttl'] < TTL_MAX * 0.5:
+        if mask['ttl'] < cfg.get("masks.ttl_max") * 0.5:
             continue
         x, y, w, h = mask['rect']
         x += mask['vx']
@@ -145,11 +147,11 @@ def predict(active_masks):
         mask['rect'] = (x, y, w, h)
 
 
-def pad_rect(x, y, w, h, margin, max_w, max_h):
-    x2 = max(x - margin, 0)
-    y2 = max(y - margin, 0)
-    w2 = min(w + 2 * margin, max_w - x2)
-    h2 = min(h + 2 * margin, max_h - y2)
+def pad_rect(x, y, w, h, max_w, max_h):
+    x2 = max(x - cfg.get("masks.margin"), 0)
+    y2 = max(y - cfg.get("masks.margin"), 0)
+    w2 = min(w + 2 * cfg.get("masks.margin"), max_w - x2)
+    h2 = min(h + 2 * cfg.get("masks.margin"), max_h - y2)
     return (x2, y2, w2, h2)
 
 
@@ -186,6 +188,9 @@ _main_stats = {
 
 
 def print_all_stats():
+
+    matching_mode = cfg.get("matching.mode")
+
     n = max(_main_stats["total_frames"], 1)
     cs = capturer.get_stats()
     ds = detector.get_stats()
@@ -221,15 +226,13 @@ def print_all_stats():
     print(f"    {'loop_avg_ms':22s} : {loop_avg}")
     print(f"    {'total_frames':22s} : {_main_stats['total_frames']}")
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
-    print(f"    {'ttl_max':22s} : {TTL_MAX}")
-    print(f"    {'margin_px':22s} : {MARGIN}")
-    print(f"    {'matching_mode':22s} : {MATCHING_MODE}")
-    if MATCHING_MODE == "distance":
-        print(f"    {'dist_thresh':22s} : {DIST_THRESH}")
+    print(f"    {'ttl_max':22s} : {cfg.get("masks.ttl_max")}")
+    print(f"    {'margin_px':22s} : {cfg.get("masks.margin")}")
+    print(f"    {'matching_mode':22s} : {matching_mode}")
+    if matching_mode == "distance":
+        print(f"    {'dist_thresh':22s} : {cfg.get("matching.dist_thresh")}")
     else:
-        print(f"    {'iou_thresh':22s} : {IOU_THRESH}")
-    print(f"    {'debug_draw':22s} : {DEBUG_DRAW}")
-    print(f"    {'debug_enabled':22s} : {DEBUG_ENABLED}")
+        print(f"    {'iou_thresh':22s} : {cfg.get("matching.iou_thresh")}")
 
     old_loop = 32.66
     new_loop = loop_avg
@@ -260,7 +263,9 @@ frame_count = 0
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
-    if DEBUG_DRAW:
+    debug_draw = cfg.get("debug.draw")
+
+    if debug_draw:
         print("🎨 MODE DEBUG VISUEL ACTIVÉ")
         print("   🟩 Vert   = détection fraîche (TTL 3+)")
         print("   🟨 Jaune  = masque persisté   (TTL 2)")
@@ -307,16 +312,16 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 new_plates = detector.get_zones()
                 for p in new_plates:
                     x, y, w, h = p
-                    padded = pad_rect(x, y, w, h, MARGIN, SCREEN_WIDTH, SCREEN_HEIGHT)
-                    match_or_add(active_masks, padded, frame_id, TTL_MAX)
+                    padded = pad_rect(x, y, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
+                    match_or_add(active_masks, padded, frame_id)
 
             """ else:
                 predict(active_masks) """
 
             # ── 4. Cap max masques ──
-            if len(active_masks) > MAX_MASKS:
+            if len(active_masks) > cfg.get("masks.max_masks"):
                 active_masks.sort(key=lambda m: m['ttl'], reverse=True)
-                active_masks = active_masks[:MAX_MASKS]
+                active_masks = active_masks[:cfg.get("masks.max_masks")]
 
             # ── 5. Blur ou debug ──
             blur_zones = [
@@ -329,7 +334,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             buf = sender.borrow()
             np.copyto(buf, frame)
 
-            if DEBUG_DRAW:
+            if debug_draw:
                 apply_blur(buf, blur_zones)
                 draw_debug(buf, active_masks)
             else:
@@ -349,7 +354,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             elapsed = time.time() - fps_timer
             if elapsed >= 2.0:
                 fps = frame_count / elapsed
-                mode = "DEBUG" if DEBUG_DRAW else "PROD"
+                mode = "DEBUG" if debug_draw else "PROD"
                 print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode}")
                 frame_count = 0
                 fps_timer = time.time()
