@@ -1,8 +1,11 @@
-# detect_stats.py
+# detect_stats.py — stats thread-safe
 """
 Compteurs de performance pour le pipeline de détection.
 Tous les timings sont en millisecondes (cumulés entre deux reset).
 """
+import threading
+
+_lock = threading.Lock()
 
 _stats = {
     # ── appels ──
@@ -41,6 +44,13 @@ _stats = {
     "rej_area":         0,
     "rej_fill":         0,
 }
+
+def flush_local(local):
+    """Flush un dict local dans _stats sous un seul lock."""
+    with _lock:
+        for k, v in local.items():
+            _stats[k] += v
+        _stats["total_calls"] += 1
 
 
 def get_stats():
@@ -83,8 +93,14 @@ def get_stats():
         "rej_fill_avg":         round(_stats["rej_fill"]         / n, 1),
     }
 
+def make_local():
+    """Retourne un dict local vierge avec toutes les clés de _stats (sauf total_calls)."""
+    return {k: (0.0 if isinstance(v, float) else 0)
+            for k, v in _stats.items()
+            if k != "total_calls"}
 
 def reset_stats():
-    """Remet tous les compteurs à zéro."""
-    for k in _stats:
-        _stats[k] = 0 if isinstance(_stats[k], int) else 0.0
+    with _lock:
+        for k in _stats:
+            _stats[k] = 0.0 if isinstance(_stats[k], float) else 0
+

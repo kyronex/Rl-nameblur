@@ -1,4 +1,4 @@
-# main.py — v7 (refacto nommage, zéro changement logique)
+# main.py — v8 (dual detect: slow + fast ROI tracking)
 import logging
 from config import cfg
 
@@ -19,8 +19,10 @@ import pyvirtualcam
 
 from capture_thread import CaptureThread
 from detect_thread import DetectThread
+from fast_track_thread import FastTrackThread          # ← AJOUT
 from send_thread import SendThread
-from detect import get_stats as detect_stats
+from detect_stats import get_stats as detect_stats
+from detect_stats import reset_stats as detect_diag_reset
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
 
@@ -29,10 +31,9 @@ SCREEN_WIDTH  = cfg.get("screen.width")
 SCREEN_HEIGHT = cfg.get("screen.height")
 CAPTURE_FPS   = cfg.get("screen.capture_fps")
 VCAM_FPS      = cfg.get("screen.vcam_fps")
-
 cfg.start_watcher()
 
-
+_next_mask_id = 0
 # ═══════════════════════════════════════════════════════
 #  UTILITAIRES TRACKING
 # ═══════════════════════════════════════════════════════
@@ -45,25 +46,20 @@ def ttl_color(ttl):
     else:
         return tuple(cfg.get("debug.colors.dying"))
 
-
-def ttl_label(ttl):
-    return f"TTL={ttl}"
-
+def ttl_label(ttl, source="S"):                        # ← MODIFIÉ
+    return f"TTL={ttl} [{source}]"
 
 def compute_iou(r1, r2):
     """IoU (Intersection over Union) entre deux rectangles (x,y,w,h)."""
     x1, y1, w1, h1 = r1
     x2, y2, w2, h2 = r2
-
     xa = max(x1, x2)
     ya = max(y1, y2)
     xb = min(x1 + w1, x2 + w2)
     yb = min(y1 + h1, y2 + h2)
-
     inter = max(0, xb - xa) * max(0, yb - ya)
     if inter == 0:
         return 0.0
-
     area1 = w1 * h1
     area2 = w2 * h2
     union = area1 + area2 - inter
@@ -78,75 +74,79 @@ def center_distance(r1, r2):
     cy2 = r2[1] + r2[3] / 2
     return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
+def update_mask(mask, new_rect, frame_id, source):
+    """Met à jour un masque existant : smooth, vélocité, TTL."""
+    smooth_alpha = cfg.get("masks.smooth_alpha")
+    nx, ny, nw, nh = new_rect
+    ox, oy, ow, oh = mask['rect']
 
-def match_or_add(active_masks, new_rect, frame_id):
+    lx, ly, _, _ = mask['last_detected_rect']
+    dt = frame_id - mask['last_detected_frame']
+    if dt > 0:
+        mask['vx'] = (nx - lx) / dt
+        mask['vy'] = (ny - ly) / dt
+
+    mask['rect'] = (
+        smooth_alpha * nx + (1 - smooth_alpha) * ox,
+        smooth_alpha * ny + (1 - smooth_alpha) * oy,
+        smooth_alpha * nw + (1 - smooth_alpha) * ow,
+        smooth_alpha * nh + (1 - smooth_alpha) * oh,
+    )
+    mask['last_detected_rect']  = (float(nx), float(ny), float(nw), float(nh))
+    mask['last_detected_frame'] = frame_id
+    mask['ttl'] = cfg.get("masks.ttl_max")
+    mask['last_source'] = source
+
+
+def match_or_add(active_masks, new_rect, frame_id, source="slow"):
+    global _next_mask_id
     best_idx = -1
     nx, ny, nw, nh = new_rect
 
-    ttl_max = cfg.get("masks.ttl_max")
-    smooth_alpha = cfg.get("masks.smooth_alpha")
-    iou_thresh   = cfg.get("matching.iou_thresh")
-    dist_thresh  = cfg.get("matching.dist_thresh")
+    ttl_max     = cfg.get("masks.ttl_max")
+    iou_thresh  = cfg.get("matching.iou_thresh")
+    dist_thresh = cfg.get("matching.dist_thresh")
+    max_masks   = cfg.get("masks.max_masks")
+    mode        = cfg.get("matching.mode")
 
-    if cfg.get("matching.mode") == "distance":
-        best_val = float('inf')
+    if mode == "distance":
+        best_dist = float('inf')
         for i, m in enumerate(active_masks):
             d = center_distance(m['rect'], new_rect)
-            if d < best_val:
-                best_val = d
+            if d < best_dist:
+                best_dist = d
                 best_idx = i
-        matched = best_val <= dist_thresh and best_idx >= 0
+        if best_dist > dist_thresh:
+            best_idx = -1
     else:
-        best_val = 0.0
+        best_score = 0.0
         for i, m in enumerate(active_masks):
-            iou = compute_iou(m['rect'], new_rect)
-            if iou > best_val:
-                best_val = iou
+            score = compute_iou(m['rect'], new_rect)
+            if score > best_score:
+                best_score = score
                 best_idx = i
-        matched = best_val >= iou_thresh and best_idx >= 0
+        if best_score < iou_thresh:
+            best_idx = -1
 
-    if matched:
-        m = active_masks[best_idx]
-        ox, oy, ow, oh = m['rect']
+    if best_idx >= 0:
+        update_mask(active_masks[best_idx], new_rect, frame_id, source)
+        return active_masks[best_idx]['uid']
 
-        # Vélocité basée sur last_detected (pas sur rect prédit)
-        lx, ly, _, _ = m['last_detected_rect']
-        dt = frame_id - m['last_detected_frame']
-        if dt > 0:
-            m['vx'] = (nx - lx) / dt
-            m['vy'] = (ny - ly) / dt
+    if len(active_masks) >= max_masks:
+        return None
 
-        # Smooth exponentiel — stockage float
-        sx = smooth_alpha * nx + (1 - smooth_alpha) * ox
-        sy = smooth_alpha * ny + (1 - smooth_alpha) * oy
-        sw = smooth_alpha * nw + (1 - smooth_alpha) * ow
-        sh = smooth_alpha * nh + (1 - smooth_alpha) * oh
-
-        m['last_detected_rect']  = (float(nx), float(ny), float(nw), float(nh))
-        m['last_detected_frame'] = frame_id
-        m['rect'] = (sx, sy, sw, sh)
-        m['ttl']  = ttl_max
-    else:
-        active_masks.append({
-            'rect': (float(nx), float(ny), float(nw), float(nh)),
-            'ttl':  ttl_max,
-            'vx':   0.0,
-            'vy':   0.0,
-            'last_detected_rect': (float(nx), float(ny), float(nw), float(nh)),
-            'last_detected_frame': frame_id,
-        })
-
-
-def predict(active_masks):
-    for mask in active_masks:
-        if mask['ttl'] < cfg.get("masks.ttl_max") * 0.5:
-            continue
-        x, y, w, h = mask['rect']
-        x += mask['vx']
-        y += mask['vy']
-        mask['rect'] = (x, y, w, h)
-
-
+    _next_mask_id += 1
+    active_masks.append({
+        'uid':                 _next_mask_id,
+        'rect':                (float(nx), float(ny), float(nw), float(nh)),
+        'ttl':                 ttl_max,
+        'last_detected_rect':  (float(nx), float(ny), float(nw), float(nh)),
+        'last_detected_frame': frame_id,
+        'last_source':         source,
+        'vx':                  0.0,
+        'vy':                  0.0,
+    })
+    return _next_mask_id
 
 def pad_rect(x, y, w, h, max_w, max_h):
     return (
@@ -165,14 +165,13 @@ def draw_debug(frame, active_masks):
 
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
 
-        label = ttl_label(ttl)
+        source = m.get('last_source', '?')[0].upper()
+        label = ttl_label(ttl, source)
         label_y = max(y - 6, 14)
-        cv2.putText(frame, label, (x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        cv2.putText(frame, label, (x, label_y),cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
     total = len(active_masks)
-    cv2.putText(frame, f"Masks: {total}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(frame, f"Masks: {total}", (10, 30),cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
 
     return frame
 
@@ -182,9 +181,12 @@ def draw_debug(frame, active_masks):
 # ═══════════════════════════════════════════════════════
 
 _main_stats = {
-    "loop_ms":      0.0,
-    "total_frames": 0,
-    "mask_peak":    0,
+    "loop_ms":       0.0,
+    "total_frames":  0,
+    "mask_peak":     0,
+    "slow_updates":  0,
+    "fast_updates":  0,
+    "predict_count": 0,
 }
 
 
@@ -198,15 +200,22 @@ def print_all_stats():
     dd = detect_stats()
 
     print("\n" + "=" * 55)
-    print("        BENCHMARK PIPELINE v7.0 (capture threadée)")
+    print("        BENCHMARK PIPELINE v8.0 (dual detect)")
     print("=" * 55)
     print(f"\n  📷 CAPTURE (thread @ {CAPTURE_FPS}fps cible)")
     for k, v in cs.items():
         print(f"    {k:22s} : {v}")
 
-    print(f"\n  🔍 DETECT (thread)")
+    print(f"\n  🔍 SLOW DETECT (thread)")
     for k, v in ds.items():
         print(f"    {k:22s} : {v}")
+
+    # ── AJOUT : section fast ──
+    if fast_enabled:
+        fs = fast_tracker.get_stats()
+        print(f"\n  ⚡ FAST TRACK (ROI)")
+        for k, v in fs.items():
+            print(f"    {k:22s} : {v}")
 
     print(f"\n  🌀 BLUR + CVT (fusionnés)")
     for k, v in bs.items():
@@ -225,12 +234,15 @@ def print_all_stats():
     print(f"    {'loop_avg_ms':22s} : {loop_avg}")
     print(f"    {'total_frames':22s} : {_main_stats['total_frames']}")
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
-    print(f"    {'ttl_max':22s} : {cfg.get("masks.ttl_max")}")
+    print(f"    {'slow_updates':22s} : {_main_stats['slow_updates']}")
+    print(f"    {'fast_updates':22s} : {_main_stats['fast_updates']}")
+    print(f"    {'predict_count':22s} : {_main_stats['predict_count']}")
+    print(f"    {'ttl_max':22s} : {cfg.get('masks.ttl_max')}")
     print(f"    {'matching_mode':22s} : {matching_mode}")
     if matching_mode == "distance":
-        print(f"    {'dist_thresh':22s} : {cfg.get("matching.dist_thresh")}")
+        print(f"    {'dist_thresh':22s} : {cfg.get('matching.dist_thresh')}")
     else:
-        print(f"    {'iou_thresh':22s} : {cfg.get("matching.iou_thresh")}")
+        print(f"    {'iou_thresh':22s} : {cfg.get('matching.iou_thresh')}")
 
     old_loop = 32.66
     new_loop = loop_avg
@@ -240,7 +252,7 @@ def print_all_stats():
 
     print(f"\n  📉 GAIN vs v5.1")
     print(f"    {'v5.1 loop_avg':22s} : {old_loop} ms ({old_fps} FPS)")
-    print(f"    {'v7.0 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
+    print(f"    {'v8.0 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
     print(f"    {'économisé':22s} : {saved} ms/frame")
     print(f"    {'accélération':22s} : x{round(old_loop / max(new_loop, 0.01), 2)}")
     print("=" * 55)
@@ -256,30 +268,36 @@ capturer.start()
 detector = DetectThread()
 detector.start()
 
-fps_timer = time.time()
-frame_count = 0
+fast_enabled = cfg.get("detect.fast.enabled", True)
+if fast_enabled:
+    fast_tracker = FastTrackThread(SCREEN_WIDTH, SCREEN_HEIGHT)
+    fast_tracker.start()
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
     debug_draw = cfg.get("debug.draw")
 
-    if debug_draw:
-        print("🎨 MODE DEBUG VISUEL ACTIVÉ")
-        print("   🟩 Vert   = détection fraîche (TTL 3+)")
-        print("   🟨 Jaune  = masque persisté   (TTL 2)")
-        print("   🟥 Rouge  = masque mourant    (TTL 1)")
+    if fast_enabled:
+        print("⚡ FAST TRACKING ACTIVÉ")
     print("📸 En cours... (Ctrl+C pour arrêter)")
 
     sender = SendThread(vcam, SCREEN_WIDTH, SCREEN_HEIGHT)
     sender.start()
 
+    fps_timer = time.time()
+    frame_count = 0
+
     try:
         active_masks = []
         last_detect_version = 0
+        last_fast_version = 0
         last_frame_id = 0
 
         capturer.reset_stats()
         detector.reset_stats()
+        if fast_enabled:
+            fast_tracker.reset_stats()
+        detect_diag_reset()
         blur_reset()
         sender.reset_stats()
 
@@ -297,38 +315,88 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             if frame_id > last_frame_id:
                 last_frame_id = frame_id
                 detector.give_frame(frame)
+                # ── AJOUT : alimenter le fast tracker ──
+                if fast_enabled and active_masks:
+                    fast_tracker.give_frame_and_masks(frame, active_masks)
 
-            # ── 3. Vérifier si nouvelle détection disponible ──
+            updated_uids = set()
+            # ── 3. Slow : nouvelle détection disponible ? ──
             current_version = detector.get_detect_count()
-
+            slow_updated = False
             if current_version > last_detect_version:
+                slow_updated = True
                 for m in active_masks:
                     m['ttl'] -= 1
                 active_masks = [m for m in active_masks if m['ttl'] > 0]
 
                 last_detect_version = current_version
+                _main_stats["slow_updates"] += 1         # ← AJOUT
                 new_plates = detector.get_zones()
                 for p in new_plates:
                     x, y, w, h = p
                     padded = pad_rect(x, y, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
-                    match_or_add(active_masks, padded, frame_id)
+                    uid = match_or_add(active_masks, padded, frame_id, source="slow")  # ← MODIFIÉ
+                    if uid is not None:
+                        updated_uids.add(uid)
 
-            """ else:
-                predict(active_masks) """
+            # ── 3b. Fast : résultats ROI disponibles ? ──  # ← BLOC AJOUTÉ
+            if fast_enabled and not slow_updated:
+                fast_version, fast_results = fast_tracker.get_results()
+                if fast_version > last_fast_version:
+                    last_fast_version = fast_version
+                    _main_stats["fast_updates"] += 1
+                    found_uids = set()
 
-            # ── 4. Cap max masques ──
+                    for mask_uid, new_rect in fast_results:
+                        if new_rect is not None:
+                            found_uids.add(mask_uid)
+
+
+                    tracked_uids = {r[0] for r in fast_results}
+                    for m in active_masks:
+                        if m['uid'] in tracked_uids and m['uid'] not in found_uids:
+                            m['ttl'] -= 1
+
+                    # Purger les morts
+                    active_masks = [m for m in active_masks if m['ttl'] > 0]
+
+                    for mask_uid, new_rect in fast_results:
+                        if new_rect is None:
+                            continue
+                        # Cibler directement le masque par uid
+                        for m in active_masks:
+                            if m['uid'] == mask_uid:
+                                padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                                update_mask(m, padded, frame_id, source="fast")
+                                updated_uids.add(mask_uid)
+                                break
+
+
+            # ── 4. Predict les masques NON mis à jour ce cycle ──
+            for m in active_masks:
+                if m['uid'] not in updated_uids:
+                    x, y, w, h = m['rect']
+                    x += m['vx']
+                    y += m['vy']
+                    # Clamp aux bords écran
+                    x = max(0.0, min(x, SCREEN_WIDTH - w))
+                    y = max(0.0, min(y, SCREEN_HEIGHT - h))
+                    m['rect'] = (x, y, w, h)
+                    _main_stats["predict_count"] += 1
+
+            # ── 5. Cap max masques ──
             if len(active_masks) > cfg.get("masks.max_masks"):
                 active_masks.sort(key=lambda m: m['ttl'], reverse=True)
                 active_masks = active_masks[:cfg.get("masks.max_masks")]
 
-            # ── 5. Blur ou debug ──
+            # ── 6. Blur ou debug ──
             blur_zones = [
                 (int(m['rect'][0]), int(m['rect'][1]),
                  int(m['rect'][2]), int(m['rect'][3]))
                 for m in active_masks
             ]
 
-            # ── 6. Envoi vers OBS (zéro copie) ──
+            # ── 7. Envoi vers OBS (zéro copie) ──
             buf = sender.borrow()
             np.copyto(buf, frame)
 
@@ -340,20 +408,21 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             sender.publish()
 
-            # ── 7. Stats loop ──
+            # ── 8. Stats loop ──
             _main_stats["loop_ms"] += (time.perf_counter() - t_loop) * 1000
             _main_stats["total_frames"] += 1
             _main_stats["mask_peak"] = max(
                 _main_stats["mask_peak"], len(active_masks)
             )
 
-            # ── 8. FPS counter ──
+            # ── 9. FPS counter ──
             frame_count += 1
             elapsed = time.time() - fps_timer
             if elapsed >= 2.0:
                 fps = frame_count / elapsed
                 mode = "DEBUG" if debug_draw else "PROD"
-                print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode}")
+                fast_tag = "+FAST" if fast_enabled else ""
+                print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode} {fast_tag}")
                 frame_count = 0
                 fps_timer = time.time()
 
@@ -363,5 +432,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
     finally:
         sender.stop()
+        if fast_enabled:
+            fast_tracker.stop()
         detector.stop()
         capturer.stop()

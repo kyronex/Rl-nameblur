@@ -19,7 +19,7 @@ matching:
 
 # ── Floutage ──
 blur:
-  mode: "box" # "pixelate", "box", "fill", "gaussian"
+  mode: "fill" # "pixelate", "box", "fill", "gaussian"
   pixel_size: 13
   strength: 27
   fill_color: [80, 80, 80] # gris pour mode fill
@@ -36,7 +36,12 @@ debug:
 
 # ── Détection des cartouches de noms ──
 detect:
-  scale: 2.0 #
+  slow:
+    scale: 2.0 #
+  fast:
+    scale: 3.0
+    roi_margin: 0.6 # +% chaque côté
+    enabled: true
   hsv:
     orange:
       lower: [8, 140, 170]
