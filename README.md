@@ -12,15 +12,18 @@ le flux vers OBS via une caméra virtuelle.
 DXCam (120fps)
     │
     ▼
-CaptureThread ──→ frame BGR
+CaptureThread ──→ frame RGB
     │
-    ├──→ DetectThread (HSV dual-pass orange/bleu)
+    ├──→ DetectThread (Slow — HSV dual-pass orange/bleu, full frame)
     │        └──→ zones [(x, y, w, h), ...]
     │
-    ├──→ Main Loop (TTL + matching distance + smooth + prédiction)
-    │        └──→ blur_zones
+    ├──→ FastTrackThread (Fast — ROI redetect autour des masques connus)
+    │        └──→ zones mises à jour [(x, y, w, h), ...]
     │
-    ├──→ blur.py (Pixelate in-place)
+    ├──→ Main Loop (TTL + matching distance/IoU + smooth + prédiction vélocité)
+    │        └──→ active_masks → blur_zones
+    │
+    ├──→ blur.py (pixelate / box / gaussian / fill — in-place)
     │
     └──→ SendThread ──→ OBS Virtual Camera (pyvirtualcam)
 ```
@@ -29,36 +32,50 @@ CaptureThread ──→ frame BGR
 
 ## Fichiers
 
-| Fichier             | Rôle                                              |
-| ------------------- | ------------------------------------------------- |
-| `main.py`           | Orchestration pipeline, TTL, matching, debug      |
-| `config.py`         | Singleton config — charge config.yaml             |
-| `config.yaml`       | Paramètres centralisés (zéro magic number)        |
-| `capture_thread.py` | Thread de capture DXCam non-bloquant              |
-| `detect_thread.py`  | Thread de détection HSV non-bloquant              |
-| `detect.py`         | Pipeline HSV dual-pass (v2) + pipeline Sobel (v1) |
-| `blur.py`           | Pixelate des zones + conversion BGR→RGB           |
-| `send_thread.py`    | Thread d'envoi vers la caméra virtuelle OBS       |
+| Fichier                | Rôle                                                         |
+| ---------------------- | ------------------------------------------------------------ |
+| `main.py`              | Orchestration pipeline v8, TTL, matching, dual detect, debug |
+| `config.py`            | Singleton config — charge config.yaml + hot-reload (watcher) |
+| `config.yaml`          | Paramètres centralisés (zéro magic number)                   |
+| `capture_thread.py`    | Thread de capture DXCam non-bloquant                         |
+| `detect_thread.py`     | Thread de détection lente (slow — full frame, scale lent)    |
+| `fast_track_thread.py` | Thread de tracking rapide (fast — ROI autour des masques)    |
+| `detect.py`            | Pipeline HSV dual-pass v8 (orange + bleu + white masking)    |
+| `detect_tools.py`      | Morpho, filtrage géométrique, process_channel                |
+| `detect_stats.py`      | Compteurs de performance thread-safe (timings + rejections)  |
+| `blur.py`              | Floutage multi-mode (pixelate, box, gaussian, fill)          |
+| `send_thread.py`       | Thread d'envoi vers la caméra virtuelle OBS                  |
 
 ---
 
 ## Paramètres principaux (`config.yaml`)
 
-| Paramètre       | Valeur par défaut | Description                                        |
-| --------------- | ----------------- | -------------------------------------------------- |
-| `SCREEN_WIDTH`  | 1920              | Résolution capture                                 |
-| `SCREEN_HEIGHT` | 1080              | Résolution capture                                 |
-| `CAPTURE_FPS`   | 120               | FPS cible DXCam                                    |
-| `VCAM_FPS`      | 120               | FPS déclaré à OBS                                  |
-| `TTL_MAX`       | 4                 | Persistance d'un masque (en frames)                |
-| `MARGIN`        | 0                 | Marge (px) autour de chaque zone floutée           |
-| `MAX_MASKS`     | 10                | Nombre max de masques actifs simultanément         |
-| `MATCHING_MODE` | `"distance"`      | Algo de matching : `"distance"` ou `"iou"`         |
-| `DIST_THRESH`   | 60                | Seuil distance (px) pour matcher un masque         |
-| `IOU_THRESH`    | 0.15              | Seuil IoU pour matcher un masque                   |
-| `SMOOTH_FACTOR` | 0.4               | Lissage exponentiel des rects (0=fixe, 1=immédiat) |
-| `DEBUG_DRAW`    | `false`           | Affiche les rectangles colorés TTL dans OBS        |
-| `BLUR_MODE`     | `"pixelate"`      | Mode de flou : `"pixelate"` ou `"gaussian"`        |
+| Clé YAML                 | Valeur par défaut | Description                                                  |
+| ------------------------ | ----------------- | ------------------------------------------------------------ |
+| `screen.width`           | 1920              | Résolution capture                                           |
+| `screen.height`          | 1080              | Résolution capture                                           |
+| `screen.capture_fps`     | 120               | FPS cible DXCam                                              |
+| `screen.vcam_fps`        | 120               | FPS déclaré à OBS                                            |
+| `masks.ttl_max`          | 4                 | Persistance d'un masque (en frames)                          |
+| `masks.max_masks`        | 8                 | Nombre max de masques actifs simultanément                   |
+| `masks.smooth_alpha`     | 1.0               | Lissage exponentiel des rects (0=fixe, 1=immédiat)           |
+| `matching.mode`          | `"distance"`      | Algo de matching : `"distance"` ou `"iou"`                   |
+| `matching.dist_thresh`   | 60                | Seuil distance (px) pour matcher un masque                   |
+| `matching.iou_thresh`    | 0.15              | Seuil IoU pour matcher un masque                             |
+| `blur.mode`              | `"fill"`          | Mode de flou : `"pixelate"`, `"box"`, `"gaussian"`, `"fill"` |
+| `blur.pixel_size`        | 13                | Taille bloc pixelate                                         |
+| `blur.strength`          | 27                | Force du flou gaussien / box                                 |
+| `blur.fill_color`        | `[80, 80, 80]`    | Couleur de remplissage (mode fill)                           |
+| `blur.margin`            | 0                 | Marge (px) autour de chaque zone floutée                     |
+| `detect.slow.scale`      | 2.0               | Facteur de réduction (slow detect)                           |
+| `detect.fast.scale`      | 3.0               | Facteur de réduction (fast ROI tracking)                     |
+| `detect.fast.roi_margin` | 0.6               | Marge ROI autour des masques existants (+%)                  |
+| `detect.fast.enabled`    | true              | Active/désactive le fast tracking                            |
+| `debug.log_level`        | `"WARNING"`       | Niveau de log : DEBUG, INFO, WARNING, ERROR                  |
+| `debug.draw`             | false             | Affiche les rectangles colorés TTL dans OBS                  |
+| `debug.colors.fresh`     | `[0, 255, 0]`     | Couleur masque TTL élevé (vert)                              |
+| `debug.colors.persist`   | `[0, 255, 255]`   | Couleur masque TTL moyen (jaune)                             |
+| `debug.colors.dying`     | `[0, 0, 255]`     | Couleur masque TTL bas (rouge)                               |
 
 ---
 
@@ -77,44 +94,43 @@ CaptureThread ──→ frame BGR
 ────┼──────────────────────────────────┼─────────┼────────────────────────
  3  │ Détection HSV (orange + bleu)    │ v1.0    │ Repère les cartouches
  4  │ Dual-pass HSV (v2)               │ v3.0    │ 2 passes séparées
- 5  │ Morphologie (open + close)       │ v2.0    │ Nettoyage contours
- 6  │ Filtres de forme (ratio, area)   │ v2.0    │ Élimine gros blocs
- 7  │ DetectThread (non-bloquant)      │ v5.0    │ Detect découplé
- 8  │ Resize avant detect (SCALE)      │ v5.0    │ Accélère le HSV
+ 5  │ White masking (core + ext)       │ v8.0    │ Filtre texte blanc
+ 6  │ Morphologie (open + close)       │ v2.0    │ Nettoyage contours
+ 7  │ Filtres de forme (ratio, area)   │ v2.0    │ Élimine gros blocs
+ 8  │ DetectThread slow (non-bloquant) │ v5.0    │ Detect découplé
+ 9  │ Resize avant detect (SCALE)      │ v5.0    │ Accélère le HSV
+10  │ FastTrackThread (ROI redetect)   │ v8.0    │ Tracking rapide ROI
 ────┼──────────────────────────────────┼─────────┼────────────────────────
                     SUIVI / MASQUES
 ────┼──────────────────────────────────┼─────────┼────────────────────────
- 9  │ Système TTL (persistance)        │ v4.0    │ Masque survit N frames
-10  │ Matching par distance            │ v4.0    │ Réidentifie un masque
-11  │ Matching par IoU                 │ v4.0    │ Alternative au distance
-12  │ MAX_MASKS (cap masques actifs)   │ v5.0    │ Évite explosion
-13  │ Vélocité par masque              │ v6.0    │ dx/dy entre détections
-14  │ Prédiction linéaire              │ v6.0    │ Extrapole entre detects
-15  │ Smooth factor (lissage rects)    │ v6.0    │ Élimine micro-sauts
-16  │ TTL_MAX réduit à 4               │ v6.0    │ Moins de fantômes
+11  │ Système TTL (persistance)        │ v4.0    │ Masque survit N frames
+12  │ Matching par distance            │ v4.0    │ Réidentifie un masque
+13  │ Matching par IoU                 │ v4.0    │ Alternative au distance
+14  │ MAX_MASKS (cap masques actifs)   │ v4.0    │ Limite les faux positifs
+15  │ Smooth exponentiel (rects)       │ v5.0    │ Réduit les sauts
+16  │ Prédiction par vélocité          │ v8.0    │ Anticipe le déplacement
 ────┼──────────────────────────────────┼─────────┼────────────────────────
-                    RENDU / BLUR
+                    FLOUTAGE
 ────┼──────────────────────────────────┼─────────┼────────────────────────
-17  │ GaussianBlur                     │ v1.0    │ Premier mode de flou
-18  │ Pixelate (mode actuel)           │ v5.0    │ Plus rapide, plus net
-19  │ Blur in-place                    │ v3.0    │ Pas de copie frame
-20  │ Marge configurable (MARGIN)      │ v4.0    │ Agrandit la zone blur
+17  │ Pixelate in-place                │ v3.0    │ Flou rapide et discret
+18  │ Multi-mode blur                  │ v8.0    │ pixelate/box/gaussian/fill
+19  │ Marge configurable               │ v5.0    │ Couvre débordements
 ────┼──────────────────────────────────┼─────────┼────────────────────────
                     SORTIE
 ────┼──────────────────────────────────┼─────────┼────────────────────────
-21  │ Envoi pyvirtualcam → OBS         │ v1.0    │ Caméra virtuelle
-22  │ SendThread (non-bloquant)        │ v5.0    │ Envoi découplé
-23  │ Double buffer SendThread         │ v6.0    │ Zéro tearing
-24  │ RGB buffer pré-alloué            │ v5.0    │ Évite malloc/frame
+20  │ SendThread (pyvirtualcam)        │ v5.0    │ Envoi OBS non-bloquant
+21  │ Buffer zéro-copie (borrow/pub)   │ v5.1    │ Évite allocations
 ────┼──────────────────────────────────┼─────────┼────────────────────────
                     CONFIG / INFRA
 ────┼──────────────────────────────────┼─────────┼────────────────────────
-25  │ config.yaml centralisé           │ v6.1    │ Zéro magic number
-26  │ config.py singleton              │ v6.1    │ Import unique partout
-27  │ DEBUG_DRAW (rects colorés TTL)   │ v5.0    │ Visualise les masques
-28  │ Benchmark intégré (tous modules) │ v5.0    │ Stats à la sortie
-29  │ Skip frames (configurable)       │ v5.0    │ Blur 1/N frames
-══════════════════════════════════════════════════════════════════════════
+22  │ config.yaml centralisé           │ v6.1    │ Zéro magic number
+23  │ config.py singleton              │ v6.1    │ Import unique partout
+24  │ Hot-reload config (watcher)      │ v8.0    │ Modif YAML à chaud
+25  │ DEBUG_DRAW (rects colorés TTL)   │ v5.0    │ Visualise les masques
+26  │ Benchmark intégré (tous modules) │ v5.0    │ Stats à la sortie
+27  │ detect_stats thread-safe         │ v8.0    │ Compteurs par pipeline
+════╪══════════════════════════════════╪═════════╪════════════════════════
+
 ```
 
 ---
@@ -146,116 +162,33 @@ CaptureThread ──→ frame BGR
 
 ```txt
 ══════════════════════════════════════════════════════════════════════════════════════════
- #  │ Action                              │ Statut     │ Notes
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                         PHASE 1 — FONDATIONS (✅ TERMINÉE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 1  │ Capture écran (DXCam)               │ ✅ FAIT    │ 120fps, grab_avg ~28ms
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 2  │ Détection couleur HSV               │ ✅ FAIT    │ Orange + Bleu, morpho, contours
-    │ (cartouches noms)                   │            │ detect_avg ~102ms
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 3  │ Blur des zones détectées            │ ✅ FAIT    │ Pixelate in-place
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 4  │ Envoi vers caméra virtuelle OBS     │ ✅ FAIT    │ pyvirtualcam + OBS Virtual Camera
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 5  │ Pipeline fonctionnel bout-en-bout   │ ✅ FAIT    │ capture → detect → blur → vcam
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                     PHASE 2 — OPTIMISATION PIPELINE (✅ TERMINÉE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 6  │ Thread séparé pour la détection     │ ✅ FAIT    │ DetectThread, non-bloquant
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 7  │ Thread séparé pour l'envoi vcam     │ ✅ FAIT    │ SendThread, non-bloquant
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 8  │ Système TTL (persistance masques)   │ ✅ FAIT    │ TTL_MAX = 4
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
- 9  │ Matching distance (suivi masques)   │ ✅ FAIT    │ DIST_THRESH = 60
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-10  │ Skip frames (blur 1/N)              │ ✅ FAIT    │ SKIP = 1 (désactivé)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-11  │ Resize avant détection (SCALE)      │ ✅ FAIT    │ SCALE = 2.0, remap coords
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-12  │ Benchmark intégré (tous modules)    │ ✅ FAIT    │ Stats par module + récap final
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-13  │ Mode DEBUG_DRAW                     │ ✅ FAIT    │ Rects colorés TTL + labels
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-14  │ RGB buffer pré-alloué               │ ✅ FAIT    │ Évite allocation chaque frame
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                PHASE 2.5 — INTÉGRITÉ MÉMOIRE (✅ TERMINÉE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-15  │ Double buffer SendThread            │ ✅ FAIT    │ Copie interne, zéro tearing
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-16  │ Valider : pas de tearing/artefacts  │ ✅ FAIT    │ Test visuel PROD OK
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                PHASE 2.7 — SUIVI & PRÉDICTION MASQUES (✅ TERMINÉE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-17  │ SMOOTH_FACTOR sur positions         │ ✅ FAIT    │ α = 0.4, élimine micro-sauts
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-18  │ Vélocité par masque                 │ ✅ FAIT    │ dx/dy calculé à chaque match
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-19  │ Prédiction linéaire                 │ ✅ FAIT    │ pos = pos + v × Δframes
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                PHASE 2.9 — CONFIG GLOBALE (✅ TERMINÉE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-20  │ Fichier config.yaml                 │ ✅ FAIT    │ Tous les paramètres centralisés
-    │                                     │            │ Chargé au démarrage par config.py
-    │                                     │            │ Partagé avec tous les modules
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-21  │ config.py singleton                 │ ✅ FAIT    │ from config import CFG partout
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-22  │ Valider pipeline complet            │ ✅ FAIT    │ ~49 FPS PROD, zéro magic number
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                PHASE 3 — DOUBLE RÉSOLUTION
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-23  │ Detect rapide (SCALE=4)             │ 🟡 NEXT   │ ~15-20ms, grossier
-    │                                     │            │ Confirme les masques existants
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-24  │ Detect lent (SCALE=2, actuel)       │ ⬚ À FAIRE │ ~100ms, précis
-    │                                     │            │ Découvre + recale les masques
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-25  │ Orchestration dual-detect           │ ⬚ À FAIRE │ Thread rapide : continu (positions)
-    │                                     │            │ Thread lent : 1/N (découverte)
-    │                                     │            │ Main fusionne les deux résultats
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-26  │ Valider dual-detect                 │ ⬚ APRÈS   │ Detect effectif >25Hz
-    │                                     │ #25        │ Qualité maintenue
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
-                  PHASE 4 — RÉDUCTION FAUX POSITIFS
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-27  │ Diagnostic faux positifs (diag.py)  │ ⬚ À FAIRE │ Replay, goal, menu, scoreboard
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-28  │ Resserrer seuils HSV               │ ⬚ À FAIRE │ Basé sur mesures diag
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-29  │ Ajuster filtres de forme            │ ⬚ À FAIRE │ Dimensions, ratio, fill
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-30  │ Cap intelligent MAX_MASKS           │ ⬚ À FAIRE │ Score de confiance
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
+ #  │ Feature                               │ Statut     │ Notes
+════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
+                    PHASE 4 — QUALITÉ DÉTECTION
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+28  │ Score de confiance par masque         │ ⬚ À FAIRE │ Prioriser les masques fiables
+29  │ Intelligent MAX_MASKS                 │ ⬚ À FAIRE │ Éjecter les moins confiants
+════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
                     PHASE 5 — STABILITÉ VISUELLE
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-31  │ Réduire clignotement                │ ⬚ À FAIRE │ Combinaison smooth + prédiction
-    │                                     │            │ + moins de faux positifs
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-32  │ Transition douce blur               │ ⬚ À FAIRE │ Fade-in/out basé sur TTL
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+30  │ Réduire clignotement                  │ ⬚ À FAIRE │ Combinaison smooth + prédiction
+    │                                       │            │ + moins de faux positifs
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+31  │ Transition douce blur                 │ ⬚ À FAIRE │ Fade-in/out basé sur TTL
+════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
                     PHASE 6 — STREAM LIVE
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-33  │ Test stabilité longue durée         │ ⬚ À FAIRE │ 30min+, RAM, FPS, CPU
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-34  │ Gestion transitions de jeu          │ ⬚ À FAIRE │ Replay, goal, menu, scoreboard
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-35  │ Premier stream live réel            │ ⬚ À FAIRE │ 🎯 Objectif final
-════╪═════════════════════════════════════╪════════════╪══════════════════════════════════
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+32  │ Test stabilité longue durée           │ ⬚ À FAIRE │ 30min+, RAM, FPS, CPU
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+33  │ Gestion transitions de jeu            │ ⬚ À FAIRE │ Replay, goal, menu, scoreboard
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+34  │ Premier stream live réel              │ ⬚ À FAIRE │ 🎯 Objectif final
+════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
                     PHASE 7 — GPU (SI NÉCESSAIRE)
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-36  │ Évaluer le besoin GPU               │ ⬚ CONDITI  │ Seulement si <30 FPS après
-    │                                     │ ONNEL      │ phases 3 + 4 + 5
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-37  │ Pipeline HSV sur CUDA               │ ⬚ CONDITI  │ cv2.cuda : cvtColor, inRange,
-    │                                     │ ONNEL      │ morphologyEx → ~5-10ms
-────┼─────────────────────────────────────┼────────────┼──────────────────────────────────
-38  │ Blur sur CUDA                       │ ⬚ CONDITI  │ cv2.cuda.GaussianBlur → ~1ms
-    │                                     │ ONNEL      │
-══════════════════════════════════════════════════════════════════════════════════════════
+────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
+35  │ Pipeline GPU (CUDA / OpenCL)          │ ⬚ À FAIRE │ Si CPU insuffisant en live
+════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
+
 ```
 
 ---
@@ -267,111 +200,61 @@ CaptureThread ──→ frame BGR
                               PLANNING PAR SESSIONS
 ══════════════════════════════════════════════════════════════════════════════════════════
 
-SESSION 1 — Config globale YAML (#20-22)               ✅ TERMINÉE (~30 min)
+SESSION 1 — Config globale YAML (#22-23)               ✅ TERMINÉE (~30 min)
 ──────────────────────────────────────────────────────────────────────────────
   ✅ Créé config.yaml avec TOUS les paramètres
-  ✅ Créé config.py singleton (from config import CFG)
+  ✅ Créé config.py singleton (from config import cfg)
   ✅ Migré main.py, detect.py, blur.py, capture/detect/send_thread.py
   ✅ Validé en PROD : ~49 FPS, zéro magic number
 
   Résultat : zéro constante hardcodée dans le code ✅
 
 ──────────────────────────────────────────────────────────────────────────────
-SESSION 2 — Double Résolution (#23-26)                 Durée estimée : 1h30
+SESSION 2 — Dual Detect + Fast Tracking (#10, 24, 27)  ✅ TERMINÉE
 ──────────────────────────────────────────────────────────────────────────────
-  Étape A — detect_fast() standalone (30 min)
-  • SCALE=4, seuils relâchés → viser <20ms
-  • Vérifier qu'il retrouve les masques déjà connus
+  ✅ FastTrackThread : ROI redetect autour des masques connus
+  ✅ Orchestration dual-thread (slow full + fast ROI)
+  ✅ Hot-reload config (watcher thread)
+  ✅ detect_stats thread-safe
+  ✅ White masking (core + ext + dilate)
+  ✅ Prédiction par vélocité
+  ✅ Multi-mode blur (pixelate, box, gaussian, fill)
 
-  Étape B — Orchestration dual-thread (45 min)
-  • DetectFastThread : continu, met à jour positions
-  • DetectSlowThread : 1/3 frames, découvre + recale
-  • Main fusionne les deux flux
-
-  Étape C — Validation (15 min)
-  • Detect effectif passe de ~10Hz à ~30Hz
-  • Pas de régression qualité
-
-  Critère de fin : detect effectif >25Hz, qualité maintenue
-  Dépend de : session 1 ✅
+  Résultat : pipeline v8 opérationnel ✅
 
 ──────────────────────────────────────────────────────────────────────────────
-SESSION 3 — Diagnostic faux positifs (#27)             Durée estimée : 45 min
+SESSION 3 — Qualité détection (#28-29)                 ⬚ À PLANIFIER
 ──────────────────────────────────────────────────────────────────────────────
-  • Lancer sur : en jeu, replay, scoreboard, goal, menu
-  • Capturer screenshots annotés
-  • Rédiger faux_positifs.md
-
-  Critère de fin : document de référence rédigé
-  ⚡ Parallélisable avec session 2
+  • Score de confiance par masque
+  • Éjection intelligente des masques les moins fiables
 
 ──────────────────────────────────────────────────────────────────────────────
-SESSION 4 — Nettoyage détection (#28-31)               Durée estimée : 1h
+SESSION 4 — Stabilité visuelle (#30-31)                ⬚ À PLANIFIER
 ──────────────────────────────────────────────────────────────────────────────
-  • Exclusion zones écran (via config.yaml)
-  • Ajuster seuils HSV + filtres forme (via config.yaml)
-  • Cap intelligent par score de confiance
-  • Valider en DEBUG_DRAW sur toutes les situations
-
-  Critère de fin : <2 faux positifs en jeu normal
-  Dépend de : sessions 1 ✅ + 3
+  • Réduction du clignotement
+  • Transition douce blur (fade-in/out)
 
 ──────────────────────────────────────────────────────────────────────────────
-SESSION 5 — Stabilité visuelle (#32-33)                Durée estimée : 45 min
+SESSION 5 — Stream live (#32-34)                       ⬚ À PLANIFIER
 ──────────────────────────────────────────────────────────────────────────────
-  • Mesurer clignotement restant
-  • Implémenter fade-in/fade-out basé sur TTL
-  • Test visuel 10 min continu
-
-  Critère de fin : flux propre pour un spectateur
-  Dépend de : sessions 2 + 4
+  • Test longue durée (30min+)
+  • Gestion transitions (replay, goal, menu)
+  • Premier stream live réel 🎯
 
 ──────────────────────────────────────────────────────────────────────────────
-SESSION 6 — Pré-production (#34-35)                    Durée estimée : 1h
+SESSION 6 — GPU (si nécessaire) (#35)                  ⬚ CONDITIONNEL
 ──────────────────────────────────────────────────────────────────────────────
-  • Test stabilité 30 min (RAM, FPS, CPU)
-  • Tester transitions : replay, goal, menu
-  • Ajustements config.yaml finaux
-
-  Critère de fin : 30 min sans problème
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 7 — Premier live (#36)                         Durée estimée : 2h
-──────────────────────────────────────────────────────────────────────────────
-  • Stream test privé 30 min → relecture VOD
-  • Ajustements finaux
-  • Premier vrai stream 🎯
-
-  Critère de fin : VOD regardable, noms invisibles
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 8 — GPU (CONDITIONNELLE) (#37-39)              Durée estimée : 2h
-──────────────────────────────────────────────────────────────────────────────
-  ⚠️  SEULEMENT SI après sessions 1-6 :
-      - FPS < 30 en PROD
-      - OU latence perçue encore gênante
-      - OU CPU > 80% en continu
-
-  • Installer opencv-contrib avec CUDA
-  • Porter pipeline HSV sur cv2.cuda
-  • Porter blur sur cv2.cuda
-  • Benchmark comparatif CPU vs GPU
-
-  Critère de fin : gain mesuré justifie la complexité ajoutée
+  • Pipeline GPU uniquement si CPU insuffisant en live
 
 ══════════════════════════════════════════════════════════════════════════════════════════
 
 CHEMIN CRITIQUE :
 
-  S1 ✅ ──→ S2 ──→ S5 ──→ S6 ──→ S7 ──→ [S8 si besoin]
-  30min ✅  1h30   45min  1h     2h       2h
-    │
-    └──→ S3 ──→ S4 ──────┘
-         45min  1h
-         (parallélisable avec S2)
+  S1 ✅ ──→ S2 ✅ ──→ S3 ──→ S4 ──→ S5 ──→ [S6 si besoin]
+                      45min  1h    2h     2h
 
-  Total chemin critique : ~6h (restant après S1)
-  Total avec GPU        : ~8h
+  Total restant chemin critique : ~5h45
+  Total avec GPU                : ~7h45
 
 ══════════════════════════════════════════════════════════════════════════════════════════
 ```
