@@ -16,10 +16,12 @@ class FastTrackThread:
         self._screen_h = screen_height
 
         self._latest_frame = None
+        self._latest_frame_ts = 0.0
         self._latest_masks = []
         self._frame_lock = threading.Lock()
 
         self._results = []
+        self._results_ts = 0.0
         self._results_lock = threading.Lock()
         self._result_version = 0
 
@@ -49,7 +51,7 @@ class FastTrackThread:
 
     # ──────────── Interface ────────────
 
-    def give_frame_and_masks(self, frame, masks):
+    def give_frame_and_masks(self, frame, masks, ts):
         frame_copy = frame.copy()
         masks_copy = [
             {"id": m["uid"], "rect": m["rect"]}
@@ -57,11 +59,12 @@ class FastTrackThread:
         ]
         with self._frame_lock:
             self._latest_frame = frame_copy
+            self._latest_frame_ts = ts
             self._latest_masks = masks_copy
 
     def get_results(self):
         with self._results_lock:
-            return self._result_version, self._results.copy()
+            return self._result_version, self._results.copy(), self._results_ts
 
     # ──────────── Stats ────────────
 
@@ -136,8 +139,9 @@ class FastTrackThread:
             # ── Récupérer ET consommer frame + masks ──
             with self._frame_lock:
                 frame = self._latest_frame
+                frame_ts = self._latest_frame_ts
                 masks = self._latest_masks
-                self._latest_frame = None       # FIX: consommer
+                self._latest_frame = None
 
             if frame is None or not masks:
                 time.sleep(0.001)
@@ -189,6 +193,7 @@ class FastTrackThread:
             # ── Publier résultats ──
             with self._results_lock:
                 self._results = results
+                self._results_ts = frame_ts
                 self._result_version += 1
 
             with self._stats_lock:

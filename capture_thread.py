@@ -10,6 +10,7 @@ class CaptureThread:
         self._target_fps = target_fps
         self._camera = None
         self._latest_frame = None
+        self._latest_ts = 0.0
         self._frame_lock = threading.Lock()
         self._running = False
         self._thread = None
@@ -40,7 +41,7 @@ class CaptureThread:
     def get_frame(self):
         """Récupère la dernière frame (non bloquant)."""
         with self._frame_lock:
-            return self._latest_frame
+            return self._latest_frame, self._latest_ts
 
     def get_frame_id(self):
         """Retourne l'ID de la dernière frame capturée."""
@@ -74,6 +75,7 @@ class CaptureThread:
                 continue
 
             frame = frame.copy()
+            ts = time.perf_counter()
 
             with self._stats_lock:
                 self._grab_count += 1
@@ -81,4 +83,5 @@ class CaptureThread:
 
             with self._frame_lock:
                 self._latest_frame = frame
+                self._latest_ts = ts
                 self._frame_id += 1

@@ -10,7 +10,12 @@ screen:
 masks:
   ttl_max: 4
   max_masks: 8
-  smooth_alpha: 1.0
+  smooth_alpha: 0.90
+  dead_zone: 10
+  velocity_dead_zone: 10
+
+predict:
+  active: true # true ou false
 
 matching:
   mode: "distance" # "distance" ou "iou"
@@ -20,10 +25,11 @@ matching:
 # ── Floutage ──
 blur:
   mode: "fill" # "pixelate", "box", "fill", "gaussian"
-  pixel_size: 13
-  strength: 27
-  fill_color: [80, 80, 80] # gris pour mode fill
-  margin: 0
+  pixel_size: 15
+  strength: 25
+  fill_color: [222, 222, 222] # gris pour mode fill
+  margin: -5
+  snap_grid: 8
 
 # ── Debug / affichage ──
 debug:
@@ -40,8 +46,9 @@ detect:
     scale: 2.0 #
   fast:
     scale: 3.0
-    roi_margin: 0.6 # +% chaque côté
+    roi_margin: 0.5 # +% chaque côté
     enabled: true
+  pre_blur: 1
   hsv:
     orange:
       lower: [8, 140, 170]
@@ -67,7 +74,7 @@ detect:
       width: 4
       height: 2
     pre_open:
-      size: 2
+      size: 1
 
   geometry:
     min_area: 800

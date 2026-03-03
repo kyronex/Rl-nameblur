@@ -9,7 +9,9 @@ class DetectThread:
 
     def __init__(self):
         self._latest_frame = None
+        self._latest_frame_ts = 0.0
         self._latest_zones = []
+        self._latest_zones_ts = 0.0
         self._frame_lock = threading.Lock()
         self._zones_lock = threading.Lock()
         self._running = False
@@ -31,14 +33,15 @@ class DetectThread:
             self._thread.join(timeout=1.0)
         print("[DetectThread/Slow] Arrêté")
 
-    def give_frame(self, frame):
+    def give_frame(self, frame, ts):
         copy = frame.copy()
         with self._frame_lock:
             self._latest_frame = copy
+            self._latest_frame_ts = ts
 
     def get_zones(self):
         with self._zones_lock:
-            return self._latest_zones.copy()
+            return self._latest_zones.copy(), self._latest_zones_ts
 
     def get_detect_count(self):
         with self._detect_lock:
@@ -62,6 +65,7 @@ class DetectThread:
         while self._running:
             with self._frame_lock:
                 frame = self._latest_frame
+                frame_ts = self._latest_frame_ts
 
             if frame is None:
                 time.sleep(0.001)
@@ -73,6 +77,7 @@ class DetectThread:
 
             with self._zones_lock:
                 self._latest_zones = zones
+                self._latest_zones_ts = frame_ts
 
             with self._detect_lock:
                 self._detect_count += 1
