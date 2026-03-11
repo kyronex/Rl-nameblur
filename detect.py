@@ -6,7 +6,7 @@ import logging
 from config import cfg
 #from detect_stats import _stats, get_stats, reset_stats
 from detect_stats import flush_local, make_local, get_stats, reset_stats
-from detect_tools import process_channel
+from detect_tools import process_channel, compute_white_mask, compute_sobel_interiors, refine_and_merge
 
 log = logging.getLogger("detect")
 
@@ -28,37 +28,85 @@ def _build_params(scale):                              # ← FIX: scale en param
     we_high     = tuple(cfg.get("detect.hsv.white_ext.upper",  [230, 30, 255]))
 
     # ── Morpho ──
-    wd_w    = max(round(cfg.get("detect.morpho.white_dilate.width", 28) / scale), 5)
-    wd_h    = max(round(cfg.get("detect.morpho.white_dilate.height", 9) / scale), 3)
-    wd_iter = cfg.get("detect.morpho.white_dilate.iterations", 1)
+    letter_connect_w     = max(round(cfg.get("detect.morpho.white_dilate.width", 15) / scale), 5)
+    letter_connect_h     = max(round(cfg.get("detect.morpho.white_dilate.height", 10) / scale), 3)
+    letter_connect_iter  = cfg.get("detect.morpho.white_dilate.iterations", 1)
 
-    pre_sz  = max(round(cfg.get("detect.morpho.pre_open.size", 4) / scale), 1)
+    gap_fill_w     = max(round(cfg.get("detect.morpho.close.width", 25) / scale), 3)
+    gap_fill_h     = max(round(cfg.get("detect.morpho.close.height", 2) / scale), 1)
 
-    cl_w    = max(round(cfg.get("detect.morpho.close.width", 25) / scale), 3)
-    cl_h    = max(round(cfg.get("detect.morpho.close.height", 2) / scale), 1)
+    # Tailles hardcodées (à mettre en config si besoin de tuner)
+    noise_filter_w, noise_filter_h        = 20, 4
+    line_split_w, line_split_h            = 5, 6
+    sobel_spread_w, sobel_spread_h        = 3, 1
+    sobel_erode_w, sobel_erode_h          = 5, 2
+    fragment_rejoin_w, fragment_rejoin_h  = 4, 1
+    final_split_w, final_split_h          = 1, 2
+    roi_connected_w, roi_connected_h      = 3, 1
 
-    on_w    = max(round(cfg.get("detect.morpho.open_noise.width", 24) / scale), 1)
-    on_h    = max(round(cfg.get("detect.morpho.open_noise.height", 4) / scale), 1)
+    kernel_key = (
+        scale,
+        letter_connect_w, letter_connect_h,
+        gap_fill_w, gap_fill_h,
+        noise_filter_w, noise_filter_h,
+        line_split_w, line_split_h,
+        sobel_spread_w, sobel_spread_h,
+        sobel_erode_w, sobel_erode_h,
+        fragment_rejoin_w, fragment_rejoin_h,
+        final_split_w, final_split_h,
+        roi_connected_w, roi_connected_h,
+    )
 
-    # ── Cache kernels ──
-    kernel_key = (scale, wd_w, wd_h, pre_sz, cl_w, cl_h, on_w, on_h)
-
-    if scale not in _cache_by_scale or _cache_by_scale[scale].get("key") != kernel_key:
-        log.info(f"Kernels recalculés — scale={scale}, key={kernel_key}")
+    # ── Création uniquement si config changée ──
+    cached = _cache_by_scale.get(scale)
+    if cached is None or cached["key"] != kernel_key:
+        log.info(f"Kernels recalculés — scale={scale}")
         _cache_by_scale[scale] = {
             "key": kernel_key,
             "kernels": {
-                "white_dilate":   cv2.getStructuringElement(cv2.MORPH_RECT,    (wd_w, wd_h)),
-                "close_h":        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (cl_w, cl_h)),
-                "open_noise":     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (on_w, on_h)),
-                "pre_open_noise": cv2.getStructuringElement(cv2.MORPH_RECT,    (pre_sz, pre_sz)),
+                # Étape 2b : connecter les lettres d'un pseudo
+                "letter_connect":  cv2.getStructuringElement(cv2.MORPH_RECT, (letter_connect_w, letter_connect_h)),
+                # Étape 3a : supprimer blobs non allongés horizontalement
+                "noise_filter":    cv2.getStructuringElement(cv2.MORPH_RECT, (noise_filter_w, noise_filter_h)),
+                # Étape 3b : séparer les cartouches empilées verticalement
+                "line_split":      cv2.getStructuringElement(cv2.MORPH_RECT, (line_split_w, line_split_h)),
+                # Étape 4d : étaler le gradient Sobel horizontalement
+                "sobel_spread":    cv2.getStructuringElement(cv2.MORPH_RECT, (sobel_spread_w, sobel_spread_h)),
+                # Étape 5a : isoler l'intérieur dense du Sobel
+                "sobel_erode":     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sobel_erode_w, sobel_erode_h)),
+                # Étape 5c : reconnecter les fragments après soustraction
+                "fragment_rejoin": cv2.getStructuringElement(cv2.MORPH_RECT, (fragment_rejoin_w, fragment_rejoin_h)),
+                # Étape 6b : re-séparer les blocs collés après fusion
+                "final_split":     cv2.getStructuringElement(cv2.MORPH_RECT, (final_split_w, final_split_h)),
+                # Étape 7a : combler les trous dans les cartouches
+                "gap_fill":        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (gap_fill_w, gap_fill_h)),
+                # Étape 7b : connecter les pixel des lettre dans les cartouches
+                "roi_connected":   cv2.getStructuringElement(cv2.MORPH_RECT, (roi_connected_w, roi_connected_h)),
             },
         }
 
     kernels = _cache_by_scale[scale]["kernels"]
-
-    # ── Géométrie ──
     params = {
+         # ── Morpho ──
+        "max_gap_x":  max(int(cfg.get("detect.morpho.merge.max_gap_x", 30) / scale), 10),
+        "max_gap_y":  max(int(cfg.get("detect.morpho.merge.max_gap_y", 10) / scale), 2),
+        # ── Adjust ──
+        "max_expand_x_ratio": cfg.get("detect.adjust.max_expand_x_ratio", 0.5),
+        "max_expand_y_ratio": cfg.get("detect.adjust.max_expand_y_ratio", 0.3),
+        "padding": cfg.get("detect.adjust.padding", 3),
+        "adjust_min_blob_area":    cfg.get("detect.adjust.min_blob_area", 10) ,
+        "expand_search_px":    cfg.get("detect.adjust.expand_search_px", 10) ,
+        # ── Split ──
+        "min_valley_width": cfg.get("detect.split.min_valley_width", 0.5),
+        "max_valley_density": cfg.get("detect.split.max_valley_density", 0.3),
+        "min_fragment_width": cfg.get("detect.split.min_fragment_width", 3),
+        # ── Refine ──
+        "refine_min_blob_area":    cfg.get("detect.refine.min_blob_area", 10) ,
+        "min_text_fill":      cfg.get("detect.refine.min_text_fill", 0.3),
+        "var_norm":       cfg.get("detect.refine.thresh.var_norm",  1000.0),
+        "coherent_delta":       cfg.get("detect.refine.thresh.coherent_delta",  33),
+        "min_bg_score":       cfg.get("detect.refine.thresh.min_bg_score",  10),
+        # ── Géométrie ──
         "min_area":   max(round(cfg.get("detect.geometry.min_area",   800)   / scale**2), 1),
         "max_area":   max(round(cfg.get("detect.geometry.max_area",   20000) / scale**2), 1),
         "min_width":  max(round(cfg.get("detect.geometry.min_width",  80)    / scale), 1),
@@ -81,66 +129,72 @@ def _build_params(scale):                              # ← FIX: scale en param
         "we_high":     np.array(we_high),
     }
 
-    return colors, kernels, params, wd_iter
-
+    return colors, kernels, params, letter_connect_iter
 
 def _run_pipeline(frame, scale):
     """
-    Pipeline de détection complet sur une frame (full ou ROI crop).
-    Retourne une liste de rects (x, y, w, h) en coordonnées de la frame d'entrée.
+    Pipeline White-First :
+    1. Chercher le texte blanc (signal fort)
+    2. Former des blobs (dilatation légère + morpho)
+    3. Valider chaque blob par présence de couleur orange/bleu autour
+    Retourne une liste de rects (x, y, w, h) en coordonnées frame d'entrée.
     """
     local = make_local()
     t_start = time.perf_counter()
-    colors, kernels, params, wd_iter = _build_params(scale)
+    colors, kernels, params, letter_connect_iter = _build_params(scale)
+
+    # ══════════════════════════════════════════════════
+    #  ÉTAPE 1 — Préparation de l'image
+    # ══════════════════════════════════════════════════
 
     # ── 1. Resize ──
     t0 = time.perf_counter()
     h_orig, w_orig = frame.shape[:2]
     small = cv2.resize(frame,(int(w_orig / scale), int(h_orig / scale)),interpolation=cv2.INTER_LINEAR)
+    h_small, w_small = small.shape[:2]
     local["resize_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 2. HSV ──
+    # ── Grayscale ──
+    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+
+    # ── 2. Masque blanc → nettoyage ──
     t0 = time.perf_counter()
+    mask_white, white_clean = compute_white_mask(gray, kernels, letter_connect_iter)
+    local["compute_white_mask_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── 3. Sobel → intérieurs ──
+    t0 = time.perf_counter()
+    interior_v1, interior_v2 = compute_sobel_interiors(gray, white_clean, kernels)
+    local["compute_sobel_interiors_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── 4. Raffinage → fusion → close ──
+    t0 = time.perf_counter()
+    closed = refine_and_merge(white_clean, interior_v1, interior_v2, kernels)
+    local["refine_and_merge_ms"] += (time.perf_counter() - t0) * 1000
+
+    # ── HSV ──
+    lab = cv2.cvtColor(small, cv2.COLOR_RGB2Lab)
     hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
-    local["hsv_ms"] += (time.perf_counter() - t0) * 1000
+    # ── 5. Contours + filtre géométrique (ratio, area, fill) ──
+    log.debug("START")
+    candidates = process_channel(closed,small, mask_white, h_small, params, kernels, local)
+    log.debug("END")
 
-    # ── 3. Masques couleur ──
-    t0 = time.perf_counter()
-    mask_orange = cv2.inRange(hsv, colors["orange_low"], colors["orange_high"])
-    local["mask_orange_ms"] += (time.perf_counter() - t0) * 1000
+    if not candidates:
+        local["total_ms"] += (time.perf_counter() - t_start) * 1000
+        flush_local(local)
+        return []
 
-    t0 = time.perf_counter()
-    mask_blue = cv2.inRange(hsv, colors["blue_low"], colors["blue_high"])
-    local["mask_blue_ms"] += (time.perf_counter() - t0) * 1000
-
-    # ── 4. Combine orange | blue ──
-    t0 = time.perf_counter()
-    mask_combined = cv2.bitwise_or(mask_orange, mask_blue)
-    local["combine_ms"] += (time.perf_counter() - t0) * 1000
-
-    # ── 5. Masques blanc ──
-    t0 = time.perf_counter()
-    mask_white = cv2.inRange(hsv, colors["wc_low"], colors["wc_high"])
-    white_dilated = cv2.dilate(mask_white, kernels["white_dilate"], iterations=wd_iter)
-    local["mask_white_ms"] += (time.perf_counter() - t0) * 1000
-
-    # ── 6. AND couleur + blanc dilaté ──
-    t0 = time.perf_counter()
-    mask_and = cv2.bitwise_and(mask_combined, white_dilated)
-    local["combine_wd_ms"] += (time.perf_counter() - t0) * 1000
-
-    # ── 7. Morpho + contours ──
-    raw_plates = process_channel(mask_and, kernels, params, local)
+    local["filter_uniform_ms"] = (time.perf_counter() - t0) * 1000
+    local["plates_found"] = len(candidates)
 
     # ── 8. Remap vers résolution d'entrée ──
     plates = [
         (int(px * scale), int(py * scale), int(pw * scale), int(ph * scale))
-        for (px, py, pw, ph) in raw_plates
+        for (px, py, pw, ph) in candidates
     ]
-
-    local["total_ms"]    += (time.perf_counter() - t_start) * 1000
+    local["total_ms"] += (time.perf_counter() - t_start) * 1000
     flush_local(local)
-
     return plates
 
 

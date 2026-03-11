@@ -33,12 +33,22 @@ blur:
 
 # ── Debug / affichage ──
 debug:
-  log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
-  draw: false
+  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
+  draw: true
   colors:
     fresh: [0, 255, 0]
     persist: [0, 255, 255]
     dying: [0, 0, 255]
+    void: [0, 0, 0]
+  colors_ttl:
+    ttl_1: [255, 0, 0] # Rouge
+    ttl_2: [255, 165, 0] # Orange
+    ttl_3: [255, 255, 0] # Jaune
+    ttl_4: [0, 255, 0] # Vert
+    ttl_5: [0, 200, 255] # Cyan
+    ttl_6: [0, 0, 255] # Bleu
+    ttl_7: [255, 0, 255] # Magenta
+    ttl_0: [0, 0, 0]
 
 # ── Détection des cartouches de noms ──
 detect:
@@ -64,24 +74,38 @@ detect:
       upper: [180, 35, 255]
   morpho:
     white_dilate:
-      width: 25
-      height: 3
-      iterations: 2
+      width: 20
+      height: 10
+      iterations: 1
     close:
-      width: 25
-      height: 1
-    open_noise:
-      width: 4
-      height: 2
-    pre_open:
-      size: 1
-
+      width: 10
+      height: 3
+    merge:
+      max_gap_x: 30
+      max_gap_y: 2
+  adjust:
+    max_expand_x_ratio: 0.5
+    max_expand_y_ratio: 0.3
+    padding: 2
+    adjust_min_blob_area: 10
+    expand_search_px: 10
+  split:
+    min_valley_width: 6
+    max_valley_density: 0.05
+    min_fragment_width: 3
+  refine:
+    refine_min_blob_area: 10
+    min_text_fill: 0.08 # variance colonnes pour texte
+    thresh:
+      var_norm: 1100.0
+      coherent_delta: 30
+      min_bg_score: 0.15
   geometry:
-    min_area: 800
+    min_area: 500
     max_area: 80000
-    min_width: 80
-    min_height: 16
-    min_ratio: 1.5
+    min_width: 30
+    min_height: 14
+    min_ratio: 1.45
     max_ratio: 18.0
     min_fill: 0.15
     max_fill: 0.95

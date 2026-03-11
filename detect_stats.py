@@ -1,8 +1,4 @@
 # detect_stats.py — stats thread-safe
-"""
-Compteurs de performance pour le pipeline de détection.
-Tous les timings sont en millisecondes (cumulés entre deux reset).
-"""
 import threading
 
 _lock = threading.Lock()
@@ -10,6 +6,9 @@ _lock = threading.Lock()
 _stats = {
     # ── appels ──
     "total_calls":      0,
+    "compute_white_mask_ms":         0.0,
+    "compute_sobel_interiors_ms":         0.0,
+    "refine_and_merge_ms":         0.0,
 
     # ── timings pipeline ──
     "total_ms":         0.0,
@@ -20,15 +19,13 @@ _stats = {
     "mask_orange_ms":   0.0,
     "mask_blue_ms":     0.0,
     "mask_white_ms":    0.0,        # white_core + white_ext + dilate + AND
-
+    "filter_uniform_ms":  0.0,
     # ── timings combine ──
     "combine_ms":       0.0,        # orange | blue
     "combine_wd_ms":    0.0,        # AND avec white dilaté
 
     # ── timings morpho + contours ──
     "channel_ms":       0.0,        # process_channel total
-    "pre_open_ms":         0.0,
-    "close_ms":         0.0,
     "open_ms":          0.0,
     "contour_ms":       0.0,        # findContours seul
     "filter_loop_ms":   0.0,        # boucle filtre géométrique
@@ -43,6 +40,9 @@ _stats = {
     "rej_ratio":        0,
     "rej_area":         0,
     "rej_fill":         0,
+    "rej_no_fond":          0,
+    "rej_uniform":          0,
+    "rej_saturation":          0,
 }
 
 def flush_local(local):
@@ -75,11 +75,11 @@ def get_stats():
 
         # ── timings morpho + contours ──
         "channel_avg_ms":       round(_stats["channel_ms"]       / n, 2),
-        "pre_open_avg_ms":         round(_stats["pre_open_ms"]         / n, 2),
-        "close_avg_ms":         round(_stats["close_ms"]         / n, 2),
+        "refine_and_merge_avg_ms":         round(_stats["refine_and_merge_ms"]         / n, 2),
         "open_avg_ms":          round(_stats["open_ms"]          / n, 2),
         "contour_avg_ms":       round(_stats["contour_ms"]       / n, 2),
         "filter_loop_avg_ms":   round(_stats["filter_loop_ms"]   / n, 2),
+        "filter_uniform_avg_ms":  round(_stats["filter_uniform_ms"]  / n, 2),
 
         # ── compteurs détection ──
         "contours_raw_avg":     round(_stats["contours_raw"]     / n, 1),
@@ -91,6 +91,9 @@ def get_stats():
         "rej_ratio_avg":        round(_stats["rej_ratio"]        / n, 1),
         "rej_area_avg":         round(_stats["rej_area"]         / n, 1),
         "rej_fill_avg":         round(_stats["rej_fill"]         / n, 1),
+        "rej_no_fond_avg":      round(_stats["rej_no_fond"]        / n, 1),
+        "rej_uniform_avg":      round(_stats["rej_uniform"]        / n, 1),
+        "rej_saturation_avg":   round(_stats["rej_saturation"]        / n, 1),
     }
 
 def make_local():
