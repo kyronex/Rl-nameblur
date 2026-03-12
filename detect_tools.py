@@ -50,12 +50,10 @@ def adjust_boxes(boxes, mask_white, h_img, params):
     min_blob = params.get("adjust_min_blob_area", 10)
     expand_search = params.get("expand_search_px", 2)
     retract_density = 0.25
-    #log.debug("max_ry=%s, min_blob=%s, expand_search=%s", max_ry, min_blob, expand_search)
     result = []
     for (x, y, w, h) in boxes:
         roi = mask_white[y:y+h, x:x+w]
         if roi.size == 0:
-            #log.debug("  [%d,%d %dx%d] ROI vide → skip", x, y, w, h)
             result.append((x, y, w, h))
             continue
         n_labels, labels, stats_cc, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
@@ -64,11 +62,7 @@ def adjust_boxes(boxes, mask_white, h_img, params):
             area_i = stats_cc[i, cv2.CC_STAT_AREA]
             if area_i >= min_blob:
                 valid.append(i)
-            #else:
-                #log.debug("  [%d,%d %dx%d] CC#%d area=%d < %d → rejeté", x, y, w, h, i, area_i, min_blob)
-        #log.debug("  [%d,%d %dx%d] CC: %d total, %d valides", x, y, w, h, n_labels - 1, len(valid))
         if not valid:
-            #log.debug("  [%d,%d %dx%d] aucun CC valide → inchangé", x, y, w, h)
             result.append((x, y, w, h))
             continue
         # ── Rétraction verticale seulement ──
@@ -78,7 +72,6 @@ def adjust_boxes(boxes, mask_white, h_img, params):
         nx, nw = x, w
         ny = y + ry1
         nh = ry2 - ry1
-        #log.debug("  [%d,%d %dx%d] CC ry=[%d→%d] → global=[%d,%d %dx%d]", x, y, w, h, ry1, ry2, nx, ny, nw, nh)
         # Haut
         while nh > 1:
             row = mask_white[ny:ny+1, nx:nx+nw]
@@ -86,14 +79,12 @@ def adjust_boxes(boxes, mask_white, h_img, params):
                 break
             ny += 1
             nh -= 1
-
         # ── Rétraction BAS par densité ──
         while nh > 1:
             row = mask_white[ny+nh-1:ny+nh, nx:nx+nw]
             if row.size == 0 or cv2.countNonZero(row) / max(nw, 1) >= retract_density:
                 break
             nh -= 1
-
         # ── Expand HAUT (inchangé, sans seuil) ──
         if ry1 <= 3 and ny > 0:
             for _ in range(expand_search):
@@ -104,7 +95,6 @@ def adjust_boxes(boxes, mask_white, h_img, params):
                     break
                 ny -= 1
                 nh += 1
-
         # ── Expand BAS (inchangé, sans seuil) ──
         if ry2 >= h - 3 and ny + nh < h_img:
             for _ in range(expand_search):
@@ -114,15 +104,12 @@ def adjust_boxes(boxes, mask_white, h_img, params):
                 if row.size == 0 or cv2.countNonZero(row) == 0:
                     break
                 nh += 1
-            #log.debug("  expand B: ry2=%d h=%d expanded=%d", ry2, h, expanded)
-        #log.debug("  → final [%d,%d %dx%d]", nx, ny, nw, nh)
         result.append((nx, ny, nw, nh))
     return result
 
 # ── merge_nearby_horizontal ──
 def merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
     """Fusionne les boxes proches horizontalement et alignées en Y."""
-    #log.debug("max_gap_x=%d max_gap_y=%d", max_gap_x, max_gap_y)
     if not boxes:
         return []
     sorted_boxes = sorted(boxes, key=lambda b: b[0])
@@ -142,7 +129,6 @@ def merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
         cy_anchor = anchor[1] + anchor[3] / 2
         cy_b = b[1] + b[3] / 2
         cy_diff = abs(cy_anchor - cy_b)
-        #log.debug("gap_x=%d overlap=%d y_ok=%d h_diff=%d cy_diff=%.1f",gap_x, overlap, y_ok, h_diff, cy_diff)
         if gap_x < max_gap_x and y_ok and h_diff <= 3 and cy_diff <= 2:
             group.append(b)
             gx2 = max(gx2, b[0] + b[2])
@@ -265,15 +251,12 @@ def sweep_and_cut(ccs, roi, min_text_fill=0.08):
 def validate_text(boxes, mask_white, params, kernels):
     result = []
     for (bx, by, bw, bh) in boxes:
-        #log.debug(f"── validate_text box ({bx},{by},{bw},{bh}) ──")
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
             continue
         roi_connected = cv2.dilate(roi, kernels["roi_connected"], iterations=1)
         num_labels, labels = cv2.connectedComponents(roi_connected)
-        #log.debug(f"  num_labels={num_labels}")
         if num_labels <= 1:
-            #log.debug(f"  → REJET num_labels <= 1")
             continue
         cc_boxes = []
         for label_id in range(1, num_labels):
@@ -284,30 +267,23 @@ def validate_text(boxes, mask_white, params, kernels):
             y2 = int(coords[0].max()) + 1
             x1 = int(coords[1].min())
             x2 = int(coords[1].max()) + 1
-            w = x2 - x1
-            h = y2 - y1
+            #w = x2 - x1
+            #h = y2 - y1
 
-            bbox_area = w * h
-            ratio = w / max(h, 1)
-            area = int(coords[0].size)
-            fill  = area / max(bbox_area, 1)
-            #log.debug(f"  CC#{label_id} x1={x1} y1={y1} w={w} h={h} ratio={ratio:.2f} area={area} fill={fill:.2f} bh={bh}")
+            #bbox_area = w * h
+            #ratio = w / max(h, 1)
+            #fill  = area / max(bbox_area, 1)
             #if ratio < 1.5 and fill > 0.75 and w > bh * 0.5:
-                #log.debug(f"  → REJET sphère ratio={ratio:.2f} fill={fill:.2f} w={w} > bh*0.5={bh*0.5:.0f}")
                 #continue
+            area = int(coords[0].size)
             if area < params["refine_min_blob_area"]:
-                #log.debug(f"  → REJET area={area} < refine_min_blob_area={params['refine_min_blob_area']}")
                 continue
-            #log.debug(f"  → ACCEPT CC#{label_id}")
             cc_boxes.append((x1, y1, x2, y2))
-        #log.debug(f"  cc_boxes retenues: {len(cc_boxes)}")
         if not cc_boxes:
-            #log.debug(f"  → REJET aucune cc_box")
             continue
         # ── Trier par X ──
         cc_boxes.sort(key=lambda c: c[0])
         groups = sweep_and_cut(cc_boxes, roi, params["min_text_fill"])
-        #log.debug(f"  groups après sweep_and_cut: {len(groups)} → {groups}")
         for (gx1, gy1, gx2, gy2) in groups:
             result.append((bx + gx1, by + gy1, gx2 - gx1, gy2 - gy1))
         continue
@@ -330,9 +306,7 @@ def validate_background(boxes, mask_white, rgb, params):
     var_norm        = params.get("var_norm", 200.0)  # variance au-delà = score 0
     coherent_delta  = params.get("coherent_delta", 33)
     min_score       = params.get("min_bg_score", 0.5)
-    log.debug(f"── var_norm ={var_norm} coherent_delta={coherent_delta} min_score={min_score} ──")
     result = []
-    log.debug("validate_background input: %d boxes", len(boxes))
     for (x, y, w, h) in boxes:
         h_pad = 0
         w_pad = 2
@@ -356,15 +330,12 @@ def validate_background(boxes, mask_white, rgb, params):
         s_coh = float(np.count_nonzero(fond_diff < coherent_delta )) / fond_count
         # ── Score combiné ──
         score = s_var * s_coh
-        log.debug(f"x={x} w={w} h={h} | median_var={median_var:.1f} fond_count={fond_count}")
-        log.debug(f"x={x} w={w} | s_var={s_var:.2f} s_coh={s_coh:.2f} → score={score:.3f}")
         if score >= min_score:
-            log.debug(f"ACCEPT x={x} y={y} w={w} h={h} score={score:.3f}")
             result.append((x, y, w, h))
     return result
 
 # ── filter_geometry ──
-def filter_geometry(boxes, masked, params, stats):
+def filter_geometry(boxes, masked, params):
     """Filtre ratio/area/fill sur des boxes (déjà mergées)."""
     t0 = time.perf_counter()
 
@@ -374,40 +345,19 @@ def filter_geometry(boxes, masked, params, stats):
         area = w * h
         roi = masked[y:y+h, x:x+w]
         if area < params["min_area"]:
-            log.debug(f"REJET area<   | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} | min_area={params['min_area']}")
-            stats["rej_area"] += 1
             continue
         if area > params["max_area"]:
-            log.debug(f"REJET area>   | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} | max_area={params['max_area']}")
-            stats["rej_area"] += 1
             continue
         if w < params["min_width"]:
-            log.debug(f"REJET width   | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} | min_width={params['min_width']}")
-            stats["rej_width"] += 1
             continue
         if h < params["min_height"]:
-            log.debug(f"REJET height  | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} | min_height={params['min_height']}")
-            stats["rej_height"] += 1
             continue
         if ratio < params["min_ratio"] or ratio > params["max_ratio"]:
-            log.debug(f"REJET ratio   | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} | range=[{params['min_ratio']:.1f}, {params['max_ratio']:.1f}]")
-            stats["rej_ratio"] += 1
             continue
-
         fill = cv2.countNonZero(roi) / max(area, 1)
         if fill < params["min_fill"] or fill > params["max_fill"]:
-            log.debug(f"REJET fill    | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} fill={fill:.2f} | range=[{params['min_fill']:.2f}, {params['max_fill']:.2f}]")
-            stats["rej_fill"] += 1
             continue
-
-        log.debug(f"ACCEPT        | x={x} y={y} w={w} h={h} ratio={ratio:.2f} area={area} fill={fill:.2f}")
         plates.append((x, y, w, h))
-
-    stats["filter_loop_ms"] += (time.perf_counter() - t0) * 1000
-    stats["plates_found"] += len(plates)
-    flush_local(stats)
-    log.debug(f"plates retenues       : {len(plates)}")
-
     return plates
 
 # ── resolve_overlaps ──
@@ -505,7 +455,6 @@ def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
     return sum(scores) / len(scores)
 
 def resolve_overlaps(boxes, mask_white,params):
-    #log.debug(f"resolve_overlaps input: {len(boxes)} boxes")
     if len(boxes) < 2:
         return list(boxes)
     img_h, img_w = mask_white.shape[:2]
@@ -519,7 +468,6 @@ def resolve_overlaps(boxes, mask_white,params):
     # ── 3. Résoudre les chevauchements ──
     result = []
     for s in scored:
-        #log.debug(f"  score={s['score']:.3f} area={s['rect'][2]*s['rect'][3]} rect={s['rect']}")
         rect = s["rect"]
         if rect is None:
             continue
@@ -533,10 +481,8 @@ def resolve_overlaps(boxes, mask_white,params):
             ix2 = min(cx + cw, rx + rw)
             iy2 = min(cy + ch, ry + rh)
             if ix2 <= ix1 or iy2 <= iy1:
-                #log.debug(f"  no overlap: current=({cx},{cy},{cw},{ch}) vs ref=({rx},{ry},{rw},{rh})")
                 continue  # pas de chevauchement
             # ── Recadrer la box courante (faible) via mask_white ──
-            #log.debug(f"  OVERLAP: current=({cx},{cy},{cw},{ch}) vs ref=({rx},{ry},{rw},{rh})")
             mask_work = mask_white.copy()
             overlap_y1 = max(ry, cy)
             overlap_y2 = min(ry + rh, cy + ch)
@@ -567,7 +513,9 @@ def resolve_overlaps(boxes, mask_white,params):
 def write_rects(image, rects, color , thickness=2):
     for (x, y, w, h) in rects:
         cv2.rectangle(image, (x, y), (x + w, y + h), color, thickness)
-
+    #write_rects(screen, split, Void , 1)
+    #cv2.imshow("screen", screen)
+    #cv2.waitKey(0)
 # ── tight_crop_white ──
 def tight_crop_white(boxes, mask_white):
     """Recadre chaque box au bounding-box réel des pixels blancs qu'elle contient."""
@@ -575,7 +523,6 @@ def tight_crop_white(boxes, mask_white):
     for (x, y, w, h) in boxes:
         roi = mask_white[y:y+h, x:x+w]
         if roi.size == 0 or cv2.countNonZero(roi) == 0:
-            #log.debug(f"tight_crop REJET vide | x={x} y={y} w={w} h={h}")
             continue
         coords = cv2.findNonZero(roi)
         rx, ry, rw, rh = cv2.boundingRect(coords)
@@ -637,72 +584,37 @@ def refine_and_merge(white_clean, interior_v1, interior_v2, kernels):
 def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     t0 = time.perf_counter()
     plates = []
-    Vert = tuple(cfg.get("debug.colors_ttl.ttl_4"))
-    Magenta = tuple(cfg.get("debug.colors_ttl.ttl_7"))
-    Void = tuple(cfg.get("debug.colors_ttl.ttl_0"))
-    screen = rgb.copy()
 
-    log.debug("extract_raw_boxes")
     boxes = extract_raw_boxes(masked, params)
-    #write_rects(screen, boxes, Void , 3)
-    print("=" * 55)
 
     log.debug("boxes_ar")
     boxes_ar = adjust_resolve(boxes, mask_white, h_img, params)
-    #write_rects(screen, resolve, Void , 3)
-    print("=" * 55)
 
     log.debug("split_wide_boxes")
     split = split_wide_boxes(boxes_ar, mask_white, params)
-    #write_rects(screen, split, Void , 1)
-    print("=" * 55)
 
     log.debug("split_ar")
     split_ar = adjust_resolve(split, mask_white, h_img, params)
-    #write_rects(screen, split_ar, Magenta , 2)
-    print("=" * 55)
 
     log.debug("validate_text")
     validated_t = validate_text(split_ar, mask_white, params, kernels)
-    #write_rects(screen, validated_t, Void , 2)
-    print("=" * 55)
 
     log.debug("validated_t_ar")
     validated_t_ar = adjust_resolve(validated_t, mask_white, h_img, params)
-    #write_rects(screen, validated_t_ar, Void ,3)
-    print("=" * 55)
 
     log.debug("merge_nearby_horizontal")
     merge = merge_nearby_horizontal(validated_t_ar, params["max_gap_x"],params["max_gap_y"])
-    #write_rects(screen, merge, Void , 3)
-    print("=" * 55)
 
     log.debug("validate_background")
     validated_b = validate_background(merge,mask_white, rgb, params)
-    #write_rects(screen, validated_b, Magenta ,1)
-    print("=" * 55)
 
     log.debug("validated_b_ar")
     validated_b_ar = adjust_resolve(validated_b, mask_white, h_img, params)
-    #write_rects(screen, validated_b_ar, Void ,2)
-    print("=" * 55)
 
     log.debug("expand_plates")
     expanded = expand_plates(validated_b_ar,rgb)
-    #write_rects(screen, expanded, Magenta ,1)
-    print("=" * 55)
 
     log.debug("filter_geometry")
-    plates = filter_geometry(expanded, masked, params, stats)
-    #write_rects(screen, plates, Vert , 1)
-    print("=" * 55)
-
-    #cv2.imshow("screen", screen)
-    #cv2.waitKey(0)
-
-    stats["filter_loop_ms"] += (time.perf_counter() - t0) * 1000
-    stats["plates_found"] += len(plates)
-
-    log.debug(f"plates retenues       : {len(plates)}")
+    plates = filter_geometry(expanded, masked, params)
 
     return plates

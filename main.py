@@ -196,6 +196,7 @@ def draw_debug(frame, active_masks):
 
 _main_stats = {
     "loop_ms":       0.0,
+    "blur_ms":       0.0,
     "total_frames":  0,
     "mask_peak":     0,
     "slow_updates":  0,
@@ -245,7 +246,9 @@ def print_all_stats():
 
     print(f"\n  🎬 MAIN LOOP")
     loop_avg = round(_main_stats['loop_ms'] / n, 2)
+    blur_avg = round(_main_stats['blur_ms'] / n, 2)    # ← AJOUT
     print(f"    {'loop_avg_ms':22s} : {loop_avg}")
+    print(f"    {'blur_avg_ms':22s} : {blur_avg}")
     print(f"    {'total_frames':22s} : {_main_stats['total_frames']}")
     print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
     print(f"    {'slow_updates':22s} : {_main_stats['slow_updates']}")
@@ -423,6 +426,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             # ── 7. Envoi vers OBS (zéro copie) ──
             buf = sender.borrow()
             np.copyto(buf, frame)
+            t_blur = time.perf_counter()
 
             if debug_draw:
                 apply_blur(buf, blur_zones)

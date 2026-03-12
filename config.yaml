@@ -33,8 +33,8 @@ blur:
 
 # ── Debug / affichage ──
 debug:
-  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
-  draw: true
+  log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
+  draw: false
   colors:
     fresh: [0, 255, 0]
     persist: [0, 255, 255]
@@ -55,10 +55,9 @@ detect:
   slow:
     scale: 2.0 #
   fast:
-    scale: 3.0
+    scale: 2.0
     roi_margin: 0.5 # +% chaque côté
     enabled: true
-  pre_blur: 1
   hsv:
     orange:
       lower: [8, 140, 170]
