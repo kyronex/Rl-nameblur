@@ -5,6 +5,8 @@ _lock = threading.Lock()
 
 _stats = {
     # ── appels ──
+    "sat_mask_ms":        0.0,
+    "flat_mask_ms":         0.0,
     "total_calls":      0,
     "compute_white_mask_ms":         0.0,
     "compute_sobel_interiors_ms":         0.0,

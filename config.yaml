@@ -33,7 +33,7 @@ blur:
 
 # ── Debug / affichage ──
 debug:
-  log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
+  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
   draw: false
   colors:
     fresh: [0, 255, 0]
@@ -41,14 +41,14 @@ debug:
     dying: [0, 0, 255]
     void: [0, 0, 0]
   colors_ttl:
-    ttl_1: [255, 0, 0] # Rouge
-    ttl_2: [255, 165, 0] # Orange
-    ttl_3: [255, 255, 0] # Jaune
-    ttl_4: [0, 255, 0] # Vert
-    ttl_5: [0, 200, 255] # Cyan
-    ttl_6: [0, 0, 255] # Bleu
-    ttl_7: [255, 0, 255] # Magenta
-    ttl_0: [0, 0, 0]
+    rouge: [255, 0, 0] # Rouge
+    orange: [255, 165, 0] # Orange
+    jaune: [255, 255, 0] # Jaune
+    vert: [0, 255, 0] # Vert
+    cyan: [0, 200, 255] # Cyan
+    bleu: [0, 0, 255] # Bleu
+    magenta: [255, 0, 255] # Magenta
+    void: [0, 0, 0]
 
 # ── Détection des cartouches de noms ──
 detect:
@@ -71,6 +71,12 @@ detect:
     white_ext:
       lower: [0, 0, 210]
       upper: [180, 35, 255]
+  flat:
+    kernel_w: 31
+    kernel_h: 9
+    variance_thresh: 5
+    min_area: 300
+    margin: 20
   morpho:
     white_dilate:
       width: 20

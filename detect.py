@@ -6,15 +6,15 @@ import logging
 from config import cfg
 #from detect_stats import _stats, get_stats, reset_stats
 from detect_stats import flush_local, make_local, get_stats, reset_stats
-from detect_tools import process_channel, compute_white_mask, compute_sobel_interiors, refine_and_merge
-
+from detect_tools import write_circles , write_rects , get_color
+from detect_tools_mask import compute_white_mask, compute_sobel_interiors, refine_and_merge ,saturation_variance_mask,detect_ball_zones
+from detect_tools_boxes import process_channel
 log = logging.getLogger("detect")
 
 # ── Cache kernels par scale ──
 _cache_by_scale = {}
 
-
-def _build_params(scale):                              # ← FIX: scale en paramètre
+def _build_params(scale):
     """Lit cfg à chaque appel — hot-reload natif."""
 
     # ── Couleurs ──
@@ -157,27 +157,44 @@ def _run_pipeline(frame, scale):
     # ── Grayscale ──
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
 
+    #cv2.imshow("small", small)
+    t0 = time.perf_counter()
+    sat_mask = saturation_variance_mask(small)
+    local["sat_mask_ms"] = (time.perf_counter() - t0) * 1000
+    #write_rects(screen, split, Void , 1)
+
     # ── 2. Masque blanc → nettoyage ──
     t0 = time.perf_counter()
     mask_white, white_clean = compute_white_mask(gray, kernels, letter_connect_iter)
     local["compute_white_mask_ms"] += (time.perf_counter() - t0) * 1000
 
+    # ── 3. Combinaison : blanc ET dans une zone à forte variance de saturation ──
+    combined = cv2.bitwise_and(white_clean, sat_mask)
+
     # ── 3. Sobel → intérieurs ──
     t0 = time.perf_counter()
-    interior_v1, interior_v2 = compute_sobel_interiors(gray, white_clean, kernels)
+    interior_v1, interior_v2  = compute_sobel_interiors(gray, combined, kernels)
     local["compute_sobel_interiors_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 4. Raffinage → fusion → close ──
     t0 = time.perf_counter()
-    closed = refine_and_merge(white_clean, interior_v1, interior_v2, kernels)
+    closed = refine_and_merge(combined, interior_v1, interior_v2, kernels)
     local["refine_and_merge_ms"] += (time.perf_counter() - t0) * 1000
+    """
 
-    # ── HSV ──
-    lab = cv2.cvtColor(small, cv2.COLOR_RGB2Lab)
-    hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
+    cv2.imshow("interior_v1", interior_v1)
+    cv2.imshow("interior_v2", interior_v2)
+    cv2.imshow("closed", closed)
+    cv2.waitKey(0)
+    cv2.imshow("uniform_mask_d", uniform_mask_d)
+    cv2.imshow("mask_d", mask_d)
+    cv2.imshow("return", filtered)
+    cv2.waitKey(0)
+    """
+
     # ── 5. Contours + filtre géométrique (ratio, area, fill) ──
     log.debug("START")
-    candidates = process_channel(closed,small, mask_white, h_small, params, kernels, local)
+    candidates = process_channel(closed,small, mask_white, h_small, params, kernels, local )
     log.debug("END")
 
     if not candidates:
