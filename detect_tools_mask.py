@@ -37,31 +37,42 @@ def detect_ball_zones(frame, min_r=5, max_r=20):
     cv2.waitKey(0)
     return zones
 
-def saturation_variance_mask(frame, kernel_size=(31, 11), threshold1=3300 , threshold2=8800):
-    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
-    s = hsv[:, :, 1].astype(np.float32)
+def saturation_variance_mask(frame, kernel_size=(24, 11), threshold1=12000, threshold2=30000):
+    h_orig, w_orig = frame.shape[:2]
+    small = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST)
+
     kw, kh = kernel_size
-    mean_s = cv2.blur(s, (kw, kh))
-    mean_s2 = cv2.blur(s * s, (kw, kh))
-    variance = mean_s2 - mean_s * mean_s
-    # Seuillage
-    mask = (variance > threshold1).astype(np.uint8) * 255
+    # Adapter le kernel à la résolution réduite
+    kw_s = max(kw // 2 | 1, 1)  # garder impair
+    kh_s = max(kh // 2 | 1, 1)
 
-    frame_f = frame.astype(np.float32)
-    kw2, kh2 = 31, 11
-    var_total = np.zeros(frame_f.shape[:2], dtype=np.float32)
-    for c in range(3):
-        ch = frame_f[:, :, c]
-        mean_c = cv2.blur(ch, (kw2, kh2))
-        var_c = cv2.blur(ch * ch, (kw2, kh2)) - mean_c * mean_c
-        var_total += var_c
+    channels = cv2.split(small)
+    ch0 = channels[0].astype(np.float32)
+    ch1 = channels[1].astype(np.float32)
+    ch2 = channels[2].astype(np.float32)
 
-    uniform_mask = (var_total > threshold2).astype(np.uint8) * 255
+    mean0 = cv2.blur(ch0, (kw_s, kh_s))
+    mean1 = cv2.blur(ch1, (kw_s, kh_s))
+    mean2 = cv2.blur(ch2, (kw_s, kh_s))
 
-    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 10))
-    uniform_mask_d = cv2.dilate(uniform_mask, kernel_v, iterations=1)
-    mask_d = cv2.dilate(mask, kernel_v, iterations=1)
-    filtered = cv2.bitwise_and(mask_d, uniform_mask_d)
+    var0 = cv2.sqrBoxFilter(ch0, -1, (kw_s, kh_s), normalize=True) - mean0 * mean0
+    var1 = cv2.sqrBoxFilter(ch1, -1, (kw_s, kh_s), normalize=True) - mean1 * mean1
+    var2 = cv2.sqrBoxFilter(ch2, -1, (kw_s, kh_s), normalize=True) - mean2 * mean2
+
+    var_total = var0 + var1 + var2
+
+    hsv_s = cv2.max(cv2.max(ch0, ch1), ch2) - cv2.min(cv2.min(ch0, ch1), ch2)
+    mean_s = cv2.blur(hsv_s, (kw_s, kh_s))
+    var_s = cv2.sqrBoxFilter(hsv_s, -1, (kw_s, kh_s), normalize=True) - mean_s * mean_s
+
+    # Seuils divisés par 4 car variance scale avec résolution²
+    combined = ((var_s > threshold1 / 4) & (var_total > threshold2 / 4)).astype(np.uint8) * 255
+
+    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))  # kernel réduit aussi
+    filtered = cv2.dilate(combined, kernel_v, iterations=1)
+
+    # Remonter à la résolution originale
+    filtered = cv2.resize(filtered, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
 
     return filtered
 
@@ -76,12 +87,12 @@ def compute_white_mask(gray, kernels, letter_connect_iter):
 def compute_sobel_interiors(gray, white_clean, kernels):
     sobel_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
     sobel_abs = cv2.convertScaleAbs(sobel_x)
-    sobel_abs[white_clean == 0] = 0
-
-    sobel_bin = cv2.threshold(sobel_abs, 0, 255, cv2.THRESH_BINARY)[1]
+    sobel_abs = cv2.bitwise_and(sobel_abs, white_clean)
+    # Branche v1 : dilate → erode
     sobel_dilated = cv2.dilate(sobel_abs, kernels["sobel_spread"], iterations=1)
-
     interior_v1 = cv2.erode(sobel_dilated, kernels["sobel_erode"], iterations=2)
+    # Branche v2 : threshold → erode
+    sobel_bin = cv2.threshold(sobel_abs, 0, 255, cv2.THRESH_BINARY)[1]
     interior_v2 = cv2.erode(sobel_bin, kernels["sobel_erode"], iterations=2)
     return interior_v1, interior_v2
 
@@ -95,5 +106,5 @@ def refine_and_merge(white_clean, interior_v1, interior_v2, kernels):
     cv2.bitwise_or(white_reconnected_v1, white_reconnected_v2, dst=white_reconnected_v1)
     white_final = cv2.erode(white_reconnected_v1, kernels["final_split"], iterations=1)
     closed = cv2.morphologyEx(white_final, cv2.MORPH_CLOSE, kernels["gap_fill"])
-    return closed
 
+    return closed

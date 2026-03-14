@@ -11,9 +11,12 @@ log = logging.getLogger("detect_tools")
 def write_rects(image, rects, color , thickness=2):
     for (x, y, w, h) in rects:
         cv2.rectangle(image, (x, y), (x + w, y + h), color, thickness)
-    #write_rects(screen, split, Void , 1)
-    #cv2.imshow("screen", screen)
-    #cv2.waitKey(0)
+    """  screen = small.copy()
+    write_rects(screen, validated_b, get_color("magenta"),2)
+    write_rects(screen, validated_b1, get_color("vert"),1)
+    cv2.imshow("screen", screen)
+    cv2.waitKey(0) """
+
     #lab = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
     #hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 

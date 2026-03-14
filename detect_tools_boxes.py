@@ -21,32 +21,6 @@ def extract_raw_boxes(masked, params):
     return boxes
 
 # ── adjust_boxes ──
-def has_blob_continuity(masked, x, y, w, h, direction):
-    # Prendre une zone de 2px : 1px dans la box + 1px dans l'expansion
-    if direction == "right":
-        check = masked[y:y+h, x+w-1:x+w+1]
-    elif direction == "left":
-        check = masked[y:y+h, x-1:x+1]
-    elif direction == "down":
-        check = masked[y+h-1:y+h+1, x:x+w]
-    elif direction == "up":
-        check = masked[y-1:y+1, x:x+w]
-    else:
-        return False
-    if check.size == 0 or cv2.countNonZero(check) == 0:
-        return False
-    # connectedComponents sur cette zone de 2px
-    n_labels, labels = cv2.connectedComponents(check, connectivity=8)
-    for label_id in range(1, n_labels):
-        coords = np.argwhere(labels == label_id)
-        if direction in ("right", "left"):
-            cols_touched = set(coords[:, 1])  # axe X
-        else:
-            cols_touched = set(coords[:, 0])  # axe Y
-        if len(cols_touched) >= 2:
-            return True
-    return False
-
 def adjust_boxes(boxes, mask_white, h_img, params):
     min_blob = params.get("adjust_min_blob_area", 10)
     expand_search = params.get("expand_search_px", 2)
@@ -251,85 +225,64 @@ def sweep_and_cut(ccs, roi, min_text_fill=0.08):
 
 def validate_text(boxes, mask_white, params, kernels):
     result = []
+    min_blob_area = params["refine_min_blob_area"]
+    min_text_fill = params["min_text_fill"]
+    kernel_rc = kernels["roi_connected"]
     for (bx, by, bw, bh) in boxes:
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
             continue
-        roi_connected = cv2.dilate(roi, kernels["roi_connected"], iterations=1)
-        num_labels, labels = cv2.connectedComponents(roi_connected)
+        roi_connected = cv2.dilate(roi, kernel_rc, iterations=1)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(roi_connected)
         if num_labels <= 1:
             continue
-        cc_boxes = []
-        for label_id in range(1, num_labels):
-            coords = np.where(labels == label_id)
-            if coords[0].size == 0:
-                continue
-            y1 = int(coords[0].min())
-            y2 = int(coords[0].max()) + 1
-            x1 = int(coords[1].min())
-            x2 = int(coords[1].max()) + 1
-            #w = x2 - x1
-            #h = y2 - y1
-
-            #bbox_area = w * h
-            #ratio = w / max(h, 1)
-            #fill  = area / max(bbox_area, 1)
-            #if ratio < 1.5 and fill > 0.75 and w > bh * 0.5:
-                #continue
-            area = int(coords[0].size)
-            if area < params["refine_min_blob_area"]:
-                continue
-            cc_boxes.append((x1, y1, x2, y2))
-        if not cc_boxes:
+        # stats colonnes : LEFT=0, TOP=1, WIDTH=2, HEIGHT=3, AREA=4
+        s = stats[1:]  # exclure le fond (label 0)
+        areas = s[:, cv2.CC_STAT_AREA]
+        valid = areas >= min_blob_area
+        if not np.any(valid):
             continue
-        # ── Trier par X ──
-        cc_boxes.sort(key=lambda c: c[0])
-        groups = sweep_and_cut(cc_boxes, roi, params["min_text_fill"])
+        s = s[valid]
+        x1 = s[:, cv2.CC_STAT_LEFT]
+        y1 = s[:, cv2.CC_STAT_TOP]
+        x2 = x1 + s[:, cv2.CC_STAT_WIDTH]
+        y2 = y1 + s[:, cv2.CC_STAT_HEIGHT]
+        # Trier par X
+        order = np.argsort(x1)
+        cc_boxes = list(zip(x1[order].tolist(), y1[order].tolist(),
+                            x2[order].tolist(), y2[order].tolist()))
+        groups = sweep_and_cut(cc_boxes, roi, min_text_fill)
         for (gx1, gy1, gx2, gy2) in groups:
             result.append((bx + gx1, by + gy1, gx2 - gx1, gy2 - gy1))
-        continue
     return result
-"""
-cc_raw = roi[y1:y2, x1:x2]
-if cc_raw.size > 0:
-    cnts, _ = cv2.findContours(cc_raw.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if cnts:
-        biggest = max(cnts, key=cv2.contourArea)
-        perim = cv2.arcLength(biggest, True)
-        if perim > 0:
-            circ = 4 * np.pi * cv2.contourArea(biggest) / (perim * perim)
-            if circ > 0.55 and 0.75 < ratio < 1.35:
-                log.debug(f"  → REJET sphère circ={circ:.2f} ratio={ratio:.2f} w={w}")
-                continue
-"""
+
 # ── validate_background ──
 def validate_background(boxes, mask_white, rgb, params):
-    var_norm        = params.get("var_norm", 200.0)  # variance au-delà = score 0
+    var_norm        = params.get("var_norm", 200.0)
     coherent_delta  = params.get("coherent_delta", 33)
     min_score       = params.get("min_bg_score", 0.5)
     result = []
     for (x, y, w, h) in boxes:
-        h_pad = 0
         w_pad = 2
         x = max(0, x - w_pad)
-        y = max(0, y - h_pad)
         w = w + w_pad * 2
-        h = h + h_pad * 2
-        white_roi = mask_white[y:y+h, x:x+w]
-        fond_mask = white_roi == 0       # fond = pixels blancs
-        fond_count = int(np.count_nonzero(fond_mask))
-
-        gray_roi = cv2.cvtColor(rgb[y:y+h, x:x+w], cv2.COLOR_RGB2GRAY)
+        # ROI directe en gray (évite cvtColor sur RGB)
+        rgb_roi = rgb[y:y+h, x:x+w]
+        gray_roi = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2GRAY)
         local_mean = cv2.blur(gray_roi, (3, 3))
-        diff = np.abs(gray_roi.astype(np.int16) - local_mean.astype(np.int16))
+        # Calcul diff en place, en int16
+        diff = cv2.absdiff(gray_roi, local_mean)  # uint8, évite int16
+        fond_mask = mask_white[y:y+h, x:x+w] == 0
         fond_diff = diff[fond_mask]
-        # ── Mesure 1 : variance locale médiane → normalisée [0,1] ──
-        median_var = float(np.median(fond_diff.astype(np.float32) ** 2))
-
+        fond_count = fond_diff.size
+        if fond_count == 0:
+            continue
+        # Mesure 1 : variance locale médiane
+        median_val = float(np.median(fond_diff))
+        median_var = median_val * median_val
         s_var = max(0.0, 1.0 - median_var / var_norm)
-        # ── Mesure 2 : ratio cohérent [0,1] ──
-        s_coh = float(np.count_nonzero(fond_diff < coherent_delta )) / fond_count
-        # ── Score combiné ──
+        # Mesure 2 : ratio cohérent
+        s_coh = float(np.count_nonzero(fond_diff < coherent_delta)) / fond_count
         score = s_var * s_coh
         if score >= min_score:
             result.append((x, y, w, h))
@@ -338,25 +291,27 @@ def validate_background(boxes, mask_white, rgb, params):
 # ── filter_geometry ──
 def filter_geometry(boxes, masked, params):
     """Filtre ratio/area/fill sur des boxes (déjà mergées)."""
-    t0 = time.perf_counter()
+    min_area   = params["min_area"]
+    max_area   = params["max_area"]
+    min_width  = params["min_width"]
+    min_height = params["min_height"]
+    min_ratio  = params["min_ratio"]
+    max_ratio  = params["max_ratio"]
+    min_fill   = params["min_fill"]
+    max_fill   = params["max_fill"]
 
     plates = []
     for (x, y, w, h) in boxes:
-        ratio = w / max(h, 1)
+        if w < min_width or h < min_height:
+            continue
         area = w * h
-        roi = masked[y:y+h, x:x+w]
-        if area < params["min_area"]:
+        if area < min_area or area > max_area:
             continue
-        if area > params["max_area"]:
+        ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
+        if ratio < min_ratio or ratio > max_ratio:
             continue
-        if w < params["min_width"]:
-            continue
-        if h < params["min_height"]:
-            continue
-        if ratio < params["min_ratio"] or ratio > params["max_ratio"]:
-            continue
-        fill = cv2.countNonZero(roi) / max(area, 1)
-        if fill < params["min_fill"] or fill > params["max_fill"]:
+        fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
+        if fill < min_fill or fill > max_fill:
             continue
         plates.append((x, y, w, h))
     return plates
@@ -397,65 +352,51 @@ def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
     Retourne un float entre -1.0 et 1.0.
     """
     BAND = 2
-    scores = []
-
+    total = 0.0
+    count = 0
+    xw = x + w
+    yh = y + h
     # ── Bord gauche ──
-    in_x1 = x
-    in_x2 = min(x + BAND, x + w)
+    in_x2 = min(x + BAND, xw)
     out_x1 = max(x - BAND, 0)
-    out_x2 = x
-    if in_x2 > in_x1 and out_x2 > out_x1:
-        inner = mask_white[y:y + h, in_x1:in_x2]
-        outer = mask_white[y:y + h, out_x1:out_x2]
+    if in_x2 > x and out_x1 < x:
+        inner = mask_white[y:yh, x:in_x2]
+        outer = mask_white[y:yh, out_x1:x]
         if inner.size > 0 and outer.size > 0:
-            d_in = cv2.countNonZero(inner) / inner.size
-            d_out = cv2.countNonZero(outer) / outer.size
-            scores.append(d_in - d_out)
-
+            total += cv2.countNonZero(inner) / inner.size - cv2.countNonZero(outer) / outer.size
+            count += 1
     # ── Bord droit ──
-    in_x1 = max(x + w - BAND, x)
-    in_x2 = x + w
-    out_x1 = x + w
-    out_x2 = min(x + w + BAND, img_w)
-    if in_x2 > in_x1 and out_x2 > out_x1:
-        inner = mask_white[y:y + h, in_x1:in_x2]
-        outer = mask_white[y:y + h, out_x1:out_x2]
+    in_x1 = max(xw - BAND, x)
+    out_x2 = min(xw + BAND, img_w)
+    if xw > in_x1 and out_x2 > xw:
+        inner = mask_white[y:yh, in_x1:xw]
+        outer = mask_white[y:yh, xw:out_x2]
         if inner.size > 0 and outer.size > 0:
-            d_in = cv2.countNonZero(inner) / inner.size
-            d_out = cv2.countNonZero(outer) / outer.size
-            scores.append(d_in - d_out)
-
+            total += cv2.countNonZero(inner) / inner.size - cv2.countNonZero(outer) / outer.size
+            count += 1
     # ── Bord haut ──
-    in_y1 = y
-    in_y2 = min(y + BAND, y + h)
+    in_y2 = min(y + BAND, yh)
     out_y1 = max(y - BAND, 0)
-    out_y2 = y
-    if in_y2 > in_y1 and out_y2 > out_y1:
-        inner = mask_white[in_y1:in_y2, x:x + w]
-        outer = mask_white[out_y1:out_y2, x:x + w]
+    if in_y2 > y and out_y1 < y:
+        inner = mask_white[y:in_y2, x:xw]
+        outer = mask_white[out_y1:y, x:xw]
         if inner.size > 0 and outer.size > 0:
-            d_in = cv2.countNonZero(inner) / inner.size
-            d_out = cv2.countNonZero(outer) / outer.size
-            scores.append(d_in - d_out)
-
+            total += cv2.countNonZero(inner) / inner.size - cv2.countNonZero(outer) / outer.size
+            count += 1
     # ── Bord bas ──
-    in_y1 = max(y + h - BAND, y)
-    in_y2 = y + h
-    out_y1 = y + h
-    out_y2 = min(y + h + BAND, img_h)
-    if in_y2 > in_y1 and out_y2 > out_y1:
-        inner = mask_white[in_y1:in_y2, x:x + w]
-        outer = mask_white[out_y1:out_y2, x:x + w]
+    in_y1 = max(yh - BAND, y)
+    out_y2 = min(yh + BAND, img_h)
+    if yh > in_y1 and out_y2 > yh:
+        inner = mask_white[in_y1:yh, x:xw]
+        outer = mask_white[yh:out_y2, x:xw]
         if inner.size > 0 and outer.size > 0:
-            d_in = cv2.countNonZero(inner) / inner.size
-            d_out = cv2.countNonZero(outer) / outer.size
-            scores.append(d_in - d_out)
-
-    if not scores:
+            total += cv2.countNonZero(inner) / inner.size - cv2.countNonZero(outer) / outer.size
+            count += 1
+    if count == 0:
         return 0.0
-    return sum(scores) / len(scores)
+    return total / count
 
-def resolve_overlaps(boxes, mask_white,params):
+def resolve_overlaps(boxes, mask_white, params):
     if len(boxes) < 2:
         return list(boxes)
     img_h, img_w = mask_white.shape[:2]
@@ -463,19 +404,18 @@ def resolve_overlaps(boxes, mask_white,params):
     scored = []
     for (x, y, w, h) in boxes:
         score = edge_confidence(mask_white, x, y, w, h, img_h, img_w)
-        scored.append({"rect": (x, y, w, h), "score": score})
+        scored.append(((x, y, w, h), score))
     # ── 2. Trier par score décroissant ──
-    scored.sort(key=lambda s: (s["score"], s["rect"][2] * s["rect"][3]), reverse=True)
+    scored.sort(key=lambda s: (s[1], s[0][2] * s[0][3]), reverse=True)
     # ── 3. Résoudre les chevauchements ──
+    min_residual_area = int(params["min_area"] * 0.35)
     result = []
-    for s in scored:
-        rect = s["rect"]
+    for rect, _ in scored:
         if rect is None:
             continue
         cx, cy, cw, ch = rect
         # Comparer avec toutes les références déjà validées (score supérieur)
-        for ref in result:
-            rx, ry, rw, rh = ref
+        for rx, ry, rw, rh in result:
             # ── Intersection ? ──
             ix1 = max(cx, rx)
             iy1 = max(cy, ry)
@@ -484,13 +424,12 @@ def resolve_overlaps(boxes, mask_white,params):
             if ix2 <= ix1 or iy2 <= iy1:
                 continue  # pas de chevauchement
             # ── Recadrer la box courante (faible) via mask_white ──
-            mask_work = mask_white.copy()
-            overlap_y1 = max(ry, cy)
-            overlap_y2 = min(ry + rh, cy + ch)
+            roi = mask_white[cy:cy+ch, cx:cx+cw].copy()
+            overlap_y1 = max(ry, cy) - cy
+            overlap_y2 = min(ry + rh, cy + ch) - cy
             if overlap_y2 > overlap_y1:
-                mask_work[overlap_y1:overlap_y2, cx:cx+cw] = 0
+                roi[overlap_y1:overlap_y2, :] = 0
 
-            roi = mask_work[cy:cy+ch, cx:cx+cw]
             if roi.size == 0 or cv2.countNonZero(roi) == 0:
                 cx, cy, cw, ch = 0, 0, 0, 0
                 break
@@ -499,37 +438,9 @@ def resolve_overlaps(boxes, mask_white,params):
             cx, cy, cw, ch = cx + bx, cy + by, bw, bh
 
         # ── Vérifier taille minimale ──
-        min_residual_area = int(params["min_area"] * 0.35)
         if cw * ch >= min_residual_area and cw >= 10 and ch >= 5:
             result.append((cx, cy, cw, ch))
-        """
-        min_w = params.get("min_width", 20)
-        min_h = params.get("min_height", 8)
-        if cw >= min_w and ch >= min_h:
-            result.append((cx, cy, cw, ch))
-        """
     return result
-
-# ── write_rects ──
-def write_rects(image, rects, color , thickness=2):
-    for (x, y, w, h) in rects:
-        cv2.rectangle(image, (x, y), (x + w, y + h), color, thickness)
-    #write_rects(screen, split, Void , 1)
-    #cv2.imshow("screen", screen)
-    #cv2.waitKey(0)
-    #lab = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-    #hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-
-# ── write_circles ──
-def write_circles(image, circles, color, thickness=2):
-    for (cx, cy, r) in circles:
-        cv2.circle(image, (cx, cy), r, color, thickness)
-
-# ── get_color ──
-def get_color(name: str, default: tuple = (0, 0, 0)) -> tuple:
-    value = cfg.get(f"debug.colors_ttl.{name}")
-    return tuple(value) if value is not None else default
-
 
 # ── tight_crop_white ──
 def tight_crop_white(boxes, mask_white):
@@ -610,3 +521,30 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     plates = filter_geometry(expanded, masked, params)
 
     return plates
+
+# ── has_blob_continuity not used ──
+def has_blob_continuity(masked, x, y, w, h, direction):
+    # Prendre une zone de 2px : 1px dans la box + 1px dans l'expansion
+    if direction == "right":
+        check = masked[y:y+h, x+w-1:x+w+1]
+    elif direction == "left":
+        check = masked[y:y+h, x-1:x+1]
+    elif direction == "down":
+        check = masked[y+h-1:y+h+1, x:x+w]
+    elif direction == "up":
+        check = masked[y-1:y+1, x:x+w]
+    else:
+        return False
+    if check.size == 0 or cv2.countNonZero(check) == 0:
+        return False
+    # connectedComponents sur cette zone de 2px
+    n_labels, labels = cv2.connectedComponents(check, connectivity=8)
+    for label_id in range(1, n_labels):
+        coords = np.argwhere(labels == label_id)
+        if direction in ("right", "left"):
+            cols_touched = set(coords[:, 1])  # axe X
+        else:
+            cols_touched = set(coords[:, 0])  # axe Y
+        if len(cols_touched) >= 2:
+            return True
+    return False
