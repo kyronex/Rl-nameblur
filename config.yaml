@@ -13,7 +13,8 @@ masks:
   smooth_alpha: 0.90
   dead_zone: 10
   velocity_dead_zone: 10
-
+  fast_miss_threshold: 8 # N cycles fast ratés consécutifs avant TTL--
+  fast_miss_timeout_ms: 250 # X ms sans détection fast avant TTL--
 predict:
   active: true # true ou false
 
@@ -33,7 +34,7 @@ blur:
 
 # ── Debug / affichage ──
 debug:
-  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
+  log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
   draw: false
   colors:
     fresh: [0, 255, 0]

@@ -27,6 +27,7 @@ from detect_stats import get_stats as detect_stats
 from detect_stats import reset_stats as detect_diag_reset
 from blur import apply_blur
 from blur import get_stats as blur_stats, reset_stats as blur_reset
+log = logging.getLogger("main")
 
 # ── PARAMÈTRES — lus depuis config.yaml ──
 SCREEN_WIDTH  = cfg.get("screen.width")
@@ -147,7 +148,6 @@ def corners_distance(r1, r2):
     return total / 4.0
 
 def update_mask(mask, new_rect, detect_ts, source):
-    """Met à jour un masque existant : dead zone, smooth, vélocité filtrée, TTL."""
     smooth_alpha = cfg.get("masks.smooth_alpha", 1.0)
     dead_zone    = cfg.get("masks.dead_zone", 3)
     vel_dz       = cfg.get("masks.velocity_dead_zone", 5)
@@ -155,9 +155,10 @@ def update_mask(mask, new_rect, detect_ts, source):
     nx, ny, nw, nh = new_rect
     ox, oy, ow, oh = mask['rect']
 
-    # ── Dead zone : micro-mouvement → juste rafraîchir TTL ──
     if (abs(nx - ox) < dead_zone and abs(ny - oy) < dead_zone and abs(nw - ow) < dead_zone and abs(nh - oh) < dead_zone):
-        mask['ttl'] = cfg.get("masks.ttl_max")
+        if source == "slow":
+            mask['ttl'] = cfg.get("masks.ttl_max")
+            mask['fast_miss_count'] = 0
         mask['last_detected_ts'] = detect_ts
         mask['last_source'] = source
         return
@@ -179,8 +180,12 @@ def update_mask(mask, new_rect, detect_ts, source):
     )
     mask['last_detected_rect'] = (float(nx), float(ny), float(nw), float(nh))
     mask['last_detected_ts'] = detect_ts
-    mask['ttl'] = cfg.get("masks.ttl_max")
     mask['last_source'] = source
+    if source == "slow":
+        mask['ttl'] = cfg.get("masks.ttl_max")
+        mask['fast_miss_count'] = 0
+    elif source == "fast":
+        mask['fast_miss_count'] = 0
 
 def match_or_add(active_masks, new_rect, detect_ts, source="slow"):
     global _next_mask_id
@@ -227,6 +232,7 @@ def match_or_add(active_masks, new_rect, detect_ts, source="slow"):
         'last_detected_rect':  (float(nx), float(ny), float(nw), float(nh)),
         'last_detected_ts':    detect_ts,
         'last_source':         source,
+        'fast_miss_count':     0,
         'vx':                  0.0,
         'vy':                  0.0,
     })
@@ -482,28 +488,37 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     _main_stats["fast_updates"] += 1
                     row_fast_updated = 1
                     row_fast_age = (now - fast_ts) * 1000 if fast_ts else 0.0
+
                     found_uids = set()
 
                     for mask_uid, new_rect in fast_results:
                         if new_rect is not None:
                             found_uids.add(mask_uid)
+                            for m in active_masks:
+                                if m['uid'] == mask_uid:
+                                    padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                                    update_mask(m, padded, fast_ts, source="fast")
+                                    updated_uids.add(mask_uid)
+                                    break
 
-                    tracked_uids = {r[0] for r in fast_results}
+                    # ── Masks non trouvés par le fast ──
                     for m in active_masks:
-                        if m['uid'] in tracked_uids and m['uid'] not in found_uids:
-                            m['ttl'] -= 1
+                        if m['uid'] not in found_uids and m['last_source'] != "new":
+                            m['fast_miss_count'] += 1
 
-                    active_masks = [m for m in active_masks if m['ttl'] > 0]
-
-                    for mask_uid, new_rect in fast_results:
-                        if new_rect is None:
-                            continue
-                        for m in active_masks:
-                            if m['uid'] == mask_uid:
-                                padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                                update_mask(m, padded, fast_ts, source="fast")
-                                updated_uids.add(mask_uid)
-                                break
+                 # ── Évaluation kill (à chaque cycle, pas seulement sur nouveau résultat) ──
+                fast_miss_thresh = cfg.get("masks.fast_miss_threshold", 5)
+                fast_miss_timeout = cfg.get("masks.fast_miss_timeout_ms", 300) / 1000.0
+                for m in active_masks:
+                    time_since = now - m['last_detected_ts']
+                    if m['fast_miss_count'] >= fast_miss_thresh:
+                        m['ttl'] -= 1
+                        m['fast_miss_count'] = 0
+                    elif time_since >= fast_miss_timeout:
+                        m['ttl'] -= 1
+                        m['fast_miss_count'] = 0
+                        m['last_detected_ts'] = now
+                active_masks = [m for m in active_masks if m['ttl'] > 0]
             t_fast_poll = (time.perf_counter() - t0) * 1000
 
             # ── 4. Predict les masques NON mis à jour (en secondes) ──

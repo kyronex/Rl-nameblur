@@ -2,7 +2,7 @@
 import threading
 import time
 from config import cfg
-from detect import detect_roi
+from detect import track_roi_fast
 
 
 class FastTrackThread:
@@ -171,7 +171,7 @@ class FastTrackThread:
                 roi_count += 1
 
                 # ── Detect dans le crop ──
-                plates_local = detect_roi(roi)  # retourne coords relatives au ROI
+                plates_local = track_roi_fast(roi)  # retourne coords relatives au ROI
 
                 # ── Reconvertir en coordonnées frame ──
                 plates_frame = [
