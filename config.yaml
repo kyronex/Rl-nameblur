@@ -35,7 +35,7 @@ blur:
 # ── Debug / affichage ──
 debug:
   log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
-  draw: false
+  draw: false # true ou false
   colors:
     fresh: [0, 255, 0]
     persist: [0, 255, 255]
@@ -60,12 +60,6 @@ detect:
     roi_margin: 0.5 # +% chaque côté
     enabled: true
   hsv:
-    orange:
-      lower: [8, 140, 170]
-      upper: [22, 255, 255]
-    blue:
-      lower: [100, 130, 150]
-      upper: [125, 255, 255]
     white_core:
       lower: [0, 0, 200]
       upper: [230, 35, 255]
@@ -102,6 +96,7 @@ detect:
   refine:
     refine_min_blob_area: 10
     min_text_fill: 0.08 # variance colonnes pour texte
+    min_transition: 0.10
     thresh:
       var_norm: 1100.0
       coherent_delta: 30

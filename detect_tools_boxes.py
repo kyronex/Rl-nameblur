@@ -7,7 +7,7 @@ from config import cfg
 from detect_stats import flush_local
 from detect_tools import write_circles , write_rects , get_color
 
-log = logging.getLogger("detect_tools")
+log = logging.getLogger("detect_tools_boxes")
 
 # ── extract_raw_boxes ──
 def extract_raw_boxes(masked, params):
@@ -176,11 +176,21 @@ def split_wide_boxes(boxes, mask_white, params):
     return result
 
 # ── validate_text ──
-def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=1):
+def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2, min_transition=0.20):
     crop = roi[y1:y2, x1:x2]
     if crop.size == 0:
         return False
     h = crop.shape[0]
+    # ── Check structure : transitions horizontales ──
+    edges = np.diff(crop.astype(np.int16), axis=1)
+    transition_density = np.count_nonzero(edges) / max(crop.size, 1)
+    if transition_density < min_transition:
+        return False
+    v_proj = np.count_nonzero(crop, axis=1)  # pixels blancs par ligne
+    active_rows = np.count_nonzero(v_proj)
+    row_fill = active_rows / max(h, 1)
+    if row_fill < 0.5:  # texte occupe au moins 50% des lignes
+        return False
     t1 = h // 3
     t2 = 2 * h // 3
     tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
@@ -190,7 +200,7 @@ def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=1):
     )
     return active >= min_tiers
 
-def sweep_and_cut(ccs, roi, min_text_fill=0.08):
+def sweep_and_cut(ccs, roi, min_text_fill=0.08, min_transition=0.20):
     validated = []
     group = []           # CC dans le groupe courant
     gx1, gy1, gx2, gy2 = None, None, None, None  # bbox union courante
@@ -206,20 +216,20 @@ def sweep_and_cut(ccs, roi, min_text_fill=0.08):
         ny1 = min(gy1, cy1)
         nx2 = max(gx2, cx2)
         ny2 = max(gy2, cy2)
-        if has_text(roi, nx1, ny1, nx2, ny2, min_text_fill):
+        if has_text(roi, nx1, ny1, nx2, ny2, min_text_fill, 2,min_transition):
             group.append(cc)
             gx1, gy1, gx2, gy2 = nx1, ny1, nx2, ny2
         else:
             # Creux détecté → valider le groupe précédent si assez bon
             if len(group) >= 1:
-                if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill):
+                if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill,2, min_transition):
                     validated.append((gx1, gy1, gx2, gy2))
             # Recommencer avec la CC courante
             group = [cc]
             gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
     # ── Dernier groupe ──
     if len(group) >= 1:
-        if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill):
+        if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill,2, min_transition):
             validated.append((gx1, gy1, gx2, gy2))
     return validated
 
@@ -228,6 +238,7 @@ def validate_text(boxes, mask_white, params, kernels):
     min_blob_area = params["refine_min_blob_area"]
     min_text_fill = params["min_text_fill"]
     kernel_rc = kernels["roi_connected"]
+    min_transition = params["min_transition"]
     for (bx, by, bw, bh) in boxes:
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
@@ -249,9 +260,8 @@ def validate_text(boxes, mask_white, params, kernels):
         y2 = y1 + s[:, cv2.CC_STAT_HEIGHT]
         # Trier par X
         order = np.argsort(x1)
-        cc_boxes = list(zip(x1[order].tolist(), y1[order].tolist(),
-                            x2[order].tolist(), y2[order].tolist()))
-        groups = sweep_and_cut(cc_boxes, roi, min_text_fill)
+        cc_boxes = list(zip(x1[order].tolist(), y1[order].tolist(),x2[order].tolist(), y2[order].tolist()))
+        groups = sweep_and_cut(cc_boxes, roi, min_text_fill,min_transition)
         for (gx1, gy1, gx2, gy2) in groups:
             result.append((bx + gx1, by + gy1, gx2 - gx1, gy2 - gy1))
     return result
@@ -457,11 +467,12 @@ def tight_crop_white(boxes, mask_white):
     return result
 
 # ── adjust_resolve ──
-def adjust_resolve(boxes, mask_white, h_img, params):
+def adjust_resolve(boxes, mask_white, h_img, params, resolve=True):
     adjusted = adjust_boxes(boxes, mask_white, h_img, params)
-    resolved  = resolve_overlaps(adjusted, mask_white, params)
-    cropped  = tight_crop_white(resolved, mask_white)
-    return resolved
+    if resolve:
+        #cropped  = tight_crop_white(resolved, mask_white)
+        adjusted = resolve_overlaps(adjusted, mask_white, params)
+    return adjusted
 
 # ── expand_plates ──
 def expand_plates(boxes, img):
@@ -479,10 +490,6 @@ def expand_plates(boxes, img):
 def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     t0 = time.perf_counter()
     plates = []
-    screen = rgb.copy()
-    Vert = tuple(cfg.get("debug.colors_ttl.vert"))
-    Magenta = tuple(cfg.get("debug.colors_ttl.magenta"))
-    Void = tuple(cfg.get("debug.colors_ttl.void"))
 
     boxes = extract_raw_boxes(masked, params)
 
@@ -493,29 +500,22 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     split = split_wide_boxes(boxes_ar, mask_white, params)
 
     log.debug("split_ar")
-    split_ar = adjust_resolve(split, mask_white, h_img, params)
+    split_ar = adjust_resolve(split, mask_white, h_img, params, resolve=False)
 
     log.debug("validate_text")
     validated_t = validate_text(split_ar, mask_white, params, kernels)
 
-    log.debug("validated_t_ar")
-    validated_t_ar = adjust_resolve(validated_t, mask_white, h_img, params)
-
     log.debug("merge_nearby_horizontal")
-    merge = merge_nearby_horizontal(validated_t_ar, params["max_gap_x"],params["max_gap_y"])
+    merge = merge_nearby_horizontal(validated_t, params["max_gap_x"],params["max_gap_y"])
 
     log.debug("validate_background")
     validated_b = validate_background(merge,mask_white, rgb, params)
-    write_rects(screen, validated_b, Void , 2)
 
     log.debug("validated_b_ar")
-    validated_b_ar = adjust_resolve(validated_b, mask_white, h_img, params)
-    write_rects(screen, validated_b_ar, Magenta , 1)
+    validated_b_ar = adjust_resolve(validated_b, mask_white, h_img, params, resolve=False)
 
     log.debug("expand_plates")
     expanded = expand_plates(validated_b_ar,rgb)
-    write_rects(screen, expanded, Vert , 1)
-
 
     log.debug("filter_geometry")
     plates = filter_geometry(expanded, masked, params)

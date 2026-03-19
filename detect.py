@@ -18,10 +18,6 @@ def _build_params(scale):
     """Lit cfg à chaque appel — hot-reload natif."""
 
     # ── Couleurs ──
-    orange_low  = tuple(cfg.get("detect.hsv.orange.lower", [8, 140, 170]))
-    orange_high = tuple(cfg.get("detect.hsv.orange.upper", [22, 255, 255]))
-    blue_low    = tuple(cfg.get("detect.hsv.blue.lower",   [100, 130, 150]))
-    blue_high   = tuple(cfg.get("detect.hsv.blue.upper",   [125, 255, 255]))
     wc_low      = tuple(cfg.get("detect.hsv.white_core.lower", [0, 0, 200]))
     wc_high     = tuple(cfg.get("detect.hsv.white_core.upper", [230, 30, 255]))
     we_low      = tuple(cfg.get("detect.hsv.white_ext.lower",  [0, 0, 200]))
@@ -102,6 +98,7 @@ def _build_params(scale):
         # ── Refine ──
         "refine_min_blob_area":    cfg.get("detect.refine.min_blob_area", 10) ,
         "min_text_fill":      cfg.get("detect.refine.min_text_fill", 0.3),
+        "min_transition":      cfg.get("detect.refine.min_transition", 0.04),
         "var_norm":       cfg.get("detect.refine.thresh.var_norm",  1000.0),
         "coherent_delta":       cfg.get("detect.refine.thresh.coherent_delta",  33),
         "min_bg_score":       cfg.get("detect.refine.thresh.min_bg_score",  10),
@@ -118,10 +115,6 @@ def _build_params(scale):
 
     # ── Arrays numpy couleur ──
     colors = {
-        "orange_low":  np.array(orange_low),
-        "orange_high": np.array(orange_high),
-        "blue_low":    np.array(blue_low),
-        "blue_high":   np.array(blue_high),
         "wc_low":      np.array(wc_low),
         "wc_high":     np.array(wc_high),
         "we_low":      np.array(we_low),
@@ -131,13 +124,6 @@ def _build_params(scale):
     return colors, kernels, params, letter_connect_iter
 
 def _run_pipeline(frame, scale):
-    """
-    Pipeline White-First :
-    1. Chercher le texte blanc (signal fort)
-    2. Former des blobs (dilatation légère + morpho)
-    3. Valider chaque blob par présence de couleur orange/bleu autour
-    Retourne une liste de rects (x, y, w, h) en coordonnées frame d'entrée.
-    """
     local = make_local()
     t_start = time.perf_counter()
     colors, kernels, params, letter_connect_iter = _build_params(scale)
@@ -156,11 +142,9 @@ def _run_pipeline(frame, scale):
     # ── Grayscale ──
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
 
-    #cv2.imshow("small", small)
     t0 = time.perf_counter()
-    sat_mask = saturation_variance_mask(small)
+    sat_mask = saturation_variance_mask(small, scale)
     local["sat_mask_ms"] = (time.perf_counter() - t0) * 1000
-    #write_rects(screen, split, Void , 1)
 
     # ── 2. Masque blanc → nettoyage ──
     t0 = time.perf_counter()
@@ -179,17 +163,6 @@ def _run_pipeline(frame, scale):
     t0 = time.perf_counter()
     closed = refine_and_merge(combined, interior_v1, interior_v2, kernels)
     local["refine_and_merge_ms"] += (time.perf_counter() - t0) * 1000
-    """
-
-    cv2.imshow("interior_v1", interior_v1)
-    cv2.imshow("interior_v2", interior_v2)
-    cv2.imshow("closed", closed)
-    cv2.waitKey(0)
-    cv2.imshow("uniform_mask_d", uniform_mask_d)
-    cv2.imshow("mask_d", mask_d)
-    cv2.imshow("return", filtered)
-    cv2.waitKey(0)
-    """
 
     # ── 5. Contours + filtre géométrique (ratio, area, fill) ──
     log.debug("START")

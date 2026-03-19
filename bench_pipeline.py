@@ -67,7 +67,7 @@ def bench_once(frame, scale):
 
     # ── Saturation variance mask ──
     t = time.perf_counter()
-    sat_mask = saturation_variance_mask(small)
+    sat_mask = saturation_variance_mask(small,scale)
     timings["sat_variance_mask"] = (time.perf_counter() - t) * 1000
 
     # ── White mask ──
@@ -89,8 +89,6 @@ def bench_once(frame, scale):
     t = time.perf_counter()
     closed = refine_and_merge(combined, interior_v1, interior_v2, kernels)
     timings["refine_merge"] = (time.perf_counter() - t) * 1000
-    cv2.waitKey(0)
-
 
     # ── process_channel breakdown ──
     # extract_raw_boxes
@@ -111,7 +109,7 @@ def bench_once(frame, scale):
 
     # adjust_resolve #2
     t = time.perf_counter()
-    split_ar = adjust_resolve(split, mask_white, h_small, params)
+    split_ar = adjust_resolve(split, mask_white, h_small, params, resolve=False)
     timings["adjust_resolve_2"] = (time.perf_counter() - t) * 1000
 
     # validate_text
@@ -119,14 +117,9 @@ def bench_once(frame, scale):
     validated_t = validate_text(split_ar, mask_white, params, kernels)
     timings["validate_text"] = (time.perf_counter() - t) * 1000
 
-    # adjust_resolve #3
-    t = time.perf_counter()
-    validated_t_ar = adjust_resolve(validated_t, mask_white, h_small, params)
-    timings["adjust_resolve_3"] = (time.perf_counter() - t) * 1000
-
     # merge_nearby_horizontal
     t = time.perf_counter()
-    merge = merge_nearby_horizontal(validated_t_ar, params["max_gap_x"], params["max_gap_y"])
+    merge = merge_nearby_horizontal(validated_t, params["max_gap_x"], params["max_gap_y"])
     timings["merge_horiz"] = (time.perf_counter() - t) * 1000
 
     # validate_background
@@ -134,10 +127,10 @@ def bench_once(frame, scale):
     validated_b = validate_background(merge, mask_white, small, params)
     timings["validate_bg"] = (time.perf_counter() - t) * 1000
 
-    # adjust_resolve #4
+    # adjust_resolve #3
     t = time.perf_counter()
-    validated_b_ar = adjust_resolve(validated_b, mask_white, h_small, params)
-    timings["adjust_resolve_4"] = (time.perf_counter() - t) * 1000
+    validated_b_ar = adjust_resolve(validated_b, mask_white, h_small, params, resolve=False)
+    timings["adjust_resolve_3"] = (time.perf_counter() - t) * 1000
 
     # expand_plates
     t = time.perf_counter()
@@ -147,6 +140,13 @@ def bench_once(frame, scale):
     # filter_geometry
     t = time.perf_counter()
     plates = filter_geometry(expanded, closed, params)
+    """
+    screen = small.copy()
+    write_rects(screen, validated_t, get_color("magenta"),2)
+    write_rects(screen, plates, get_color("vert"),1)
+    cv2.imshow("screen", screen)
+    cv2.waitKey(0)
+    """
     timings["filter_geometry"] = (time.perf_counter() - t) * 1000
     timings["plates_found"] = len(plates)
 

@@ -14,7 +14,7 @@ DXCam (120fps)
     ▼
 CaptureThread ──→ frame RGB
     │
-    ├──→ DetectThread (Slow — HSV dual-pass orange/bleu, full frame)
+    ├──→ DetectThread (Slow — , full frame)
     │        └──→ zones [(x, y, w, h), ...]
     │
     ├──→ FastTrackThread (Fast — ROI redetect autour des masques connus)
@@ -32,19 +32,22 @@ CaptureThread ──→ frame RGB
 
 ## Fichiers
 
-| Fichier                | Rôle                                                         |
-| ---------------------- | ------------------------------------------------------------ |
-| `main.py`              | Orchestration pipeline v8, TTL, matching, dual detect, debug |
-| `config.py`            | Singleton config — charge config.yaml + hot-reload (watcher) |
-| `config.yaml`          | Paramètres centralisés (zéro magic number)                   |
-| `capture_thread.py`    | Thread de capture DXCam non-bloquant                         |
-| `detect_thread.py`     | Thread de détection lente (slow — full frame, scale lent)    |
-| `fast_track_thread.py` | Thread de tracking rapide (fast — ROI autour des masques)    |
-| `detect.py`            | Pipeline HSV dual-pass v8 (orange + bleu + white masking)    |
-| `detect_tools.py`      | Morpho, filtrage géométrique, process_channel                |
-| `detect_stats.py`      | Compteurs de performance thread-safe (timings + rejections)  |
-| `blur.py`              | Floutage multi-mode (pixelate, box, gaussian, fill)          |
-| `send_thread.py`       | Thread d'envoi vers la caméra virtuelle OBS                  |
+| Fichier                 | Rôle                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `main.py`               | Orchestration pipeline v10, TTL, matching, dual detect, CSV benchmark, debug |
+| `config.py`             | Singleton config — charge config.yaml + hot-reload (watcher)                 |
+| `config.yaml`           | Paramètres centralisés (zéro magic number)                                   |
+| `capture_thread.py`     | Thread de capture DXCam non-bloquant                                         |
+| `detect_thread.py`      | Thread de détection lente (slow — full frame, scale lent)                    |
+| `fast_track_thread.py`  | Thread de tracking rapide (fast — ROI autour des masques)                    |
+| `detect.py`             | Pipeline HSV dual-pass ( white masking)                                      |
+| `detect_tools.py`       | Utilitaires dessin (write_circles, write_rects, get_color)                   |
+| `detect_tools_mask.py`  | Masques image (saturation, white mask, sobel, refine/merge)                  |
+| `detect_tools_boxes.py` | Boîtes englobantes (extract, split, validate, merge, process_channel)        |
+| `detect_stats.py`       | Compteurs de performance thread-safe (timings + rejections)                  |
+| `blur.py`               | Floutage multi-mode (pixelate, box, gaussian, fill)                          |
+| `send_thread.py`        | Thread d'envoi vers la caméra virtuelle OBS                                  |
+| `bench_pipeline.py`     | Benchmark pas-à-pas du pipeline detect sur une image                         |
 
 ---
 

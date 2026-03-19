@@ -18,12 +18,9 @@ _stats = {
     "hsv_ms":           0.0,
 
     # ── timings masques ──
-    "mask_orange_ms":   0.0,
-    "mask_blue_ms":     0.0,
     "mask_white_ms":    0.0,        # white_core + white_ext + dilate + AND
     "filter_uniform_ms":  0.0,
     # ── timings combine ──
-    "combine_ms":       0.0,        # orange | blue
     "combine_wd_ms":    0.0,        # AND avec white dilaté
 
     # ── timings morpho + contours ──
@@ -67,12 +64,9 @@ def get_stats():
         "hsv_avg_ms":           round(_stats["hsv_ms"]           / n, 2),
 
         # ── timings masques ──
-        "mask_orange_avg_ms":   round(_stats["mask_orange_ms"]   / n, 2),
-        "mask_blue_avg_ms":     round(_stats["mask_blue_ms"]     / n, 2),
         "mask_white_avg_ms":    round(_stats["mask_white_ms"]    / n, 2),
 
         # ── timings combine ──
-        "combine_avg_ms":       round(_stats["combine_ms"]       / n, 2),
         "combine_wd_avg_ms":    round(_stats["combine_wd_ms"]    / n, 2),
 
         # ── timings morpho + contours ──
