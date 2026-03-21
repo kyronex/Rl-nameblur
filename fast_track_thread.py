@@ -1,14 +1,20 @@
 # fast_track_thread.py
+import cv2
 import threading
 import time
+import numpy as np
 from config import cfg
-from detect import track_roi_fast
+from detect import ncc_match
+from box import Box
+from optical_flow import of_track
+
+_MAX_STALE_FRAMES = cfg.get("detect.fast.max_stale_frames", 15)
 
 
 class FastTrackThread:
     """
     Reçoit la frame courante + les masques actifs.
-    Crop ROI élargie autour de chaque masque, re-détecte, publie les résultats.
+    Tracking OF → NCC confirme → Option B si échec.
     """
 
     def __init__(self, screen_width, screen_height):
@@ -22,18 +28,25 @@ class FastTrackThread:
 
         self._results = []
         self._results_ts = 0.0
-        self._results_lock = threading.Lock()
         self._result_version = 0
+        self._results_lock = threading.Lock()
 
-        self._running = False
-        self._thread = None
+        self._prev_gray = None
+        self._last_known = {}
 
-        # Stats
+        self._stats_lock = threading.Lock()
         self._total_ms = 0.0
         self._track_count = 0
         self._roi_count = 0
         self._found_count = 0
-        self._stats_lock = threading.Lock()
+        self._of_ok_count = 0
+        self._of_fb_count = 0
+
+        self._running = False
+        self._thread = None
+
+        self._roi_margin = cfg.get("detect.fast.roi_margin", 30)
+        self._ncc_threshold = cfg.get("detect.fast.ncc_threshold", 0.5)
 
     # ──────────── Contrôle ────────────
 
@@ -51,146 +64,168 @@ class FastTrackThread:
 
     # ──────────── Interface ────────────
 
-    def give_frame_and_masks(self, frame, masks, ts):
-        frame_copy = frame.copy()
-        masks_copy = [
-            {"id": m["uid"], "rect": m["rect"]}
-            for m in masks
-        ]
+    def give_frame_and_masks(self,frame, masks, frame_ts):
         with self._frame_lock:
-            self._latest_frame = frame_copy
-            self._latest_frame_ts = ts
-            self._latest_masks = masks_copy
+            self._latest_frame = frame
+            self._latest_frame_ts = frame_ts
+            self._latest_masks = list(masks)
 
     def get_results(self):
         with self._results_lock:
-            return self._result_version, self._results.copy(), self._results_ts
-
-    # ──────────── Stats ────────────
+            return self._result_version, list(self._results), self._results_ts
 
     def get_stats(self):
         with self._stats_lock:
-            n = max(self._track_count, 1)
+            count = self._track_count
+            if count == 0:
+                return {
+                    "avg_ms": 0.0,
+                    "count": 0,
+                    "roi_total": 0,
+                    "found_total": 0,
+                    "of_ok_rate": 0.0,
+                    "of_fb_rate": 0.0,
+                }
             return {
-                "fast_avg_ms":      round(self._total_ms / n, 2),
-                "track_count":      self._track_count,
-                "roi_per_track":    round(self._roi_count / n, 1),
-                "found_per_track":  round(self._found_count / n, 1),
+                "avg_ms": round(self._total_ms / count, 2),
+                "count": count,
+                "roi_total": self._roi_count,
+                "found_total": self._found_count,
+                "of_ok_rate": round(self._of_ok_count / max(self._roi_count, 1), 3),
+                "of_fb_rate": round(self._of_fb_count / max(self._roi_count, 1), 3),
             }
 
     def reset_stats(self):
         with self._stats_lock:
-            self._total_ms = 0.0
+            self._total_ms    = 0.0
             self._track_count = 0
-            self._roi_count = 0
+            self._roi_count   = 0
             self._found_count = 0
+            self._of_ok_count = 0
+            self._of_fb_count = 0
+    # ──────────── NCC sur ROI ────────────
 
-    # ──────────── Helpers ────────────
-
-    def _expand_roi(self, rect):
-        """Élargit un rect de roi_margin % de chaque côté, clampé à l'écran."""
-        margin = cfg.get("detect.fast.roi_margin", 0.3)
+    def _ncc_on_roi(self, gray, rect, template):
         x, y, w, h = rect
+        margin = self._roi_margin
+        rx = max(x - margin, 0)
+        ry = max(y - margin, 0)
+        rx2 = min(x + w + margin, self._screen_w)
+        ry2 = min(y + h + margin, self._screen_h)
 
-        dx = int(w * margin)
-        dy = int(h * margin)
+        roi = gray[ry:ry2, rx:rx2]
+        if roi.size == 0:
+            return None, 0.0
 
-        rx = max(int(x) - dx, 0)
-        ry = max(int(y) - dy, 0)
-        rx2 = min(int(x + w) + dx, self._screen_w)
-        ry2 = min(int(y + h) + dy, self._screen_h)
+        score, loc = ncc_match(roi, template, threshold=self._ncc_threshold)
 
-        return rx, ry, rx2 - rx, ry2 - ry
+        if loc is None:
+            return None, score
 
-    def _best_plate(self, plates_frame, original_rect):
-        """
-        Parmi les plates (déjà en coordonnées frame),
-        retourne la plus proche du centre de original_rect.
-        Retourne None si trop loin.
-        """
-        if not plates_frame:
-            return None
-
-        ox, oy, ow, oh = original_rect
-        ocx = ox + ow / 2
-        ocy = oy + oh / 2
-
-        best = None
-        best_dist = float("inf")
-
-        for (px, py, pw, ph) in plates_frame:
-            pcx = px + pw / 2
-            pcy = py + ph / 2
-            dist = ((pcx - ocx) ** 2 + (pcy - ocy) ** 2) ** 0.5
-            if dist < best_dist:
-                best_dist = dist
-                best = (px, py, pw, ph)
-
-        max_dist = cfg.get("matching.dist_thresh", 60)
-        if best_dist > max_dist:
-            return None
-
-        return best
+        dx, dy = loc
+        new_rect = (rx + dx, ry + dy, template.shape[1], template.shape[0])
+        return new_rect, score
 
     # ──────────── Worker ────────────
 
     def _worker(self):
+        interval = 1.0 / cfg.get("detect.fast.fps", 60)
+        max_stale = _MAX_STALE_FRAMES
+
         while self._running:
-            # ── Récupérer ET consommer frame + masks ──
+            time.sleep(interval)
+
+            # ── 1. Récupérer frame + masques ──
             with self._frame_lock:
                 frame = self._latest_frame
                 frame_ts = self._latest_frame_ts
                 masks = self._latest_masks
-                self._latest_frame = None
 
             if frame is None or not masks:
-                time.sleep(0.001)
+                self._prev_gray = None
                 continue
 
             t0 = time.perf_counter()
+
+            # ── 2. Convertir en gris ──
+            curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # ── 3. Pas de prev_gray → initialiser et publier positions actuelles ──
+            if self._prev_gray is None:
+                self._prev_gray = curr_gray
+                results = []
+                for m in masks:
+                    uid = m["uid"]
+                    rect = m["rect"]
+                    template = m.get("template")
+                    self._last_known[uid] = {"rect": rect, "stale": 0}
+                    results.append((uid, rect, 1.0))
+                with self._results_lock:
+                    self._results = results
+                    self._results_ts = frame_ts
+                    self._result_version += 1
+                continue
+
+            # ── 4. Tracking par masque ──
             results = []
+            active_ids = set()
             roi_count = 0
             found_count = 0
+            of_ok = 0
+            of_fb = 0
 
-            for mask_info in masks:
-                mask_id = mask_info["id"]
-                rect = mask_info["rect"]
+            for m in masks:
+                uid = m["uid"]
+                rect = m["rect"]
+                template = m.get("template")
+                active_ids.add(uid)
 
-                # ── Expand ROI ──
-                roi_x, roi_y, roi_w, roi_h = self._expand_roi(rect)
-                if roi_w < 10 or roi_h < 10:
-                    results.append((mask_id, None))
-                    continue
+                # Initialiser last_known si nouveau masque
+                if uid not in self._last_known:
+                    self._last_known[uid] = {"rect": rect, "stale": 0}
 
-                # ── Crop ──
-                roi = frame[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
-                if roi.size == 0:
-                    results.append((mask_id, None))
-                    continue
+                last_state = self._last_known[uid]
 
+                # ── 4a. OF ──
+                candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
+
+                if of_succeeded:
+                    of_ok += 1
+                else:
+                    of_fb += 1
+                    candidate_rect = last_state["rect"]
+
+                # ── 4b. NCC confirme ──
                 roi_count += 1
 
-                # ── Detect dans le crop ──
-                plates_local = track_roi_fast(roi)  # retourne coords relatives au ROI
-
-                # ── Reconvertir en coordonnées frame ──
-                plates_frame = [
-                    (px + roi_x, py + roi_y, pw, ph)
-                    for (px, py, pw, ph) in plates_local
-                ]
-
-                # ── Trouver le meilleur match ──
-                best = self._best_plate(plates_frame, rect)
-
-                if best is not None:
-                    found_count += 1
-                    results.append((mask_id, best))
+                if template is not None:
+                    ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, template)
                 else:
-                    results.append((mask_id, None))
+                    ncc_rect, score = None, 0.0
+
+                if ncc_rect is not None:
+                    last_state["rect"] = ncc_rect
+                    last_state["stale"] = 0
+                    found_count += 1
+                    results.append((uid, ncc_rect, score))
+                else:
+                    last_state["stale"] += 1
+                    if last_state["stale"] <= max_stale:
+                        results.append((uid, last_state["rect"], score))
+                    else:
+                        results.append((uid, None, score))
+
+            # ── 5. Purger masques disparus ──
+            for old_id in list(self._last_known.keys()):
+                if old_id not in active_ids:
+                    del self._last_known[old_id]
+
+            # ── 6. Mémoriser frame courante ──
+            self._prev_gray = curr_gray
 
             dt = (time.perf_counter() - t0) * 1000
 
-            # ── Publier résultats ──
+            # ── 7. Publier ──
             with self._results_lock:
                 self._results = results
                 self._results_ts = frame_ts
@@ -201,3 +236,5 @@ class FastTrackThread:
                 self._track_count += 1
                 self._roi_count += roi_count
                 self._found_count += found_count
+                self._of_ok_count += of_ok
+                self._of_fb_count += of_fb

@@ -9,6 +9,8 @@ from detect_stats import flush_local, make_local, get_stats, reset_stats
 from detect_tools import write_circles , write_rects , get_color
 from detect_tools_mask import compute_white_mask, compute_sobel_interiors, refine_and_merge ,saturation_variance_mask,detect_ball_zones
 from detect_tools_boxes import process_channel
+from box import Box
+
 log = logging.getLogger("detect")
 
 # ── Cache kernels par scale ──
@@ -179,9 +181,10 @@ def _run_pipeline(frame, scale):
 
     # ── 8. Remap vers résolution d'entrée ──
     plates = [
-        (int(px * scale), int(py * scale), int(pw * scale), int(ph * scale))
-        for (px, py, pw, ph) in candidates
+        Box(int(b.x * scale), int(b.y * scale), int(b.w * scale), int(b.h * scale), scores=dict(b.scores))
+        for b in candidates
     ]
+
     local["total_ms"] += (time.perf_counter() - t_start) * 1000
     flush_local(local)
     return plates
@@ -197,20 +200,31 @@ def detect_plates(frame):
     return _run_pipeline(frame, scale)
 
 
-def detect_roi(roi):                                   # ← FIX: prend juste le crop
-    """
-    Fast detect — ROI crop
-    """
-    if roi.size == 0:
-        return []
-
-    scale = cfg.get("detect.fast.scale", 3.0)
-    return _run_pipeline(roi, scale)
 
 # ═══════════════════════════════════════════════════════
 #  FAST TRACKING — léger, pour ROI connues
 # ═══════════════════════════════════════════════════════
 
+def ncc_match(roi_gray, template_gray, threshold=0.5):
+    """
+    Template matching NCC sur un crop ROI.
+    Retourne (score, (dx, dy)) ou (0.0, None) si échec.
+    """
+    if roi_gray is None or template_gray is None:
+        return 0.0, None
+    if (template_gray.shape[0] > roi_gray.shape[0] or
+        template_gray.shape[1] > roi_gray.shape[1]):
+        return 0.0, None
+
+    result = cv2.matchTemplate(roi_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+    if max_val < threshold:
+        return round(max_val, 3), None
+
+    return round(max_val, 3), max_loc
+
+# ── track_roi_fast not used ──
 def track_roi_fast(roi):
     if roi is None or roi.size == 0:
         return []

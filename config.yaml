@@ -57,7 +57,9 @@ detect:
     scale: 2.0 #
   fast:
     scale: 2.0
-    roi_margin: 0.5 # +% chaque côté
+    max_stale_frames: 15
+    ncc_threshold: 0.6
+    roi_margin: 0.3 # +% chaque côté
     enabled: true
   hsv:
     white_core:
