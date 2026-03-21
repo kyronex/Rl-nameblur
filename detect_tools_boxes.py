@@ -6,6 +6,7 @@ import logging
 from config import cfg
 from detect_stats import flush_local
 from detect_tools import write_circles , write_rects , get_color
+from box import Box
 
 log = logging.getLogger("detect_tools_boxes")
 
@@ -17,7 +18,7 @@ def extract_raw_boxes(masked, params):
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         if w * h >= params["min_area"]:
-            boxes.append((x, y, w, h))
+            boxes.append(Box(x, y, w, h))
     return boxes
 
 # ── adjust_boxes ──
@@ -26,10 +27,11 @@ def adjust_boxes(boxes, mask_white, h_img, params):
     expand_search = params.get("expand_search_px", 2)
     retract_density = 0.25
     result = []
-    for (x, y, w, h) in boxes:
+    for box in boxes:
+        x, y, w, h = box.rect
         roi = mask_white[y:y+h, x:x+w]
         if roi.size == 0:
-            result.append((x, y, w, h))
+            result.append(box)
             continue
         n_labels, labels, stats_cc, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
         valid = []
@@ -38,7 +40,7 @@ def adjust_boxes(boxes, mask_white, h_img, params):
             if area_i >= min_blob:
                 valid.append(i)
         if not valid:
-            result.append((x, y, w, h))
+            result.append(box)
             continue
         # ── Rétraction verticale seulement ──
         ry1 = min(stats_cc[i, cv2.CC_STAT_TOP] for i in valid)
@@ -79,7 +81,7 @@ def adjust_boxes(boxes, mask_white, h_img, params):
                 if row.size == 0 or cv2.countNonZero(row) == 0:
                     break
                 nh += 1
-        result.append((nx, ny, nw, nh))
+        result.append(box.copy_with(x=nx, y=ny, w=nw, h=nh))
     return result
 
 # ── merge_nearby_horizontal ──
@@ -87,39 +89,40 @@ def merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
     """Fusionne les boxes proches horizontalement et alignées en Y."""
     if not boxes:
         return []
-    sorted_boxes = sorted(boxes, key=lambda b: b[0])
+    sorted_boxes = sorted(boxes, key=lambda b: b.x)
     anchor = sorted_boxes[0]
     group = [anchor]
-    gx2 = anchor[0] + anchor[2]
+    gx2 = anchor.x + anchor.w
     groups = []
     for b in sorted_boxes[1:]:
-        ay1, ay2 = anchor[1], anchor[1] + anchor[3]
-        by1, by2 = b[1], b[1] + b[3]
+        ay1, ay2 = anchor.y, anchor.y + anchor.h
+        by1, by2 = b.y, b.y + b.h
         overlap = min(ay2, by2) - max(ay1, by1)
         y_ok = overlap > max_gap_y
-        gap_x = b[0] - gx2
+        gap_x = b.x - gx2
         # Différence de hauteur
-        h_diff = abs(anchor[3] - b[3])
+        h_diff = abs(anchor.h - b.h)
         # Écart entre centres Y
-        cy_anchor = anchor[1] + anchor[3] / 2
-        cy_b = b[1] + b[3] / 2
+        cy_anchor =  anchor.y + anchor.h / 2
+        cy_b = b.y + b.h / 2
         cy_diff = abs(cy_anchor - cy_b)
         if gap_x < max_gap_x and y_ok and h_diff <= 3 and cy_diff <= 2:
             group.append(b)
-            gx2 = max(gx2, b[0] + b[2])
+            gx2 = max(gx2, b.x + b.w)
         else:
             groups.append(group)
             anchor = b
             group = [b]
-            gx2 = b[0] + b[2]
+            gx2 = b.x + b.w
     groups.append(group)
     merged = []
     for group in groups:
-        x1 = min(b[0] for b in group)
-        y1 = min(b[1] for b in group)
-        x2 = max(b[0] + b[2] for b in group)
-        y2 = max(b[1] + b[3] for b in group)
-        merged.append((x1, y1, x2 - x1, y2 - y1))
+        x1 = min(b.x for b in group)
+        y1 = min(b.y for b in group)
+        x2 = max(b.x + b.w for b in group)
+        y2 = max(b.y + b.h for b in group)
+        merged_scores = Box.merge_scores(*group)
+        merged.append(Box(x1, y1, x2 - x1, y2 - y1, scores=merged_scores))
     return merged
 
 # ── split_wide_boxes ──
@@ -129,10 +132,11 @@ def split_wide_boxes(boxes, mask_white, params):
     max_density  = params.get("max_valley_density", 0.10)
     min_frag_w   = params.get("min_fragment_width", 40)
     result = []
-    for (bx, by, bw, bh) in boxes:
+    for box in boxes:
+        bx, by, bw, bh = box.rect
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
-            result.append((bx, by, bw, bh))
+            result.append(box)
             continue
         # ── Projection verticale ──
         col_sum = np.sum(roi > 0, axis=0)  # pixels blancs par colonne
@@ -151,7 +155,7 @@ def split_wide_boxes(boxes, mask_white, params):
         if start is not None and len(is_empty) - start >= min_valley_w:
             valleys.append((start, len(is_empty)))
         if not valleys:
-            result.append((bx, by, bw, bh))
+            result.append(box)
             continue
         # ── Couper aux vallées ──
         cuts = [0]
@@ -172,25 +176,28 @@ def split_wide_boxes(boxes, mask_white, params):
                 continue
             # Bounding box tight sur les pixels blancs
             rx, ry, rw, rh = cv2.boundingRect(coords)
-            result.append((bx + fx + rx, by + ry, rw, rh))
+            result.append(box.copy_with(x=bx + fx + rx, y=by + ry, w=rw, h=rh))
     return result
 
 # ── validate_text ──
-def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2, min_transition=0.20):
+def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2, min_transition=0.20,min_cc_area=3):
+    empty = {"transition_density": 0.0, "rf": 0.0, "vproj": 0.0, "density": 0.0, "cc": 0.0, "hreg": 0.0}
     crop = roi[y1:y2, x1:x2]
     if crop.size == 0:
         return False
-    h = crop.shape[0]
+    h, w = crop.shape
     # ── Check structure : transitions horizontales ──
     edges = np.diff(crop.astype(np.int16), axis=1)
     transition_density = np.count_nonzero(edges) / max(crop.size, 1)
     if transition_density < min_transition:
-        return False
-    v_proj = np.count_nonzero(crop, axis=1)  # pixels blancs par ligne
-    active_rows = np.count_nonzero(v_proj)
+        return False, {**empty, "transition_density": transition_density}
+
+    row_sums = np.sum(crop, axis=1)
+    active_rows = np.count_nonzero(row_sums)
     row_fill = active_rows / max(h, 1)
     if row_fill < 0.5:  # texte occupe au moins 50% des lignes
-        return False
+        return False, {**empty, "transition_density": transition_density, "row_fill": row_fill}
+
     t1 = h // 3
     t2 = 2 * h // 3
     tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
@@ -198,39 +205,83 @@ def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2, min_transition=0.2
         1 for t in tiers
         if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
     )
-    return active >= min_tiers
+    tiers_ok = active >= min_tiers
+
+    # ── 4. Variance projection horizontale (vproj) ──
+    proj = row_sums.astype(np.float32)
+    vproj = float(np.var(proj)) / max(w * w * 0.25, 1.0)
+    vproj = min(vproj, 1.0)
+
+    # ── 5. Densité blanc (density) ──
+    raw_density = np.count_nonzero(crop) / max(crop.size, 1)
+    density = max(0.0, 1.0 - abs(raw_density - 0.30) / 0.30)
+
+    # ── 6 & 7. Composantes connexes (cc) + régularité hauteur (hreg) ──
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(crop, connectivity=8)
+    valid = stats[1:]
+    if len(valid) > 0:
+        valid = valid[valid[:, cv2.CC_STAT_AREA] >= min_cc_area]
+    n_valid = len(valid)
+
+    cc = max(0.0, 1.0 - min(abs(n_valid - 8), 8) / 8.0)
+
+    if n_valid >= 2:
+        heights = valid[:, cv2.CC_STAT_HEIGHT].astype(np.float32)
+        median_h = float(np.median(heights))
+        if median_h > 0:
+            mean_dev = float(np.mean(np.abs(heights - median_h) / median_h))
+            hreg = max(0.0, 1.0 - mean_dev)
+        else:
+            hreg = 0.0
+    else:
+        hreg = 0.0
+
+    scores = {
+        "transition_density": transition_density,
+        "row_fill": row_fill,
+        "vproj": vproj,
+        "density": density,
+        "cc": cc,
+        "hreg": hreg
+    }
+
+    return tiers_ok, scores
 
 def sweep_and_cut(ccs, roi, min_text_fill=0.08, min_transition=0.20):
     validated = []
     group = []           # CC dans le groupe courant
     gx1, gy1, gx2, gy2 = None, None, None, None  # bbox union courante
+    g_ok = False
+    g_scores = {}
     for cc in ccs:
         cx1, cy1, cx2, cy2 = cc
         if not group:
             # Premier élément
             group.append(cc)
             gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
+            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, min_text_fill, 2, min_transition)
             continue
         # ── Union candidate ──
         nx1 = min(gx1, cx1)
         ny1 = min(gy1, cy1)
         nx2 = max(gx2, cx2)
         ny2 = max(gy2, cy2)
-        if has_text(roi, nx1, ny1, nx2, ny2, min_text_fill, 2,min_transition):
+        valid, scores = has_text(roi, nx1, ny1, nx2, ny2, min_text_fill, 2, min_transition)
+        if valid:
             group.append(cc)
             gx1, gy1, gx2, gy2 = nx1, ny1, nx2, ny2
+            g_ok, g_scores = valid, scores
         else:
             # Creux détecté → valider le groupe précédent si assez bon
-            if len(group) >= 1:
-                if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill,2, min_transition):
-                    validated.append((gx1, gy1, gx2, gy2))
+            if g_ok:
+                validated.append((gx1, gy1, gx2, gy2,g_scores))
             # Recommencer avec la CC courante
             group = [cc]
             gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
+            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, min_text_fill, 2, min_transition)
     # ── Dernier groupe ──
-    if len(group) >= 1:
-        if has_text(roi, gx1, gy1, gx2, gy2, min_text_fill,2, min_transition):
-            validated.append((gx1, gy1, gx2, gy2))
+    if group and g_ok:
+        validated.append((gx1, gy1, gx2, gy2, g_scores))
     return validated
 
 def validate_text(boxes, mask_white, params, kernels):
@@ -239,7 +290,8 @@ def validate_text(boxes, mask_white, params, kernels):
     min_text_fill = params["min_text_fill"]
     kernel_rc = kernels["roi_connected"]
     min_transition = params["min_transition"]
-    for (bx, by, bw, bh) in boxes:
+    for box in boxes:
+        bx, by, bw, bh = box.rect
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
             continue
@@ -262,8 +314,10 @@ def validate_text(boxes, mask_white, params, kernels):
         order = np.argsort(x1)
         cc_boxes = list(zip(x1[order].tolist(), y1[order].tolist(),x2[order].tolist(), y2[order].tolist()))
         groups = sweep_and_cut(cc_boxes, roi, min_text_fill,min_transition)
-        for (gx1, gy1, gx2, gy2) in groups:
-            result.append((bx + gx1, by + gy1, gx2 - gx1, gy2 - gy1))
+        for (gx1, gy1, gx2, gy2, scores) in groups:
+            new_box = box.copy_with(x=bx + gx1, y=by + gy1, w=gx2 - gx1, h=gy2 - gy1)
+            new_box.scores.update(scores)
+            result.append(new_box)
     return result
 
 # ── validate_background ──
@@ -272,7 +326,8 @@ def validate_background(boxes, mask_white, rgb, params):
     coherent_delta  = params.get("coherent_delta", 33)
     min_score       = params.get("min_bg_score", 0.5)
     result = []
-    for (x, y, w, h) in boxes:
+    for box in boxes:
+        x, y, w, h = box.rect
         w_pad = 2
         x = max(0, x - w_pad)
         w = w + w_pad * 2
@@ -294,37 +349,12 @@ def validate_background(boxes, mask_white, rgb, params):
         # Mesure 2 : ratio cohérent
         s_coh = float(np.count_nonzero(fond_diff < coherent_delta)) / fond_count
         score = s_var * s_coh
+        # Injecter le score, garder la géométrie paddée
+        new_box = box.copy_with(x=x, y=y, w=w, h=h)
+        new_box.scores["bg_score"] = score
         if score >= min_score:
-            result.append((x, y, w, h))
+            result.append(new_box)
     return result
-
-# ── filter_geometry ──
-def filter_geometry(boxes, masked, params):
-    """Filtre ratio/area/fill sur des boxes (déjà mergées)."""
-    min_area   = params["min_area"]
-    max_area   = params["max_area"]
-    min_width  = params["min_width"]
-    min_height = params["min_height"]
-    min_ratio  = params["min_ratio"]
-    max_ratio  = params["max_ratio"]
-    min_fill   = params["min_fill"]
-    max_fill   = params["max_fill"]
-
-    plates = []
-    for (x, y, w, h) in boxes:
-        if w < min_width or h < min_height:
-            continue
-        area = w * h
-        if area < min_area or area > max_area:
-            continue
-        ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
-        if ratio < min_ratio or ratio > max_ratio:
-            continue
-        fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
-        if fill < min_fill or fill > max_fill:
-            continue
-        plates.append((x, y, w, h))
-    return plates
 
 # ── resolve_overlaps ──
 def recrop_from_white(mask_white, x, y, w, h, ref_x, ref_y, ref_w, ref_h):
@@ -412,20 +442,22 @@ def resolve_overlaps(boxes, mask_white, params):
     img_h, img_w = mask_white.shape[:2]
     # ── 1. Calculer le score de chaque box ──
     scored = []
-    for (x, y, w, h) in boxes:
+    for box in boxes:
+        x, y, w, h = box.rect
         score = edge_confidence(mask_white, x, y, w, h, img_h, img_w)
-        scored.append(((x, y, w, h), score))
+        scored.append((box, score))
     # ── 2. Trier par score décroissant ──
-    scored.sort(key=lambda s: (s[1], s[0][2] * s[0][3]), reverse=True)
+    scored.sort(key=lambda s: (s[1], s[0].w * s[0].h), reverse=True)
     # ── 3. Résoudre les chevauchements ──
     min_residual_area = int(params["min_area"] * 0.35)
     result = []
-    for rect, _ in scored:
-        if rect is None:
+    for box, _ in scored:
+        if box is None:
             continue
-        cx, cy, cw, ch = rect
+        cx, cy, cw, ch = box.rect
         # Comparer avec toutes les références déjà validées (score supérieur)
-        for rx, ry, rw, rh in result:
+        for ref in result:
+            rx, ry, rw, rh = ref.rect
             # ── Intersection ? ──
             ix1 = max(cx, rx)
             iy1 = max(cy, ry)
@@ -449,21 +481,21 @@ def resolve_overlaps(boxes, mask_white, params):
 
         # ── Vérifier taille minimale ──
         if cw * ch >= min_residual_area and cw >= 10 and ch >= 5:
-            result.append((cx, cy, cw, ch))
+            result.append(box.copy_with(x=cx, y=cy, w=cw, h=ch))
     return result
 
 # ── tight_crop_white ──
 def tight_crop_white(boxes, mask_white):
     """Recadre chaque box au bounding-box réel des pixels blancs qu'elle contient."""
     result = []
-    for (x, y, w, h) in boxes:
+    for box in boxes:
+        x, y, w, h = box.rect
         roi = mask_white[y:y+h, x:x+w]
         if roi.size == 0 or cv2.countNonZero(roi) == 0:
             continue
         coords = cv2.findNonZero(roi)
         rx, ry, rw, rh = cv2.boundingRect(coords)
-        nx, ny = x + rx, y + ry
-        result.append((nx, ny, rw, rh))
+        result.append(box.copy_with(x=x + rx, y=y + ry, w=rw, h=rh))
     return result
 
 # ── adjust_resolve ──
@@ -478,13 +510,50 @@ def adjust_resolve(boxes, mask_white, h_img, params, resolve=True):
 def expand_plates(boxes, img):
     img_h, img_w = img.shape[:2]
     expanded = []
-    for (x, y, w, h) in boxes:
+    for box in boxes:
+        x, y, w, h = box.rect
         nx = max(x - 2, 0)
         ny = max(y - 1, 0)
         nx2 = min(x + w + 2, img_w)
         ny2 = min(y + h + 1, img_h)
-        expanded.append((nx, ny, nx2 - nx, ny2 - ny))
+        expanded.append(box.copy_with(x=nx, y=ny, w=nx2 - nx, h=ny2 - ny))
     return expanded
+
+# ── filter_geometry ──
+def filter_geometry(boxes, masked, params):
+    """Filtre ratio/area/fill sur des boxes (déjà mergées)."""
+    min_area   = params["min_area"]
+    max_area   = params["max_area"]
+    min_width  = params["min_width"]
+    min_height = params["min_height"]
+    min_ratio  = params["min_ratio"]
+    max_ratio  = params["max_ratio"]
+    min_fill   = params["min_fill"]
+    max_fill   = params["max_fill"]
+
+    plates = []
+    for box in boxes:
+        x, y, w, h = box.rect
+        if w < min_width or h < min_height:
+            continue
+        area = w * h
+        if area < min_area or area > max_area:
+            continue
+        ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
+        if ratio < min_ratio or ratio > max_ratio:
+            continue
+        fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
+        if fill < min_fill or fill > max_fill:
+            continue
+        plates.append(box)
+    return plates
+
+def make_template( boxes, frame):
+    x, y, w, h = boxes
+    crop = frame[y:y+h, x:x+w]
+    if len(crop.shape) == 3:
+        crop = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    return crop.copy()
 
 
 def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
@@ -519,6 +588,10 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
 
     log.debug("filter_geometry")
     plates = filter_geometry(expanded, masked, params)
+
+    log.debug("make_template")
+    for box in plates:
+        box.template = make_template(box.rect, rgb)
 
     return plates
 

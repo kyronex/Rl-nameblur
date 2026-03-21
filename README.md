@@ -267,7 +267,7 @@ CHEMIN CRITIQUE :
 ## Dépendances
 
 ```bash
-pip install opencv-python numpy pyvirtualcam dxcam pyyaml
+pip install opencv-python numpy pyvirtualcam dxcam pyyaml scipy
 ```
 
 | Lib             | Usage                            |
