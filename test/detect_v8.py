@@ -7,7 +7,7 @@ from config import cfg
 #from detect_stats import _stats, get_stats, reset_stats
 from detect_stats import flush_local, make_local, get_stats, reset_stats
 from detect_tools import write_circles , write_rects , get_color
-from detect_tools_mask import compute_white_mask, compute_sobel_interiors, refine_and_merge ,saturation_variance_mask
+from detect_tools_mask import compute_white_mask, compute_sobel_interiors, refine_and_merge ,saturation_variance_mask,detect_ball_zones
 from detect_tools_boxes import process_channel
 from box import Box
 
@@ -119,13 +119,14 @@ def _build_params(scale):
         "bands_min_fill":   cfg.get("detect.horizontal_bands.bands_min_fill",   0.15),
         "bands_gap_fill":   cfg.get("detect.horizontal_bands.bands_gap_fill",   0.08),
         "bands_max_bands":   cfg.get("detect.horizontal_bands.bands_max_bands",   2),
-        # ── Horizontal Alignment ──
-        "align_max_y_std":   cfg.get("detect.horizontal_alignment.align_max_y_std",   2.5),
-        "align_min_cols":   cfg.get("detect.horizontal_alignment.align_min_cols",   5),
-        # ── Gradient Bands ──
+        "align_max_y_std":   cfg.get("detect.horizontal_bands.align_max_y_std",   2.5),
+
+
+        # ── Horizontal Bands ──
         "n_zones":   cfg.get("detect.gradient.n_zones",  4),
-        "min_drop_ratio":   cfg.get("detect.gradient.min_drop_ratio",  0.20),
-        "min_zone_width":   cfg.get("detect.gradient.min_zone_width",   8),
+        "min_zone_width":   cfg.get("detect.gradient.min_zone_width",   0.20),
+        "min_drop":   cfg.get("detect.gradient.min_drop",  8),
+
     }
 
     # ── Arrays numpy couleur ──
@@ -236,3 +237,88 @@ def ncc_match(roi_gray, template_gray, threshold=0.5):
         return round(max_val, 3), None
 
     return round(max_val, 3), max_loc
+
+# ── track_roi_fast not used ──
+def track_roi_fast(roi):
+    if roi is None or roi.size == 0:
+        return []
+
+    h_roi, w_roi = roi.shape[:2]
+    if h_roi < 5 or w_roi < 10:
+        return []
+
+    fast_scale = cfg.get("detect.fast.scale", 2.0)
+
+    if fast_scale > 1.0:
+        new_w = max(int(w_roi / fast_scale), 10)
+        new_h = max(int(h_roi / fast_scale), 5)
+        roi_scaled = cv2.resize(roi, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        roi_scaled = roi
+        fast_scale = 1.0
+
+    h_s, w_s = roi_scaled.shape[:2]
+
+    # ── 1. Grayscale ──
+    if len(roi_scaled.shape) == 3:
+        gray = cv2.cvtColor(roi_scaled, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = roi_scaled
+
+    # ── 2. Seuil blanc ──
+    #    On utilise directement le seuil sur la luminance (canal V en HSV ≈ max(R,G,B))
+    #    Plus rapide que cvtColor HSV + inRange pour un simple seuil de luminosité
+    wc_low_v = cfg.get("detect.hsv.white_core.lower", [0, 0, 200])[2]   # valeur V min
+    wc_high_s = cfg.get("detect.hsv.white_core.upper", [230, 35, 255])[1]  # saturation max
+
+    # Seuil luminance : pixels très blancs
+    _, white_mask = cv2.threshold(gray, wc_low_v, 255, cv2.THRESH_BINARY)
+
+    # Filtrer les pixels trop saturés (pas blanc) — besoin du HSV pour ça
+    hsv = cv2.cvtColor(roi_scaled, cv2.COLOR_RGB2HSV)
+    sat = hsv[:, :, 1]
+    _, sat_mask = cv2.threshold(sat, wc_high_s, 255, cv2.THRESH_BINARY_INV)
+
+    # Blanc = lumineux ET peu saturé
+    white_clean = cv2.bitwise_and(white_mask, sat_mask)
+
+    # ── 3. Dilatation pour connecter les lettres ──
+    colors, kernels, params, letter_connect_iter = _build_params(fast_scale)
+    dilated = cv2.dilate(white_clean, kernels["letter_connect"], iterations=letter_connect_iter)
+
+    # ── 4. Contours ──
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return []
+
+    # ── 5. Filtrage géométrique minimal ──
+    min_w = max(w_s * 0.15, 15)   # au moins 15% de la largeur ROI
+    min_h = max(h_s * 0.15, 5)
+    min_ratio = 1.2                   # doit être plus large que haut
+    min_fill = 0.08                   # au moins 8% de remplissage blanc
+
+    results = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+
+        if w < min_w or h < min_h:
+            continue
+        ratio = w / max(h, 1)
+        if ratio < min_ratio:
+            continue
+
+        # Remplissage blanc dans le rect
+        roi_white = white_clean[y:y+h, x:x+w]
+        fill = cv2.countNonZero(roi_white) / max(w * h, 1)
+        if fill < min_fill:
+            continue
+
+        results.append((
+            int(x * fast_scale),
+            int(y * fast_scale),
+            int(w * fast_scale),
+            int(h * fast_scale),
+        ))
+
+    return results

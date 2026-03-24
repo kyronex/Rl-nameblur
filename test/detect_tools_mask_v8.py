@@ -9,6 +9,34 @@ from detect_tools import write_circles , write_rects , get_color
 
 log = logging.getLogger("detect_tools_mask")
 
+# ── detect_ball_zones not used ──
+def detect_ball_zones(frame, min_r=5, max_r=20):
+    """Retourne une liste de (cx, cy, radius) des zones sphériques."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    Y = ycrcb[:, :, 0]
+    Cr = ycrcb[:, :, 1]
+
+    blurred = cv2.GaussianBlur(Y, (9, 9), 2)
+    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT,dp=1.5, minDist=80, param1=120, param2=35,minRadius=min_r, maxRadius=max_r)
+
+    zones = []
+    if circles is not None:
+        for (cx, cy, r) in circles[0]:
+            cx, cy, r = int(cx), int(cy), int(r)
+            # Valider avec Cr (balle orange → Cr élevé)
+            mask = np.zeros(Cr.shape, dtype=np.uint8)
+            cv2.circle(mask, (cx, cy), r, 255, -1)
+            mean_cr = cv2.mean(Cr, mask=mask)[0]
+            if mean_cr > 140:  # balle orange/jaune
+                zones.append((cx, cy, r))
+
+    write_circles(frame, zones, get_color("magenta") , 2)
+    cv2.imshow("frame", frame)
+    cv2.imshow("hsv", hsv)
+    cv2.waitKey(0)
+    return zones
+
 def saturation_variance_mask(frame, scale, kernel_size=(24, 11), threshold1=10000, threshold2=28500):
     h_orig, w_orig = frame.shape[:2]
 
@@ -53,6 +81,47 @@ def saturation_variance_mask(frame, scale, kernel_size=(24, 11), threshold1=1000
 
     if internal_factor < 0.85:
         filtered = cv2.resize(filtered, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+
+    return filtered
+
+# ── saturation_variance_mask_old not used ──
+def saturation_variance_mask_old(frame, kernel_size=(24, 11), threshold1=12000, threshold2=30000):
+
+    h_orig, w_orig = frame.shape[:2]
+    small = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST)
+
+    kw, kh = kernel_size
+    # Adapter le kernel à la résolution réduite
+    kw_s = max(kw // 2 | 1, 1)  # garder impair
+    kh_s = max(kh // 2 | 1, 1)
+
+    channels = cv2.split(small)
+    ch0 = channels[0].astype(np.float32)
+    ch1 = channels[1].astype(np.float32)
+    ch2 = channels[2].astype(np.float32)
+
+    mean0 = cv2.blur(ch0, (kw_s, kh_s))
+    mean1 = cv2.blur(ch1, (kw_s, kh_s))
+    mean2 = cv2.blur(ch2, (kw_s, kh_s))
+
+    var0 = cv2.sqrBoxFilter(ch0, -1, (kw_s, kh_s), normalize=True) - mean0 * mean0
+    var1 = cv2.sqrBoxFilter(ch1, -1, (kw_s, kh_s), normalize=True) - mean1 * mean1
+    var2 = cv2.sqrBoxFilter(ch2, -1, (kw_s, kh_s), normalize=True) - mean2 * mean2
+
+    var_total = var0 + var1 + var2
+
+    hsv_s = cv2.max(cv2.max(ch0, ch1), ch2) - cv2.min(cv2.min(ch0, ch1), ch2)
+    mean_s = cv2.blur(hsv_s, (kw_s, kh_s))
+    var_s = cv2.sqrBoxFilter(hsv_s, -1, (kw_s, kh_s), normalize=True) - mean_s * mean_s
+
+    # Seuils divisés par 4 car variance scale avec résolution²
+    combined = ((var_s > threshold1 / 4) & (var_total > threshold2 / 4)).astype(np.uint8) * 255
+
+    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))  # kernel réduit aussi
+    filtered = cv2.dilate(combined, kernel_v, iterations=1)
+
+    # Remonter à la résolution originale
+    filtered = cv2.resize(filtered, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
 
     return filtered
 

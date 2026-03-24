@@ -431,6 +431,35 @@ def validate_background(boxes, mask_white, rgb, params):
 
 # ── resolve_overlaps ──
 
+# ── recrop_from_white not used ──
+def recrop_from_white(mask_white, x, y, w, h, ref_x, ref_y, ref_w, ref_h):
+    """
+    Recadre une box faible en se basant sur le mask_white
+    dans la zone hors intersection avec la référence.
+
+    On masque la zone de la référence, puis on cherche le bounding box
+    des pixels blancs restants.
+    Retourne (nx, ny, nw, nh) ou None si rien ne reste.
+    """
+    roi = mask_white[y:y + h, x:x + w].copy()
+
+    # ── Masquer la zone d'intersection (en coords locales) ──
+    ix1 = max(ref_x, x) - x
+    iy1 = max(ref_y, y) - y
+    ix2 = min(ref_x + ref_w, x + w) - x
+    iy2 = min(ref_y + ref_h, y + h) - y
+
+    if ix2 > ix1 and iy2 > iy1:
+        roi[iy1:iy2, ix1:ix2] = 0
+
+    # ── Bounding box des pixels restants ──
+    coords = cv2.findNonZero(roi)
+    if coords is None:
+        return None
+
+    bx, by, bw, bh = cv2.boundingRect(coords)
+    return (x + bx, y + by, bw, bh)
+
 def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
     """
     Score de confiance d'une box basé sur le contraste
@@ -594,21 +623,9 @@ def filter_geometry(boxes, masked, params):
         plates.append(box)
     return plates
 
-# ── filter_horizontal_alignment ──
 def filter_horizontal_alignment(boxes, mask_white, params):
-    """Rejette les boxes dont le texte blanc n'est pas aligné horizontalement.
-
-    Principe : pour chaque colonne du ROI, calcule le centre Y des pixels blancs.
-    Un texte de plaque aligné → écart-type faible (~1-3px).
-    Du bruit ou un reflet → écart-type élevé (~4-8px).
-
-    Entrée  : boxes filtrées par filter_horizontal_bands
-    Sortie  : boxes dont le texte est aligné sur une ligne horizontale
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
     max_y_std = params.get("align_max_y_std", 2.5)
-    min_cols = params.get("align_min_cols", 5)
-    log.debug(f"align_max_y_std={max_y_std} align_min_cols={min_cols}")
+    log.debug(f"align_max_y_std={max_y_std}")
     kept = []
     for box in boxes:
         x, y, w, h = box.rect
@@ -621,15 +638,15 @@ def filter_horizontal_alignment(boxes, mask_white, params):
             if col_pixels.size > 0:
                 y_centers.append(float(np.mean(col_pixels)))
 
-        if len(y_centers) < min_cols:
-            # Trop peu de colonnes actives pour juger → on garde par prudence
-            log.debug(f"  align_skip: {box.rect} cols={len(y_centers)} < {min_cols}")
+        if len(y_centers) < 5:
             kept.append(box)
             continue
 
         y_std = float(np.std(y_centers))
-        log.debug(f"  box {box.rect} y_std={y_std:.2f} cols={len(y_centers)}")
+        log.debug(f"  box {box.rect} y_std={y_std:.2f}")
 
+        # Plaque : texte aligné → y_std faible (~1-3px)
+        # Temple : pixels dispersés → y_std élevé (~4-8px)
         if y_std <= max_y_std:
             kept.append(box)
         else:
@@ -639,49 +656,33 @@ def filter_horizontal_alignment(boxes, mask_white, params):
     return kept
 
 
-# ── filter_horizontal_bands ──
 def filter_horizontal_bands(boxes, mask_white, params):
-    """Rejette les boxes contenant trop de bandes horizontales de texte.
+    min_fill   = params.get("bands_min_fill", 0.15)
+    gap_fill   = params.get("bands_gap_fill", 0.08)
+    max_bands  = params.get("bands_max_bands", 2)
 
-    Principe : projection horizontale (somme par ligne), comptage des bandes
-    via hystérésis (min_fill pour entrer, gap_fill pour sortir).
-    Une plaque Rocket League = 1 seule bande de texte.
-
-    Entrée  : boxes filtrées par filter_geometry
-    Sortie  : boxes avec 1-2 bandes max (plaque mono-ligne)
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
-    min_fill  = params.get("bands_min_fill", 0.15)
-    gap_fill  = params.get("bands_gap_fill", 0.08)
-    max_bands = params.get("bands_max_bands", 2)
-
-    log.debug(f"bands: min_fill={min_fill} gap_fill={gap_fill} max_bands={max_bands}")
+    log.debug(f"min_fill={min_fill} gap_fill={gap_fill} max_bands={max_bands}")
 
     kept = []
     for box in boxes:
         x, y, w, h = box.rect
+
+        log.debug(f"  box {box.rect}  ")
+
         roi = mask_white[y:y+h, x:x+w]
-
-        if w == 0:
-            log.debug(f"  bands_skip: {box.rect} w=0")
-            continue
-
         row_sums = np.count_nonzero(roi, axis=1).astype(np.float32) / w
 
         band_count = 0
         in_band = False
 
         for fill in row_sums:
+            log.debug(f"    fill={fill:.3f}")
             if fill >= min_fill:
                 if not in_band:
                     band_count += 1
                     in_band = True
             elif fill < gap_fill:
                 in_band = False
-            # Entre gap_fill et min_fill : hystérésis, on reste dans l'état courant
-            # C'est voulu : évite de compter des micro-bandes sur du bruit
-
-        log.debug(f"  box {box.rect} bands={band_count}")
 
         if band_count > max_bands:
             log.debug(f"  bands_reject: {box.rect} bands={band_count}")
@@ -693,23 +694,12 @@ def filter_horizontal_bands(boxes, mask_white, params):
     return kept
 
 
-# ── filter_perspective_gradient ──
 def filter_perspective_gradient(boxes, mask_white, params):
-    """Rejette les boxes dont la densité de blanc suit un gradient monotone.
-
-    Principe : découpe le ROI en N zones verticales, calcule la densité par zone.
-    Si la densité est monotone (croissante ou décroissante) avec un drop
-    suffisant → c'est une surface en perspective (sol, mur), pas une plaque.
-
-    Entrée  : boxes filtrées par filter_horizontal_alignment
-    Sortie  : boxes sans gradient de perspective
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
     n_zones        = params.get("gradient_n_zones", 4)
     min_drop_ratio = params.get("gradient_min_drop", 0.20)
     min_zone_width = params.get("gradient_min_zone_width", 8)
 
-    log.debug(f"gradient: n_zones={n_zones} min_drop={min_drop_ratio} min_zone_w={min_zone_width}")
+    log.debug(f"n_zones={n_zones} min_drop_ratio={min_drop_ratio} min_zone_width={min_zone_width}")
 
     kept = []
     for box in boxes:
@@ -717,54 +707,42 @@ def filter_perspective_gradient(boxes, mask_white, params):
 
         zone_w = w // n_zones
         log.debug(f"  box {box.rect} zone_w={zone_w}")
-
         if zone_w < min_zone_width:
-            # Box trop étroite pour découper en zones fiables → on garde
-            log.debug(f"  gradient_skip: {box.rect} zone_w={zone_w} < {min_zone_width}")
             kept.append(box)
             continue
 
         roi = mask_white[y:y+h, x:x+w]
 
         densities = []
-        skip = False
         for i in range(n_zones):
             x0 = i * zone_w
-            # FIX: dernière zone étendue jusqu'au bord droit
-            x1 = x0 + zone_w if i < n_zones - 1 else w
+            x1 = x0 + zone_w
             zone = roi[:, x0:x1]
             total = zone.size
             if total == 0:
-                log.debug(f"  gradient_skip: {box.rect} zone {i} empty")
                 kept.append(box)
-                skip = True
                 break
             densities.append(np.count_nonzero(zone) / total)
+        else:
+            # Test monotonie stricte
+            diffs = [densities[i+1] - densities[i] for i in range(n_zones - 1)]
+            all_decreasing = all(d < 0 for d in diffs)
+            all_increasing = all(d > 0 for d in diffs)
 
-        if skip:
-            continue
+            if all_decreasing or all_increasing:
+                max_density = max(densities)
+                if max_density > 0:
+                    drop_ratio = abs(densities[0] - densities[-1]) / max_density
+                    log.debug(f"  max_density={max_density:.3f} drop_ratio={drop_ratio:.3f}")
+                    if drop_ratio > min_drop_ratio:
+                        log.debug(f"  gradient_reject: {box.rect} drop={drop_ratio:.2f}")
+                        continue
 
-        # FIX: monotonie non-stricte avec au moins une variation réelle
-        diffs = [densities[i+1] - densities[i] for i in range(n_zones - 1)]
-        all_decreasing = all(d <= 0 for d in diffs) and any(d < 0 for d in diffs)
-        all_increasing = all(d >= 0 for d in diffs) and any(d > 0 for d in diffs)
-
-        if all_decreasing or all_increasing:
-            max_density = max(densities)
-            if max_density > 0:
-                drop_ratio = abs(densities[0] - densities[-1]) / max_density
-                log.debug(f"  densities={[f'{d:.3f}' for d in densities]} drop={drop_ratio:.3f}")
-                if drop_ratio > min_drop_ratio:
-                    log.debug(f"  gradient_reject: {box.rect} drop={drop_ratio:.2f}")
-                    continue
-
-        kept.append(box)
+            kept.append(box)
 
     log.debug(f"filter_perspective_gradient: {len(boxes)} -> {len(kept)}")
     return kept
 
-
-# ── make_template ──
 def make_template( boxes, frame):
     x, y, w, h = boxes
     crop = frame[y:y+h, x:x+w]
@@ -806,15 +784,11 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     log.debug("filter_geometry")
     geometryed = filter_geometry(expanded, masked, params)
 
-    log.debug("filter_horizontal_bands")
-    banded = filter_horizontal_bands(geometryed, mask_white, params)
-
     log.debug("filter_horizontal_alignment")
-    aligned = filter_horizontal_alignment(banded, mask_white, params)
+    horized = filter_horizontal_alignment(geometryed, masked, params)
 
     log.debug("filter_perspective_gradient")
-    plates = filter_perspective_gradient(aligned, mask_white, params)
-
+    plates = filter_perspective_gradient(geometryed, masked, params)
 
     """
     screen = rgb.copy()
@@ -831,3 +805,30 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
         box.template = make_template(box.rect, rgb)
 
     return plates
+
+# ── has_blob_continuity not used ──
+def has_blob_continuity(masked, x, y, w, h, direction):
+    # Prendre une zone de 2px : 1px dans la box + 1px dans l'expansion
+    if direction == "right":
+        check = masked[y:y+h, x+w-1:x+w+1]
+    elif direction == "left":
+        check = masked[y:y+h, x-1:x+1]
+    elif direction == "down":
+        check = masked[y+h-1:y+h+1, x:x+w]
+    elif direction == "up":
+        check = masked[y-1:y+1, x:x+w]
+    else:
+        return False
+    if check.size == 0 or cv2.countNonZero(check) == 0:
+        return False
+    # connectedComponents sur cette zone de 2px
+    n_labels, labels = cv2.connectedComponents(check, connectivity=8)
+    for label_id in range(1, n_labels):
+        coords = np.argwhere(labels == label_id)
+        if direction in ("right", "left"):
+            cols_touched = set(coords[:, 1])  # axe X
+        else:
+            cols_touched = set(coords[:, 0])  # axe Y
+        if len(cols_touched) >= 2:
+            return True
+    return False

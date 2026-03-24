@@ -28,13 +28,13 @@ blur:
   mode: "fill" # "pixelate", "box", "fill", "gaussian"
   pixel_size: 15
   strength: 25
-  fill_color: [222, 222, 222] # gris pour mode fill
+  fill_color: [255, 0, 255] # gris pour mode fill
   margin: -5
   snap_grid: 8
 
 # ── Debug / affichage ──
 debug:
-  log_level: "WARNING" # DEBUG, INFO, WARNING, ERROR
+  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
   draw: false # true ou false
   colors:
     fresh: [0, 255, 0]
@@ -49,6 +49,7 @@ debug:
     cyan: [0, 200, 255] # Cyan
     bleu: [0, 0, 255] # Bleu
     magenta: [255, 0, 255] # Magenta
+    gray: [222, 222, 222]
     void: [0, 0, 0]
 
 # ── Détection des cartouches de noms ──
@@ -99,10 +100,11 @@ detect:
     refine_min_blob_area: 10
     min_text_fill: 0.08 # variance colonnes pour texte
     min_transition: 0.10
+    min_proj_score: 0.15
     thresh:
       var_norm: 1100.0
       coherent_delta: 30
-      min_bg_score: 0.15
+      min_bg_score: 0.10
   geometry:
     min_area: 500
     max_area: 80000
@@ -112,3 +114,14 @@ detect:
     max_ratio: 18.0
     min_fill: 0.15
     max_fill: 0.95
+  horizontal_bands:
+    bands_min_fill: 0.15
+    bands_gap_fill: 0.08
+    bands_max_bands: 2
+  horizontal_alignment:
+    align_max_y_std: 2.5
+    align_min_cols: 5
+  gradient:
+    n_zones: 4
+    min_drop_ratio: 0.20
+    min_zone_width: 8

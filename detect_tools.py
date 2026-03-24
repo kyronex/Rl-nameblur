@@ -9,7 +9,8 @@ log = logging.getLogger("detect_tools")
 
 # ── write_rects ──
 def write_rects(image, rects, color , thickness=2):
-    for (x, y, w, h) in rects:
+    for box in rects:
+        x, y, w, h = box.rect
         cv2.rectangle(image, (x, y), (x + w, y + h), color, thickness)
     """
     screen = small.copy()
