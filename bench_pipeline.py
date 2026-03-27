@@ -1,163 +1,212 @@
-# bench_pipeline.py
+#!/usr/bin/env python3
 """
-Benchmark complet du pipeline detect.
-Usage :
-    python bench_pipeline.py frame.png          # une image
-    python bench_pipeline.py frame.png --n 20   # moyenne sur 20 runs
+bench_pipeline.py — Benchmark du pipeline de détection plaque Rocket League.
+
+Appelle les MÊMES fonctions que detect.py, dans le MÊME ordre.
+Aucune recopie de logique — uniquement instrumentation (timer + compteurs).
+
+Usage:
+    python bench_pipeline.py frame.png
+    python bench_pipeline.py frame.png --n 20
+    python bench_pipeline.py frame.png --scale 2.0
 """
+import logging
+from config import cfg
+def setup_logging():
+    level_str = cfg.get("debug.log_level", "WARNING")
+    level = getattr(logging, level_str.upper(), logging.WARNING)
+    logging.basicConfig(
+        level=level,
+        format="%(name)s | %(levelname)s | %(message)s"
+    )
+setup_logging()
 
 import cv2
 import numpy as np
 import sys
 import time
 import argparse
-import logging
 
-logging.basicConfig(level=logging.WARNING)
-
-from config import cfg
 from detect import _build_params
 from detect_tools_mask import (
     saturation_variance_mask,
     compute_white_mask,
     compute_sobel_interiors,
-    refine_and_merge
+    refine_and_merge,
 )
 from detect_tools_boxes import (
-    extract_raw_boxes,
-    adjust_resolve,
-    split_wide_boxes,
-    validate_text,
-    validate_background,
-    merge_nearby_horizontal,
-    expand_plates,
-    filter_geometry,
     process_channel,
 )
 from detect_tools import (
-    write_circles ,
-    write_rects ,
-    get_color
+    write_circles,
+    write_rects,
+    get_color,
 )
+from detect_stats import  make_local
+log = logging.getLogger("bench_pipeline")
+# ═══════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════
+
+def _timed(fn, *args, **kwargs):
+    """Exécute fn, retourne (résultat, durée_ms)."""
+    t0 = time.perf_counter()
+    result = fn(*args, **kwargs)
+    return result, (time.perf_counter() - t0) * 1000
 
 
+def _count(obj):
+    """Compte: pixels non-nuls pour un mask, len() pour une liste."""
+    if obj is None:
+        return 0
+    if isinstance(obj, np.ndarray) and obj.ndim == 2:
+        return int(np.count_nonzero(obj))
+    if isinstance(obj, (list, tuple)):
+        return len(obj)
+    return 0
+
+
+# ═══════════════════════════════════════════════════
+# Pipeline bench — miroir exact de detect._run_pipeline
+# ═══════════════════════════════════════════════════
 
 def bench_once(frame, scale):
     """Exécute le pipeline étape par étape, retourne un dict de timings (ms)."""
     timings = {}
-
-    # ── Resize ──
+    colors, kernels, params, letter_connect_iter = _build_params(scale)
+    local = make_local()
+    # ── 1. Resize ──
     t = time.perf_counter()
     h_orig, w_orig = frame.shape[:2]
     w_small = int(w_orig / scale)
     h_small = int(h_orig / scale)
-    small = cv2.resize(frame, (w_small, h_small), interpolation=cv2.INTER_AREA)
-    timings["resize"] = (time.perf_counter() - t) * 1000
+    small = cv2.resize(frame, (w_small, h_small), interpolation=cv2.INTER_LINEAR)
+    timings["1_resize"] = (time.perf_counter() - t) * 1000
 
-    # ── Grayscale ──
+    # ── 2. Grayscale ──
     t = time.perf_counter()
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
-    timings["grayscale"] = (time.perf_counter() - t) * 1000
+    timings["2_grayscale"] = (time.perf_counter() - t) * 1000
 
-    # ── Build params + kernels ──
-    t = time.perf_counter()
-    colors, kernels, params, letter_connect_iter = _build_params(scale)
-    letter_connect_iter = cfg.get("detect.morpho.white_dilate.iterations", 1)
-    timings["build_params"] = (time.perf_counter() - t) * 1000
+    # ── 3. Saturation variance mask ──
+    sat_mask, ms = _timed(saturation_variance_mask, small , scale)
+    timings["3_sat_var_mask"] = ms
 
-    # ── Saturation variance mask ──
-    t = time.perf_counter()
-    sat_mask = saturation_variance_mask(small,scale)
-    timings["sat_variance_mask"] = (time.perf_counter() - t) * 1000
+    # ── 4. White mask ──
+    (mask_white, white_clean), ms = _timed(compute_white_mask, gray, kernels, letter_connect_iter)
+    timings["4_white_mask"] = ms
 
-    # ── White mask ──
-    t = time.perf_counter()
-    mask_white, white_clean = compute_white_mask(gray, kernels, letter_connect_iter)
-    timings["white_mask"] = (time.perf_counter() - t) * 1000
-
-    # ── Combine sat + white ──
+    # ── 5. Combine white + sat ──
     t = time.perf_counter()
     combined = cv2.bitwise_and(white_clean, sat_mask)
-    timings["combine"] = (time.perf_counter() - t) * 1000
+    timings["5_combine"] = (time.perf_counter() - t) * 1000
 
-    # ── Sobel interiors ──
-    t = time.perf_counter()
-    interior_v1, interior_v2 = compute_sobel_interiors(gray, combined, kernels)
-    timings["sobel_interiors"] = (time.perf_counter() - t) * 1000
+    # ── 6. Sobel interiors ──
+    (interior_v1, interior_v2), ms = _timed(compute_sobel_interiors, gray,combined, kernels)
+    timings["6_sobel"] = ms
 
-    # ── Refine and merge ──
-    t = time.perf_counter()
-    closed = refine_and_merge(combined, interior_v1, interior_v2, kernels)
-    timings["refine_merge"] = (time.perf_counter() - t) * 1000
+    # ── 7. Refine and merge ──
+    closed, ms = _timed(refine_and_merge, combined, interior_v1, interior_v2, kernels)
+    timings["7_refine_merge"] = ms
 
-    # ── process_channel breakdown ──
-    # extract_raw_boxes
-    t = time.perf_counter()
-    boxes = extract_raw_boxes(closed, params)
-    timings["extract_raw_boxes"] = (time.perf_counter() - t) * 1000
-    timings["raw_box_count"] = len(boxes)
+    # ── 8. Process channel (contours + filtres géométriques) ──
+    candidates, ms = _timed(process_channel, closed ,small, mask_white, h_small, params, kernels, local)
+    timings["8_process_channel"] = ms
 
-    # adjust_resolve #1
+    # ── 9. Remap scale ──
     t = time.perf_counter()
-    boxes_ar = adjust_resolve(boxes, mask_white, h_small, params)
-    timings["adjust_resolve_1"] = (time.perf_counter() - t) * 1000
-
-    # split_wide_boxes
-    t = time.perf_counter()
-    split = split_wide_boxes(boxes_ar, mask_white, params)
-    timings["split_wide"] = (time.perf_counter() - t) * 1000
-
-    # adjust_resolve #2
-    t = time.perf_counter()
-    split_ar = adjust_resolve(split, mask_white, h_small, params, resolve=False)
-    timings["adjust_resolve_2"] = (time.perf_counter() - t) * 1000
-
-    # validate_text
-    t = time.perf_counter()
-    validated_t = validate_text(split_ar, mask_white, params, kernels)
-    timings["validate_text"] = (time.perf_counter() - t) * 1000
-
-    # merge_nearby_horizontal
-    t = time.perf_counter()
-    merge = merge_nearby_horizontal(validated_t, params["max_gap_x"], params["max_gap_y"])
-    timings["merge_horiz"] = (time.perf_counter() - t) * 1000
-
-    # validate_background
-    t = time.perf_counter()
-    validated_b = validate_background(merge, mask_white, small, params)
-    timings["validate_bg"] = (time.perf_counter() - t) * 1000
-
-    # adjust_resolve #3
-    t = time.perf_counter()
-    validated_b_ar = adjust_resolve(validated_b, mask_white, h_small, params, resolve=False)
-    timings["adjust_resolve_3"] = (time.perf_counter() - t) * 1000
-
-    # expand_plates
-    t = time.perf_counter()
-    expanded = expand_plates(validated_b_ar, small)
-    timings["expand"] = (time.perf_counter() - t) * 1000
-
-    # filter_geometry
-    t = time.perf_counter()
-    plates = filter_geometry(expanded, closed, params)
-    """
-    screen = small.copy()
-    write_rects(screen, validated_t, get_color("magenta"),2)
-    write_rects(screen, plates, get_color("vert"),1)
-    cv2.imshow("screen", screen)
-    cv2.waitKey(0)
-    """
-    timings["filter_geometry"] = (time.perf_counter() - t) * 1000
-    timings["plates_found"] = len(plates)
+    plates = []
+    for box in candidates:
+        plates.append({
+            "x": int(box.x * scale),
+            "y": int(box.y * scale),
+            "w": int(box.w * scale),
+            "h": int(box.h * scale),
+            "score": getattr(box, "score", 0),
+        })
+    timings["9_remap_scale"] = (time.perf_counter() - t) * 1000
 
     # ── Total ──
-    timings["TOTAL"] = sum(
-        v for k, v in timings.items()
-        if k not in ("raw_box_count", "plates_found", "TOTAL")
-    )
+    timings["TOTAL"] = sum(v for k, v in timings.items() if k != "TOTAL")
 
-    return timings
+    return timings, plates, {
+        "small": small,
+        "gray": gray,
+        "sat_mask": sat_mask,
+        "mask_white": mask_white,
+        "white_clean": white_clean,
+        "combined": combined,
+        "interior_v1": interior_v1,
+        "interior_v2": interior_v2,
+        "closed": closed,
+        "candidates": candidates,
+    }
 
+
+# ═══════════════════════════════════════════════════
+# Affichage
+# ═══════════════════════════════════════════════════
+
+def print_report(timings, plates, n_run=None):
+    header = "BENCH PIPELINE"
+    if n_run is not None:
+        header += f" (moyenne sur {n_run} runs)"
+    print(f"\n{'═' * 60}")
+    print(f"  {header}")
+    print(f"{'═' * 60}")
+    print(f"  {'Étape':<30} {'ms':>10}")
+    print(f"  {'─' * 45}")
+    for key, val in timings.items():
+        marker = " ◄" if key == "TOTAL" else ""
+        print(f"  {key:<30} {val:>9.3f}{marker}")
+    print(f"  {'─' * 45}")
+    print(f"  Plaques détectées: {len(plates)}")
+    for i, p in enumerate(plates):
+        print(f"    [{i}] x={p['x']} y={p['y']} "
+              f"w={p['w']} h={p['h']} score={p['score']}")
+    print(f"{'═' * 60}\n")
+
+
+def show_debug(artifacts):
+    """Affiche les images intermédiaires (optionnel, --show)."""
+
+    def to_bgr(img):
+        if img is None:
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+        if img.ndim == 2:
+            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+    row1 = np.hstack([
+        to_bgr(artifacts["gray"]),
+        to_bgr(artifacts["sat_mask"]),
+        to_bgr(artifacts["mask_white"]),
+    ])
+    row2 = np.hstack([
+        to_bgr(artifacts["white_clean"]),
+        to_bgr(artifacts["combined"]),
+        to_bgr(artifacts["closed"]),
+    ])
+    row3 = np.hstack([
+        to_bgr(artifacts["interior_v1"]),
+        to_bgr(artifacts["interior_v2"]),
+        to_bgr(artifacts["small"]),
+    ])
+
+    mosaic = np.vstack([row1, row2, row3])
+    h, w = mosaic.shape[:2]
+    if w > 1920:
+        ratio = 1920 / w
+        mosaic = cv2.resize(mosaic, (1920, int(h * ratio)))
+
+    cv2.imshow("bench_pipeline debug", mosaic)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+# ═══════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(description="Bench detect pipeline")
@@ -167,6 +216,8 @@ def main():
                         help="Scale override (sinon lit detect.slow.scale)")
     parser.add_argument("--fast-scale", type=float, default=None,
                         help="Bench aussi en fast scale")
+    parser.add_argument("--show", action="store_true",
+                        help="Affiche les artefacts intermédiaires")
     args = parser.parse_args()
 
     frame = cv2.imread(args.image)
@@ -196,9 +247,13 @@ def main():
 
         # Collect
         all_timings = []
+        last_plates = []
+        last_artifacts = {}
         for i in range(args.n):
-            t = bench_once(frame_rgb, scale)
-            all_timings.append(t)
+            timings, plates, artifacts = bench_once(frame_rgb, scale)
+            all_timings.append(timings)
+            last_plates = plates
+            last_artifacts = artifacts
 
         # Aggregate
         keys = list(all_timings[0].keys())
@@ -222,6 +277,12 @@ def main():
                 print(f"{k:<28} {avg:>10.2f} {mn:>10.2f} {mx:>10.2f} {pct:>6.1f}%")
 
         print(f"\n  → Throughput: {1000/total_avg:.1f} FPS pipeline seul")
+        print(f"  → Plaques détectées: {len(last_plates)}")
+        for i, p in enumerate(last_plates):
+            print(f"    [{i}] x={p['x']} y={p['y']} w={p['w']} h={p['h']} score={p['score']}")
+
+        if args.show:
+            show_debug(last_artifacts)
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ blur:
 
 # ── Debug / affichage ──
 debug:
-  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO" # DEBUG       , INFO, WARNING, ERROR
   draw: false # true ou false
   colors:
     fresh: [0, 255, 0]
@@ -49,7 +49,7 @@ debug:
     cyan: [0, 200, 255] # Cyan
     bleu: [0, 0, 255] # Bleu
     magenta: [255, 0, 255] # Magenta
-    gray: [222, 222, 222]
+    gris: [222, 222, 222]
     void: [0, 0, 0]
 
 # ── Détection des cartouches de noms ──
@@ -105,11 +105,14 @@ detect:
       var_norm: 1100.0
       coherent_delta: 30
       min_bg_score: 0.10
+      hue_bin_size: 6
+      max_hue_bins: 8
+      min_hue_score: 0.65
   geometry:
     min_area: 500
     max_area: 80000
     min_width: 30
-    min_height: 14
+    min_height: 10
     min_ratio: 1.45
     max_ratio: 18.0
     min_fill: 0.15
@@ -119,9 +122,10 @@ detect:
     bands_gap_fill: 0.08
     bands_max_bands: 2
   horizontal_alignment:
-    align_max_y_std: 2.5
-    align_min_cols: 5
+    align_max_y_std_ratio: 0.20
+    align_min_cols: 3
+    align_min_col_fill: 0.15
   gradient:
     n_zones: 4
-    min_drop_ratio: 0.20
+    min_drop_ratio: 0.50
     min_zone_width: 8

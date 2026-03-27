@@ -106,6 +106,9 @@ def _build_params(scale):
         "var_norm":       cfg.get("detect.refine.thresh.var_norm",  1000.0),
         "coherent_delta":       cfg.get("detect.refine.thresh.coherent_delta",  33),
         "min_bg_score":       cfg.get("detect.refine.thresh.min_bg_score",  10),
+        "hue_bin_size":       cfg.get("detect.refine.thresh.hue_bin_size",  10),
+        "max_hue_bins":       cfg.get("detect.refine.thresh.max_hue_bins",  3),
+        "min_hue_score":       cfg.get("detect.refine.thresh.min_hue_score",  0.1),
         # ── Géométrie ──
         "min_area":   max(round(cfg.get("detect.geometry.min_area",   800)   / scale**2), 1),
         "max_area":   max(round(cfg.get("detect.geometry.max_area",   20000) / scale**2), 1),
@@ -120,8 +123,9 @@ def _build_params(scale):
         "bands_gap_fill":   cfg.get("detect.horizontal_bands.bands_gap_fill",   0.08),
         "bands_max_bands":   cfg.get("detect.horizontal_bands.bands_max_bands",   2),
         # ── Horizontal Alignment ──
-        "align_max_y_std":   cfg.get("detect.horizontal_alignment.align_max_y_std",   2.5),
-        "align_min_cols":   cfg.get("detect.horizontal_alignment.align_min_cols",   5),
+        "align_max_y_std_ratio":   cfg.get("detect.horizontal_alignment.align_max_y_std_ratio",  0.20),
+        "align_min_cols":   cfg.get("detect.horizontal_alignment.align_min_cols",   3),
+        "align_min_col_fill":   cfg.get("detect.horizontal_alignment.align_min_col_fill",  0.15),
         # ── Gradient Bands ──
         "n_zones":   cfg.get("detect.gradient.n_zones",  4),
         "min_drop_ratio":   cfg.get("detect.gradient.min_drop_ratio",  0.20),

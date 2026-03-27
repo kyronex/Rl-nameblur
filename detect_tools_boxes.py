@@ -180,7 +180,7 @@ def split_wide_boxes(boxes, mask_white, params):
     return result
 
 # ── validate_text ──
-def projection_fill_score(crop):
+def projection_fill_score_vold(crop):
     """
     Score basé sur l'aire de projection vs aire totale du blob.
 
@@ -223,8 +223,47 @@ def projection_fill_score(crop):
         "proj_score":  round(proj_score, 3),
     }
 
+_EMPTY_PROJ = {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "proj_score": 0.0}
 
-def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,
+def projection_fill_score(crop):
+    if crop.size == 0:
+        return _EMPTY_PROJ
+
+    h, w = crop.shape
+    total_area = h * w
+
+    # ── Projections (évite crop > 0, crop est déjà binaire 0/255) ──
+    col_any = np.any(crop, axis=0)
+    row_any = np.any(crop, axis=1)
+
+    active_cols = int(np.count_nonzero(col_any))
+    active_rows = int(np.count_nonzero(row_any))
+
+    # ── Aires ──
+    proj_area  = active_cols * active_rows
+    proj_ratio = proj_area / total_area
+
+    white_count = cv2.countNonZero(crop)
+    fill_ratio  = white_count / total_area
+
+    # ── Compacité ──
+    compactness = fill_ratio / max(proj_ratio, 0.01)
+
+    # ── Score final (sans round = ~10% plus rapide) ──
+    s_proj = max(0.0, 1.0 - abs(proj_ratio - 0.70) * 2.5)   # 1/0.40 = 2.5
+    s_comp = max(0.0, 1.0 - abs(compactness - 0.40) * 2.857) # 1/0.35 ≈ 2.857
+
+    proj_score = s_proj * s_comp
+
+    return {
+        "proj_ratio":  proj_ratio,
+        "fill_ratio":  fill_ratio,
+        "compactness": compactness,
+        "proj_score":  proj_score,
+    }
+
+
+def has_text_vold(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,
              min_transition=0.20, min_cc_area=3, min_proj_score=0.10):
     empty = {
         "transition_density": 0.0, "row_fill": 0.0,
@@ -307,6 +346,90 @@ def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,
 
     return tiers_ok, scores
 
+_EMPTY_SCORES = {
+    "transition_density": 0.0, "row_fill": 0.0,
+    "vproj": 0.0, "density": 0.0, "cc": 0.0, "hreg": 0.0,
+    "proj_ratio": 0.0, "fill_ratio": 0.0,
+    "compactness": 0.0, "proj_score": 0.0,
+}
+
+def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,min_transition=0.20, min_cc_area=3, min_proj_score=0.10):
+    crop = roi[y1:y2, x1:x2]
+    if crop.size == 0:
+        return False, _EMPTY_SCORES
+    h, w = crop.shape
+
+    # ── 1. Transitions horizontales (évite int16 copy) ──
+    if w > 1:
+        left = crop[:, :-1]
+        right = crop[:, 1:]
+        transition_density = float(np.count_nonzero(left != right)) / (h * max(w - 1, 1))
+    else:
+        transition_density = 0.0
+    if transition_density < min_transition:
+        return False, {**_EMPTY_SCORES, "transition_density": transition_density}
+
+    # ── 2. Row fill (any au lieu de sum pour activer) ──
+    row_any = np.any(crop, axis=1)
+    row_fill = float(np.count_nonzero(row_any)) / max(h, 1)
+    if row_fill < 0.5:
+        return False, {**_EMPTY_SCORES, "transition_density": transition_density, "row_fill": row_fill}
+
+    # ── 3. Tiers ──
+    t1 = h // 3
+    t2 = 2 * h // 3
+    tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
+    active = sum(
+        1 for t in tiers
+        if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
+    )
+    tiers_ok = active >= min_tiers
+
+    # ── 4. Projection / compacité ──
+    proj_metrics = projection_fill_score(crop)
+    if proj_metrics["proj_score"] < min_proj_score:
+        return False, {**_EMPTY_SCORES, "transition_density": transition_density, "row_fill": row_fill, **proj_metrics}
+
+    # ── 5. Variance projection horizontale ──
+    row_sums = np.sum(crop, axis=1, dtype=np.float32)
+    vproj = float(np.var(row_sums)) / max(w * w * 0.25, 1.0)
+    vproj = min(vproj, 1.0)
+
+    # ── 6. Densité ──
+    raw_density = float(cv2.countNonZero(crop)) / crop.size
+    density = max(0.0, 1.0 - abs(raw_density - 0.30) / 0.30)
+
+    # ── 7 & 8. CC + régularité (connectivity=4 = plus rapide) ──
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(crop, connectivity=4)
+    valid = stats[1:]
+    if len(valid) > 0:
+        valid = valid[valid[:, cv2.CC_STAT_AREA] >= min_cc_area]
+    n_valid = len(valid)
+
+    cc = max(0.0, 1.0 - min(abs(n_valid - 8), 8) / 8.0)
+
+    if n_valid >= 2:
+        heights = valid[:, cv2.CC_STAT_HEIGHT].astype(np.float32)
+        median_h = float(np.median(heights))
+        if median_h > 0:
+            mean_dev = float(np.mean(np.abs(heights - median_h) / median_h))
+            hreg = max(0.0, 1.0 - mean_dev)
+        else:
+            hreg = 0.0
+    else:
+        hreg = 0.0
+
+    scores = {
+        "transition_density": transition_density,
+        "row_fill": row_fill,
+        "vproj": vproj,
+        "density": density,
+        "cc": cc,
+        "hreg": hreg,
+        **proj_metrics,
+    }
+
+    return tiers_ok, scores
 
 def sweep_and_cut(ccs, roi, min_text_fill=0.08, min_transition=0.20, min_proj_score=0.10):
     validated = []
@@ -341,7 +464,6 @@ def sweep_and_cut(ccs, roi, min_text_fill=0.08, min_transition=0.20, min_proj_sc
     if group and g_ok:
         validated.append((gx1, gy1, gx2, gy2, g_scores))
     return validated
-
 
 def validate_text(boxes, mask_white, params, kernels):
     result = []
@@ -383,50 +505,71 @@ def validate_background(boxes, mask_white, rgb, params):
     var_norm        = params.get("var_norm", 200.0)
     coherent_delta  = params.get("coherent_delta", 33)
     min_score       = params.get("min_bg_score", 0.5)
-    log.debug(f"[validate_background] nb_boxes={len(boxes)} var_norm={var_norm} coherent_delta={coherent_delta} min_score={min_score}")
+
+    hue_bin_size    = params.get("hue_bin_size", 10)
+    max_hue_bins    = params.get("max_hue_bins", 3)
+    min_hue_score   = params.get("min_hue_score", 0.1)
+
+    #log.debug(f"[validate_background] nb_boxes={len(boxes)} var_norm={var_norm} "f"coherent_delta={coherent_delta} min_score={min_score} "f"hue_bin_size={hue_bin_size} max_hue_bins={max_hue_bins}"f"min_hue_score={min_hue_score}")
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     result = []
     for box in boxes:
         x, y, w, h = box.rect
         w_pad = 2
         x = max(0, x - w_pad)
         w = w + w_pad * 2
+
+        fond_mask = mask_white[y:y+h, x:x+w] == 0
+        fond_count = int(np.count_nonzero(fond_mask))
+        if fond_count == 0:
+            log.debug(f"  [bg] box({x},{y},{w},{h}) → SKIP fond_count=0")
+            continue
+
+        # ── Veto teinte (le plus discriminant, calculé en premier) ──
+        hsv_roi  = hsv[y:y+h, x:x+w]
+        fond_hue = hsv_roi[:, :, 0][fond_mask]
+
+        if fond_hue.size > 0:
+            binned = fond_hue // hue_bin_size
+            bin_ids, bin_counts = np.unique(binned, return_counts=True)
+            min_bin_count = max(1, int(fond_hue.size * 0.05))
+            n_bins = int(np.count_nonzero(bin_counts >= min_bin_count))
+            n_bins = max(n_bins, 1)
+            s_hue = max(0.0, 1.0 - (n_bins - 1) / max(1, max_hue_bins - 1))
+        else:
+            n_bins = 0
+            s_hue = 1.0
+        #log.debug(f"  [bg] box({x},{y},{w},{h}) n_bins={n_bins} s_hue={s_hue:.3f}")
+        if s_hue < min_hue_score:
+            log.debug(
+                f"  [bg] box({x},{y},{w},{h}) n_bins={n_bins} "
+                f"s_hue={s_hue:.3f} → REJECT (veto hue)"
+            )
+            continue
+
         # ROI directe en gray (évite cvtColor sur RGB)
         rgb_roi = rgb[y:y+h, x:x+w]
         gray_roi = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2GRAY)
         local_mean = cv2.blur(gray_roi, (3, 3))
-        # Calcul diff en place, en int16
-        diff = cv2.absdiff(gray_roi, local_mean)  # uint8, évite int16
-        fond_mask = mask_white[y:y+h, x:x+w] == 0
+        diff = cv2.absdiff(gray_roi, local_mean)
         fond_diff = diff[fond_mask]
-        fond_count = fond_diff.size
-        if fond_count == 0:
-            log.debug(f"  [bg] box({x},{y},{w},{h}) → SKIP fond_count=0")
-            continue
+
         # Mesure 1 : variance locale médiane
         median_val = float(np.median(fond_diff))
         median_var = median_val * median_val
         s_var = max(0.0, 1.0 - median_var / var_norm)
         # Mesure 2 : ratio cohérent
         s_coh = float(np.count_nonzero(fond_diff < coherent_delta)) / fond_count
-        score = s_var * s_coh
 
+        score = 0.3 * s_var + 0.3 * s_coh + 0.4 * s_hue
         accepted = score >= min_score
-        log.debug(
-            f"  [bg] box({x},{y},{w},{h}) "
-            f"fond_count={fond_count} "
-            f"median_val={median_val:.1f} "
-            f"s_var={s_var:.3f} "
-            f"s_coh={s_coh:.3f} "
-            f"score={score:.3f} "
-            f"→ {'KEEP' if accepted else 'REJECT'}"
-        )
+        #log.debug(f"  [bg] box({x},{y},{w},{h}) "f"fond_count={fond_count} "f"median_val={median_val:.1f} "f"s_var={s_var:.3f} "f"s_coh={s_coh:.3f} "f"n_bins={n_bins} "f"s_hue={s_hue:.3f} "f"score={score:.3f} "f"→ {'KEEP' if accepted else 'REJECT'}")
 
         new_box = box.copy_with(x=x, y=y, w=w, h=h)
         new_box.scores["bg_score"] = score
 
         if accepted:
             result.append(new_box)
-    log.debug(f"[validate_background] résultat : {len(result)}/{len(boxes)} boxes retenues")
     return result
 
 # ── resolve_overlaps ──
@@ -580,45 +723,43 @@ def filter_geometry(boxes, masked, params):
     plates = []
     for box in boxes:
         x, y, w, h = box.rect
+        #log.info(f"filter_geometry: x={x} y={y} w={w} h={h}")
         if w < min_width or h < min_height:
+            #log.info(f"filter_geometry: w={w} < min_width={min_width} or h={h} < min_height={min_height}")
             continue
         area = w * h
         if area < min_area or area > max_area:
+            #log.info(f"filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
             continue
         ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
         if ratio < min_ratio or ratio > max_ratio:
+            #log.info(f"filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
             continue
         fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
         if fill < min_fill or fill > max_fill:
+            #log.info(f"filter_geometry: min_fill={min_fill} fill={fill}  max_fill={max_fill}")
             continue
         plates.append(box)
     return plates
 
 # ── filter_horizontal_alignment ──
 def filter_horizontal_alignment(boxes, mask_white, params):
-    """Rejette les boxes dont le texte blanc n'est pas aligné horizontalement.
+    max_y_std_ratio = params.get("align_max_y_std_ratio", 0.20)
+    min_cols        = params.get("align_min_cols", 3)
+    min_col_fill    = params.get("align_min_col_fill", 0.15)
 
-    Principe : pour chaque colonne du ROI, calcule le centre Y des pixels blancs.
-    Un texte de plaque aligné → écart-type faible (~1-3px).
-    Du bruit ou un reflet → écart-type élevé (~4-8px).
+    #log.debug(f"align_max_y_std_ratio={max_y_std_ratio} align_min_cols={min_cols} align_min_col_fill={min_col_fill}")
 
-    Entrée  : boxes filtrées par filter_horizontal_bands
-    Sortie  : boxes dont le texte est aligné sur une ligne horizontale
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
-    max_y_std = params.get("align_max_y_std", 2.5)
-    min_cols = params.get("align_min_cols", 5)
-    log.debug(f"align_max_y_std={max_y_std} align_min_cols={min_cols}")
     kept = []
     for box in boxes:
         x, y, w, h = box.rect
         roi = mask_white[y:y+h, x:x+w]
 
-        # Centre de masse Y par colonne
+        min_col_px = max(2, int(h * min_col_fill))
         y_centers = []
         for col in range(w):
             col_pixels = np.nonzero(roi[:, col])[0]
-            if col_pixels.size > 0:
+            if col_pixels.size >= min_col_px:
                 y_centers.append(float(np.mean(col_pixels)))
 
         if len(y_centers) < min_cols:
@@ -628,34 +769,22 @@ def filter_horizontal_alignment(boxes, mask_white, params):
             continue
 
         y_std = float(np.std(y_centers))
-        log.debug(f"  box {box.rect} y_std={y_std:.2f} cols={len(y_centers)}")
+        y_std_ratio = y_std / h
 
-        if y_std <= max_y_std:
-            kept.append(box)
-        else:
-            log.debug(f"  align_reject: {box.rect} y_std={y_std:.2f}")
+        if y_std_ratio  > max_y_std_ratio:
+            log.debug(f"  align_reject: {box.rect} ratio={y_std_ratio:.3f} > {max_y_std_ratio}")
+            continue
+        kept.append(box)
 
-    log.debug(f"filter_horizontal_alignment: {len(boxes)} -> {len(kept)}")
     return kept
-
 
 # ── filter_horizontal_bands ──
 def filter_horizontal_bands(boxes, mask_white, params):
-    """Rejette les boxes contenant trop de bandes horizontales de texte.
-
-    Principe : projection horizontale (somme par ligne), comptage des bandes
-    via hystérésis (min_fill pour entrer, gap_fill pour sortir).
-    Une plaque Rocket League = 1 seule bande de texte.
-
-    Entrée  : boxes filtrées par filter_geometry
-    Sortie  : boxes avec 1-2 bandes max (plaque mono-ligne)
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
     min_fill  = params.get("bands_min_fill", 0.15)
     gap_fill  = params.get("bands_gap_fill", 0.08)
     max_bands = params.get("bands_max_bands", 2)
 
-    log.debug(f"bands: min_fill={min_fill} gap_fill={gap_fill} max_bands={max_bands}")
+    #log.debug(f"bands: min_fill={min_fill} gap_fill={gap_fill} max_bands={max_bands}")
 
     kept = []
     for box in boxes:
@@ -681,7 +810,7 @@ def filter_horizontal_bands(boxes, mask_white, params):
             # Entre gap_fill et min_fill : hystérésis, on reste dans l'état courant
             # C'est voulu : évite de compter des micro-bandes sur du bruit
 
-        log.debug(f"  box {box.rect} bands={band_count}")
+        #log.debug(f"  box {box.rect} bands={band_count}")
 
         if band_count > max_bands:
             log.debug(f"  bands_reject: {box.rect} bands={band_count}")
@@ -689,34 +818,22 @@ def filter_horizontal_bands(boxes, mask_white, params):
 
         kept.append(box)
 
-    log.debug(f"filter_horizontal_bands: {len(boxes)} -> {len(kept)}")
     return kept
-
 
 # ── filter_perspective_gradient ──
 def filter_perspective_gradient(boxes, mask_white, params):
-    """Rejette les boxes dont la densité de blanc suit un gradient monotone.
+    n_zones        = params.get("n_zones", 4)
+    min_drop_ratio = params.get("min_drop_ratio", 0.50)
+    min_zone_width = params.get("min_zone_width", 8)
 
-    Principe : découpe le ROI en N zones verticales, calcule la densité par zone.
-    Si la densité est monotone (croissante ou décroissante) avec un drop
-    suffisant → c'est une surface en perspective (sol, mur), pas une plaque.
-
-    Entrée  : boxes filtrées par filter_horizontal_alignment
-    Sortie  : boxes sans gradient de perspective
-    Masque  : mask_white (texte blanc réel, PAS le masque morpho)
-    """
-    n_zones        = params.get("gradient_n_zones", 4)
-    min_drop_ratio = params.get("gradient_min_drop", 0.20)
-    min_zone_width = params.get("gradient_min_zone_width", 8)
-
-    log.debug(f"gradient: n_zones={n_zones} min_drop={min_drop_ratio} min_zone_w={min_zone_width}")
+    #log.debug(f"gradient: n_zones={n_zones} min_drop_ratio={min_drop_ratio} min_zone_w={min_zone_width}")
 
     kept = []
     for box in boxes:
         x, y, w, h = box.rect
 
         zone_w = w // n_zones
-        log.debug(f"  box {box.rect} zone_w={zone_w}")
+        #log.debug(f"  box {box.rect} zone_w={zone_w}")
 
         if zone_w < min_zone_width:
             # Box trop étroite pour découper en zones fiables → on garde
@@ -760,9 +877,7 @@ def filter_perspective_gradient(boxes, mask_white, params):
 
         kept.append(box)
 
-    log.debug(f"filter_perspective_gradient: {len(boxes)} -> {len(kept)}")
     return kept
-
 
 # ── make_template ──
 def make_template( boxes, frame):
@@ -777,50 +892,43 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     t0 = time.perf_counter()
     plates = []
 
+    log.debug("boxes")
     boxes = extract_raw_boxes(masked, params)
-
     log.debug("boxes_ar")
     boxes_ar = adjust_resolve(boxes, mask_white, h_img, params)
+    log.debug("filter_geometry")
+    geometryed = filter_geometry(boxes_ar, masked, params)
+
 
     log.debug("split_wide_boxes")
-    split = split_wide_boxes(boxes_ar, mask_white, params)
-
+    split = split_wide_boxes(geometryed, mask_white, params)
     log.debug("split_ar")
     split_ar = adjust_resolve(split, mask_white, h_img, params, resolve=False)
 
-    log.debug("validate_text")
-    validated_t = validate_text(split_ar, mask_white, params, kernels)
+    log.debug("validate_background")
+    validated_b = validate_background(split_ar,mask_white, rgb, params)
 
+    log.debug("validate_text")
+    validated_t = validate_text(validated_b, mask_white, params, kernels)
     log.debug("merge_nearby_horizontal")
     merge = merge_nearby_horizontal(validated_t, params["max_gap_x"],params["max_gap_y"])
 
-    log.debug("validate_background")
-    validated_b = validate_background(merge,mask_white, rgb, params)
-
     log.debug("validated_b_ar")
-    validated_b_ar = adjust_resolve(validated_b, mask_white, h_img, params, resolve=False)
-
+    validated_b_ar = adjust_resolve(merge, mask_white, h_img, params, resolve=False)
     log.debug("expand_plates")
     expanded = expand_plates(validated_b_ar,rgb)
 
-    log.debug("filter_geometry")
-    geometryed = filter_geometry(expanded, masked, params)
-
     log.debug("filter_horizontal_bands")
-    banded = filter_horizontal_bands(geometryed, mask_white, params)
-
+    banded = filter_horizontal_bands(expanded, mask_white, params)
     log.debug("filter_horizontal_alignment")
     aligned = filter_horizontal_alignment(banded, mask_white, params)
-
     log.debug("filter_perspective_gradient")
     plates = filter_perspective_gradient(aligned, mask_white, params)
 
-
     """
     screen = rgb.copy()
-    write_rects(screen, geometryed, get_color("void"),3)
-    write_rects(screen, horized, get_color("magenta"),2)
-    write_rects(screen, plates, get_color("vert"),1)
+    write_rects(screen, merge, get_color("void"),2)
+    write_rects(screen, validated_b, get_color("vert"),1)
 
     cv2.imshow("screen", screen)
     cv2.waitKey(0)
@@ -831,3 +939,69 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
         box.template = make_template(box.rect, rgb)
 
     return plates
+
+def process_channel_test(masked, rgb, mask_white, h_img, params, kernels, stats):
+    import time
+
+    def _t(name, fn, *args, **kwargs):
+        t = time.perf_counter()
+        r = fn(*args, **kwargs)
+        ms = (time.perf_counter() - t) * 1000
+        log.info(f"  {name:<30s} {ms:6.2f}ms")
+        return r
+
+    log.info("── process_channel breakdown ──")
+
+    # ── PHASE 1 : extraction + filtre géométrique immédiat (quasi gratuit) ──
+    boxes        = _t("extract_raw_boxes",       extract_raw_boxes, masked, params)
+    boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, boxes, mask_white, h_img, params)
+    geometryed   = _t("filter_geometry",         filter_geometry, boxes_ar, masked, params)
+
+    # ── PHASE 2 : ajustement sur le set réduit ──
+    #boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, geometryed, mask_white, h_img, params)
+    split        = _t("split_wide_boxes",        split_wide_boxes, geometryed, mask_white, params)
+    split_ar     = _t("adjust_resolve_2",        adjust_resolve, split, mask_white, h_img, params, resolve=False)
+
+    # ── PHASE 3 : veto hue rapide AVANT validate_text (le plus coûteux) ──
+    validated_b  = _t("validate_background",     validate_background, split_ar, mask_white, rgb, params)
+
+    # ── PHASE 4 : validate_text sur set déjà filtré ──
+    validated_t  = _t("validate_text",           validate_text, validated_b, mask_white, params, kernels)
+    merge        = _t("merge_nearby",            merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
+
+    # ── PHASE 5 : ajustement final + filtres fins ──
+    validated_ar = _t("adjust_resolve_3",        adjust_resolve, merge, mask_white, h_img, params, resolve=False)
+    expanded     = _t("expand_plates",           expand_plates, validated_ar, rgb)
+    banded       = _t("filter_horizontal_bands", filter_horizontal_bands, expanded, mask_white, params)
+    aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
+    plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
+
+    """
+    boxes        = _t("extract_raw_boxes",       extract_raw_boxes, masked, params)
+    boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, boxes, mask_white, h_img, params)
+    split        = _t("split_wide_boxes",        split_wide_boxes, boxes_ar, mask_white, params)
+    split_ar     = _t("adjust_resolve_2",        adjust_resolve, split, mask_white, h_img, params, resolve=False)
+    validated_t  = _t("validate_text",           validate_text, split_ar, mask_white, params, kernels)
+    merge        = _t("merge_nearby",            merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
+    validated_b  = _t("validate_background",     validate_background, merge, mask_white, rgb, params)
+    validated_b_ar = _t("adjust_resolve_3",      adjust_resolve, validated_b, mask_white, h_img, params, resolve=False)
+    expanded     = _t("expand_plates",           expand_plates, validated_b_ar, rgb)
+    geometryed   = _t("filter_geometry",         filter_geometry, expanded, masked, params)
+    banded       = _t("filter_horizontal_bands", filter_horizontal_bands, geometryed, mask_white, params)
+    aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
+    plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
+
+
+    screen = rgb.copy()
+    write_rects(screen, boxes, get_color("void"),2)
+    write_rects(screen, plates, get_color("vert"),1)
+
+    cv2.imshow("screen", screen)
+    cv2.waitKey(0)
+    """
+
+    for box in plates:
+        box.template = make_template(box.rect, rgb)
+
+    return plates
+
