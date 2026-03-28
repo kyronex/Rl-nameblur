@@ -7,7 +7,7 @@ from config import cfg
 #from detect_stats import _stats, get_stats, reset_stats
 from detect_stats import flush_local, make_local, get_stats, reset_stats
 from detect_tools import write_circles , write_rects , get_color
-from detect_tools_mask import compute_white_mask, compute_sobel_interiors, refine_and_merge ,saturation_variance_mask
+from detect_tools_mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
 from detect_tools_boxes import process_channel
 from box import Box
 
@@ -173,17 +173,17 @@ def _run_pipeline(frame, scale):
     # ── 3. Combinaison : blanc ET dans une zone à forte variance de saturation ──
     combined = cv2.bitwise_and(white_clean, sat_mask)
 
-    # ── 3. Sobel → intérieurs ──
+    # ── 4. Sobel interiors ──
     t0 = time.perf_counter()
-    interior_v1, interior_v2  = compute_sobel_interiors(gray, combined, kernels)
+    interior = compute_sobel_interior_unified(gray, combined, kernels)
     local["compute_sobel_interiors_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 4. Raffinage → fusion → close ──
+    # ── 5. Refine and merge ──
     t0 = time.perf_counter()
-    closed = refine_and_merge(combined, interior_v1, interior_v2, kernels)
+    closed = refine_and_merge(combined, interior, kernels)
     local["refine_and_merge_ms"] += (time.perf_counter() - t0) * 1000
 
-    # ── 5. Contours + filtre géométrique (ratio, area, fill) ──
+    # ── 6. Contours + filtre géométrique (ratio, area, fill) ──
     log.debug("START")
     candidates = process_channel(closed,small, mask_white, h_small, params, kernels, local )
     log.debug("END")
@@ -196,7 +196,7 @@ def _run_pipeline(frame, scale):
     local["filter_uniform_ms"] = (time.perf_counter() - t0) * 1000
     local["plates_found"] = len(candidates)
 
-    # ── 8. Remap vers résolution d'entrée ──
+    # ── 7. Remap vers résolution d'entrée ──
     plates = [
         Box(int(b.x * scale), int(b.y * scale), int(b.w * scale), int(b.h * scale), scores=dict(b.scores))
         for b in candidates

@@ -179,50 +179,7 @@ def split_wide_boxes(boxes, mask_white, params):
             result.append(box.copy_with(x=bx + fx + rx, y=by + ry, w=rw, h=rh))
     return result
 
-# ── validate_text ──
-def projection_fill_score_vold(crop):
-    """
-    Score basé sur l'aire de projection vs aire totale du blob.
-
-    Returns:
-        dict avec proj_ratio, fill_ratio, compactness, proj_score
-    """
-    if crop.size == 0:
-        return {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "proj_score": 0.0}
-
-    h, w = crop.shape
-    total_area = h * w
-
-    # ── Projections ──
-    col_proj = np.sum(crop > 0, axis=0)   # shape (w,)
-    row_proj = np.sum(crop > 0, axis=1)   # shape (h,)
-
-    active_cols = np.count_nonzero(col_proj)
-    active_rows = np.count_nonzero(row_proj)
-
-    # ── Aires ──
-    proj_area  = active_cols * active_rows
-    proj_ratio = proj_area / max(total_area, 1)
-
-    white_count = np.count_nonzero(crop)
-    fill_ratio  = white_count / max(total_area, 1)
-
-    # ── Compacité ──
-    compactness = fill_ratio / max(proj_ratio, 0.01)
-
-    # ── Score final ──
-    s_proj = max(0.0, 1.0 - abs(proj_ratio - 0.70) / 0.40)
-    s_comp = max(0.0, 1.0 - abs(compactness - 0.40) / 0.35)
-
-    proj_score = s_proj * s_comp
-
-    return {
-        "proj_ratio":  round(proj_ratio, 3),
-        "fill_ratio":  round(fill_ratio, 3),
-        "compactness": round(compactness, 3),
-        "proj_score":  round(proj_score, 3),
-    }
-
+# ── validate_text_v2 ──
 _EMPTY_PROJ = {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "proj_score": 0.0}
 
 def projection_fill_score(crop):
@@ -262,120 +219,75 @@ def projection_fill_score(crop):
         "proj_score":  proj_score,
     }
 
-
-def has_text_vold(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,
-             min_transition=0.20, min_cc_area=3, min_proj_score=0.10):
-    empty = {
-        "transition_density": 0.0, "row_fill": 0.0,
-        "vproj": 0.0, "density": 0.0, "cc": 0.0, "hreg": 0.0,
-        "proj_ratio": 0.0, "fill_ratio": 0.0,
-        "compactness": 0.0, "proj_score": 0.0,
-    }
-    crop = roi[y1:y2, x1:x2]
-    if crop.size == 0:
-        return False, empty
-    h, w = crop.shape
-
-    # ── 1. Check structure : transitions horizontales ──
-    edges = np.diff(crop.astype(np.int16), axis=1)
-    transition_density = np.count_nonzero(edges) / max(crop.size, 1)
-    if transition_density < min_transition:
-        return False, {**empty, "transition_density": transition_density}
-
-    # ── 2. Row fill ──
-    row_sums = np.sum(crop, axis=1)
-    active_rows = np.count_nonzero(row_sums)
-    row_fill = active_rows / max(h, 1)
-    if row_fill < 0.5:
-        return False, {**empty, "transition_density": transition_density, "row_fill": row_fill}
-
-    # ── 3. Tiers ──
-    t1 = h // 3
-    t2 = 2 * h // 3
-    tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
-    active = sum(
-        1 for t in tiers
-        if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
-    )
-    tiers_ok = active >= min_tiers
-
-    # ── 4. Gate projection / compacité (avant CC pour économiser du calcul) ──
-    proj_metrics = projection_fill_score(crop)
-    if proj_metrics["proj_score"] < min_proj_score:
-        return False, {**empty, "transition_density": transition_density,"row_fill": row_fill, **proj_metrics}
-
-    # ── 5. Variance projection horizontale (vproj) ──
-    row_proj_f = row_sums.astype(np.float32)
-    vproj = float(np.var(row_proj_f)) / max(w * w * 0.25, 1.0)
-    vproj = min(vproj, 1.0)
-
-    # ── 6. Densité blanc (density) ──
-    raw_density = np.count_nonzero(crop) / max(crop.size, 1)
-    density = max(0.0, 1.0 - abs(raw_density - 0.30) / 0.30)
-
-    # ── 7 & 8. Composantes connexes (cc) + régularité hauteur (hreg) ──
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(crop, connectivity=8)
-    valid = stats[1:]
-    if len(valid) > 0:
-        valid = valid[valid[:, cv2.CC_STAT_AREA] >= min_cc_area]
-    n_valid = len(valid)
-
-    cc = max(0.0, 1.0 - min(abs(n_valid - 8), 8) / 8.0)
-
-    if n_valid >= 2:
-        heights = valid[:, cv2.CC_STAT_HEIGHT].astype(np.float32)
-        median_h = float(np.median(heights))
-        if median_h > 0:
-            mean_dev = float(np.mean(np.abs(heights - median_h) / median_h))
-            hreg = max(0.0, 1.0 - mean_dev)
-        else:
-            hreg = 0.0
-    else:
-        hreg = 0.0
-
-    # ── 9. Assemblage scores ──
-    scores = {
-        "transition_density": transition_density,
-        "row_fill": row_fill,
-        "vproj": vproj,
-        "density": density,
-        "cc": cc,
-        "hreg": hreg,
-        **proj_metrics,
-    }
-
-    return tiers_ok, scores
-
 _EMPTY_SCORES = {
-    "transition_density": 0.0, "row_fill": 0.0,
-    "vproj": 0.0, "density": 0.0, "cc": 0.0, "hreg": 0.0,
-    "proj_ratio": 0.0, "fill_ratio": 0.0,
-    "compactness": 0.0, "proj_score": 0.0,
+    "transition_density": 0.0, "row_fill": 0.0,"vproj": 0.0, "density": 0.0, "cc": 0.0, "hreg": 0.0,
+    "proj_ratio": 0.0, "fill_ratio": 0.0,"compactness": 0.0, "proj_score": 0.0,
 }
 
-def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,min_transition=0.20, min_cc_area=3, min_proj_score=0.10):
+def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
+    """
+    Calcule cc (nombre de CC) et hreg (régularité des hauteurs)
+    à partir des stats CC déjà connues, filtrées sur la bbox du groupe.
+
+    Remplace : connectedComponentsWithStats(crop) dans has_text
+    """
+    # ── Filtrer les CC dont le centre tombe dans la bbox du groupe ──
+    cx = cc_stats[:, 0] + cc_stats[:, 2] * 0.5   # center_x = left + width/2
+    cy = cc_stats[:, 1] + cc_stats[:, 3] * 0.5   # center_y = top + height/2
+
+    inside = ((cx >= gx1) & (cx < gx2) &(cy >= gy1) & (cy < gy2))
+    sel = cc_stats[inside]
+    cc = len(sel)
+
+    if cc < 2:
+        heights = sel[:, 3] if cc == 1 else np.array([0])
+        mean_h = float(heights[0]) if cc == 1 else 0.0
+        return cc, 0.0, mean_h
+
+    heights = sel[:, 3].astype(np.float32)
+    mean_h = float(np.mean(heights))
+    if mean_h < 1.0:
+        return cc, 0.0, mean_h
+
+    var_norm = float(np.var(heights)) / (mean_h * mean_h)
+    hreg = max(0.0, 1.0 - var_norm * 5.0)
+
+    return cc, hreg, mean_h
+
+def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20,min_proj_score=0.10):
+    """
+    Même logique que has_text, SANS connectedComponentsWithStats interne.
+    Les métriques cc/hreg viennent de cc_stats (pré-calculé).
+    """
     crop = roi[y1:y2, x1:x2]
     if crop.size == 0:
         return False, _EMPTY_SCORES
+
     h, w = crop.shape
 
-    # ── 1. Transitions horizontales (évite int16 copy) ──
+    # ── 1. Transitions horizontales ──
+    # IDENTIQUE à v1 : on compare pixel gauche vs pixel droit
+    # C'est le filtre le moins cher → premier early exit
     if w > 1:
-        left = crop[:, :-1]
-        right = crop[:, 1:]
+        left  = crop[:, :-1]          # vue numpy, pas de copie
+        right = crop[:, 1:]           # vue numpy, pas de copie
         transition_density = float(np.count_nonzero(left != right)) / (h * max(w - 1, 1))
     else:
         transition_density = 0.0
+
     if transition_density < min_transition:
         return False, {**_EMPTY_SCORES, "transition_density": transition_density}
 
-    # ── 2. Row fill (any au lieu de sum pour activer) ──
-    row_any = np.any(crop, axis=1)
+    # ── 2. Row fill ──
+    # IDENTIQUE à v1 : proportion de lignes ayant au moins un pixel blanc
+    row_any  = np.any(crop, axis=1)
     row_fill = float(np.count_nonzero(row_any)) / max(h, 1)
+
     if row_fill < 0.5:
-        return False, {**_EMPTY_SCORES, "transition_density": transition_density, "row_fill": row_fill}
+        return False, {**_EMPTY_SCORES,"transition_density": transition_density,"row_fill": row_fill}
 
     # ── 3. Tiers ──
+    # IDENTIQUE à v1 : le texte doit occuper au moins 2 tiers verticaux
     t1 = h // 3
     t2 = 2 * h // 3
     tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
@@ -383,121 +295,140 @@ def has_text(roi, x1, y1, x2, y2, min_fill=0.08, min_tiers=2,min_transition=0.20
         1 for t in tiers
         if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
     )
-    tiers_ok = active >= min_tiers
+    if active < min_tiers:
+        return False, {**_EMPTY_SCORES,"transition_density": transition_density,"row_fill": row_fill}
 
-    # ── 4. Projection / compacité ──
-    proj_metrics = projection_fill_score(crop)
-    if proj_metrics["proj_score"] < min_proj_score:
-        return False, {**_EMPTY_SCORES, "transition_density": transition_density, "row_fill": row_fill, **proj_metrics}
+    # ── 4. Projection verticale ──
+    # IDENTIQUE à v1 : variance normalisée de la somme par colonne
+    col_sum = np.sum(crop, axis=0)         # somme par colonne (0 ou 255)
+    vproj   = float(np.var(col_sum)) / max(w * w * 0.25, 1.0)
 
-    # ── 5. Variance projection horizontale ──
-    row_sums = np.sum(crop, axis=1, dtype=np.float32)
-    vproj = float(np.var(row_sums)) / max(w * w * 0.25, 1.0)
-    vproj = min(vproj, 1.0)
+    # ── 5. Densité ──
+    # IDENTIQUE à v1 : ratio pixels blancs / surface totale
+    density = float(cv2.countNonZero(crop)) / crop.size
 
-    # ── 6. Densité ──
-    raw_density = float(cv2.countNonZero(crop)) / crop.size
-    density = max(0.0, 1.0 - abs(raw_density - 0.30) / 0.30)
+    # ── 6. CC + hreg ── ★ CHANGEMENT PRINCIPAL ★
+    # v1 : faisait connectedComponentsWithStats(crop) ici → COÛTEUX
+    # v2 : lookup dans cc_stats déjà calculé par validate_text
+    cc, hreg, _ = _cc_metrics_from_stats(cc_stats, x1, y1, x2, y2)
 
-    # ── 7 & 8. CC + régularité (connectivity=4 = plus rapide) ──
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(crop, connectivity=4)
-    valid = stats[1:]
-    if len(valid) > 0:
-        valid = valid[valid[:, cv2.CC_STAT_AREA] >= min_cc_area]
-    n_valid = len(valid)
+    # ── 7. Projection fill score ──
+    # IDENTIQUE à v1
+    pf = projection_fill_score(crop)
 
-    cc = max(0.0, 1.0 - min(abs(n_valid - 8), 8) / 8.0)
+    # ── 8. Score final ── IDENTIQUE à v1
+    s_td   = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
+    s_vp   = max(0.0, 1.0 - abs(vproj - 0.35) * 2.86)
+    s_dens = max(0.0, 1.0 - abs(density - 0.30) * 3.33)
+    s_cc   = max(0.0, 1.0 - abs(cc - 8) * 0.125)
+    s_hr   = hreg
 
-    if n_valid >= 2:
-        heights = valid[:, cv2.CC_STAT_HEIGHT].astype(np.float32)
-        median_h = float(np.median(heights))
-        if median_h > 0:
-            mean_dev = float(np.mean(np.abs(heights - median_h) / median_h))
-            hreg = max(0.0, 1.0 - mean_dev)
-        else:
-            hreg = 0.0
-    else:
-        hreg = 0.0
+    score = (s_td + s_vp + s_dens + s_cc + s_hr + pf["proj_score"]) / 6.0
 
     scores = {
         "transition_density": transition_density,
-        "row_fill": row_fill,
-        "vproj": vproj,
-        "density": density,
-        "cc": cc,
-        "hreg": hreg,
-        **proj_metrics,
+        "row_fill":           row_fill,
+        "vproj":              vproj,
+        "density":            density,
+        "cc":                 float(cc),
+        "hreg":               hreg,
+        "proj_ratio":         pf["proj_ratio"],
+        "fill_ratio":         pf["fill_ratio"],
+        "compactness":        pf["compactness"],
+        "proj_score":         pf["proj_score"],
     }
 
-    return tiers_ok, scores
+    return score > min_proj_score, scores
 
-def sweep_and_cut(ccs, roi, min_text_fill=0.08, min_transition=0.20, min_proj_score=0.10):
+def sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score):
     validated = []
-    group = []
-    gx1, gy1, gx2, gy2 = None, None, None, None
-    g_ok = False
-    g_scores = {}
-    for cc in ccs:
-        cx1, cy1, cx2, cy2 = cc
-        if not group:
-            group.append(cc)
-            gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
-            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2,min_text_fill, 2, min_transition,3, min_proj_score)
-            continue
-        # ── Union candidate ──
+    n = len(cc_stats)
+    if n == 0:
+        return validated
+
+    # Accès direct aux colonnes
+    all_x1 = cc_stats[:, cv2.CC_STAT_LEFT]
+    all_y1 = cc_stats[:, cv2.CC_STAT_TOP]
+
+    gx1 = int(all_x1[0])
+    gy1 = int(all_y1[0])
+    gx2 = int(cc_x2[0])
+    gy2 = int(cc_y2[0])
+    g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, cc_stats, min_text_fill, 2, min_transition, min_proj_score)
+
+    for i in range(1, n):
+        cx1 = int(all_x1[i])
+        cy1 = int(all_y1[i])
+        cx2 = int(cc_x2[i])
+        cy2 = int(cc_y2[i])
+
         nx1 = min(gx1, cx1)
         ny1 = min(gy1, cy1)
         nx2 = max(gx2, cx2)
         ny2 = max(gy2, cy2)
-        valid, scores = has_text(roi, nx1, ny1, nx2, ny2,min_text_fill, 2, min_transition,3, min_proj_score)
+
+        valid, scores = has_text(roi, nx1, ny1, nx2, ny2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
+
         if valid:
-            group.append(cc)
             gx1, gy1, gx2, gy2 = nx1, ny1, nx2, ny2
             g_ok, g_scores = valid, scores
         else:
             if g_ok:
                 validated.append((gx1, gy1, gx2, gy2, g_scores))
-            group = [cc]
             gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
-            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2,min_text_fill, 2, min_transition,3, min_proj_score)
-    # ── Dernier groupe ──
-    if group and g_ok:
+            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
+
+    if g_ok:
         validated.append((gx1, gy1, gx2, gy2, g_scores))
+
     return validated
 
 def validate_text(boxes, mask_white, params, kernels):
     result = []
-    min_blob_area   = params["refine_min_blob_area"]
-    min_text_fill   = params["min_text_fill"]
-    min_transition  = params["min_transition"]
-    min_proj_score  = params["min_proj_score"]
-    kernel_rc       = kernels["roi_connected"]
+    min_blob_area  = params["refine_min_blob_area"]
+    min_text_fill  = params["min_text_fill"]
+    min_transition = params["min_transition"]
+    min_proj_score = params["min_proj_score"]
+    kernel_rc      = kernels["roi_connected"]
+
     for box in boxes:
         bx, by, bw, bh = box.rect
         roi = mask_white[by:by+bh, bx:bx+bw]
         if roi.size == 0:
             continue
+
+        # ── Dilatation ──
         roi_connected = cv2.dilate(roi, kernel_rc, iterations=1)
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(roi_connected)
+
+        # ── CC ──
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(roi_connected, connectivity=4)
+
         if num_labels <= 1:
             continue
+
+        # ── Filtrage + tri ──
         s = stats[1:]
-        areas = s[:, cv2.CC_STAT_AREA]
-        valid = areas >= min_blob_area
-        if not np.any(valid):
+        valid_mask = s[:, cv2.CC_STAT_AREA] >= min_blob_area
+        if not np.any(valid_mask):
             continue
-        s = s[valid]
-        x1 = s[:, cv2.CC_STAT_LEFT]
-        y1 = s[:, cv2.CC_STAT_TOP]
-        x2 = x1 + s[:, cv2.CC_STAT_WIDTH]
-        y2 = y1 + s[:, cv2.CC_STAT_HEIGHT]
-        order = np.argsort(x1)
-        cc_boxes = list(zip(x1[order].tolist(), y1[order].tolist(),x2[order].tolist(), y2[order].tolist()))
-        groups = sweep_and_cut(cc_boxes, roi, min_text_fill,min_transition, min_proj_score)
+
+        cc_stats = s[valid_mask].astype(np.int32)
+
+        # Tri par x1
+        order = np.argsort(cc_stats[:, cv2.CC_STAT_LEFT])
+        cc_stats = cc_stats[order]
+
+        # x2, y2 pré-calculés
+        cc_x2 = cc_stats[:, cv2.CC_STAT_LEFT] + cc_stats[:, cv2.CC_STAT_WIDTH]
+        cc_y2 = cc_stats[:, cv2.CC_STAT_TOP]  + cc_stats[:, cv2.CC_STAT_HEIGHT]
+
+        groups = sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score)
+
         for (gx1, gy1, gx2, gy2, scores) in groups:
             new_box = box.copy_with(x=bx + gx1, y=by + gy1, w=gx2 - gx1, h=gy2 - gy1)
             new_box.scores.update(scores)
             result.append(new_box)
+
     return result
 
 # ── validate_background ──
@@ -511,7 +442,7 @@ def validate_background(boxes, mask_white, rgb, params):
     min_hue_score   = params.get("min_hue_score", 0.1)
 
     #log.debug(f"[validate_background] nb_boxes={len(boxes)} var_norm={var_norm} "f"coherent_delta={coherent_delta} min_score={min_score} "f"hue_bin_size={hue_bin_size} max_hue_bins={max_hue_bins}"f"min_hue_score={min_hue_score}")
-    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
     result = []
     for box in boxes:
         x, y, w, h = box.rect
@@ -526,12 +457,13 @@ def validate_background(boxes, mask_white, rgb, params):
             continue
 
         # ── Veto teinte (le plus discriminant, calculé en premier) ──
-        hsv_roi  = hsv[y:y+h, x:x+w]
+        rgb_roi = rgb[y:y+h, x:x+w]
+        hsv_roi = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2HSV)
         fond_hue = hsv_roi[:, :, 0][fond_mask]
 
         if fond_hue.size > 0:
             binned = fond_hue // hue_bin_size
-            bin_ids, bin_counts = np.unique(binned, return_counts=True)
+            bin_counts = np.bincount(binned.ravel(), minlength=180 // hue_bin_size)
             min_bin_count = max(1, int(fond_hue.size * 0.05))
             n_bins = int(np.count_nonzero(bin_counts >= min_bin_count))
             n_bins = max(n_bins, 1)
@@ -548,7 +480,6 @@ def validate_background(boxes, mask_white, rgb, params):
             continue
 
         # ROI directe en gray (évite cvtColor sur RGB)
-        rgb_roi = rgb[y:y+h, x:x+w]
         gray_roi = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2GRAY)
         local_mean = cv2.blur(gray_roi, (3, 3))
         diff = cv2.absdiff(gray_roi, local_mean)
@@ -573,7 +504,6 @@ def validate_background(boxes, mask_white, rgb, params):
     return result
 
 # ── resolve_overlaps ──
-
 def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
     """
     Score de confiance d'une box basé sur le contraste
@@ -732,6 +662,7 @@ def filter_geometry(boxes, masked, params):
             #log.info(f"filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
             continue
         ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
+
         if ratio < min_ratio or ratio > max_ratio:
             #log.info(f"filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
             continue
@@ -748,32 +679,41 @@ def filter_horizontal_alignment(boxes, mask_white, params):
     min_cols        = params.get("align_min_cols", 3)
     min_col_fill    = params.get("align_min_col_fill", 0.15)
 
-    #log.debug(f"align_max_y_std_ratio={max_y_std_ratio} align_min_cols={min_cols} align_min_col_fill={min_col_fill}")
-
     kept = []
     for box in boxes:
         x, y, w, h = box.rect
         roi = mask_white[y:y+h, x:x+w]
 
         min_col_px = max(2, int(h * min_col_fill))
-        y_centers = []
-        for col in range(w):
-            col_pixels = np.nonzero(roi[:, col])[0]
-            if col_pixels.size >= min_col_px:
-                y_centers.append(float(np.mean(col_pixels)))
 
-        if len(y_centers) < min_cols:
-            # Trop peu de colonnes actives pour juger → on garde par prudence
-            log.debug(f"  align_skip: {box.rect} cols={len(y_centers)} < {min_cols}")
+        # ── Vectorisé : plus de boucle Python ──
+        # Masque binaire 0/1
+        binary = (roi > 0).astype(np.float32)
+
+        # Nombre de pixels blancs par colonne
+        col_counts = binary.sum(axis=0)                    # shape (w,)
+
+        # Indice Y de chaque ligne → broadcast sur toutes les colonnes
+        y_indices = np.arange(h, dtype=np.float32)[:, None]  # shape (h,1)
+
+        # Somme pondérée des Y par colonne
+        y_sum = (binary * y_indices).sum(axis=0)           # shape (w,)
+
+        # Colonnes actives = assez de pixels
+        active = col_counts >= min_col_px
+
+        if active.sum() < min_cols:
             kept.append(box)
             continue
 
-        y_std = float(np.std(y_centers))
-        y_std_ratio = y_std / h
+        # Centre de masse Y par colonne active
+        y_means = y_sum[active] / col_counts[active]
 
-        if y_std_ratio  > max_y_std_ratio:
-            log.debug(f"  align_reject: {box.rect} ratio={y_std_ratio:.3f} > {max_y_std_ratio}")
+        y_std_ratio = float(np.std(y_means)) / h
+
+        if y_std_ratio > max_y_std_ratio:
             continue
+
         kept.append(box)
 
     return kept
@@ -899,7 +839,6 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     log.debug("filter_geometry")
     geometryed = filter_geometry(boxes_ar, masked, params)
 
-
     log.debug("split_wide_boxes")
     split = split_wide_boxes(geometryed, mask_white, params)
     log.debug("split_ar")
@@ -924,15 +863,6 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     aligned = filter_horizontal_alignment(banded, mask_white, params)
     log.debug("filter_perspective_gradient")
     plates = filter_perspective_gradient(aligned, mask_white, params)
-
-    """
-    screen = rgb.copy()
-    write_rects(screen, merge, get_color("void"),2)
-    write_rects(screen, validated_b, get_color("vert"),1)
-
-    cv2.imshow("screen", screen)
-    cv2.waitKey(0)
-    """
 
     log.debug("make_template")
     for box in plates:
@@ -976,7 +906,7 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels, stats)
     aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
     plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
 
-    """
+    """validate_text_v2
     boxes        = _t("extract_raw_boxes",       extract_raw_boxes, masked, params)
     boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, boxes, mask_white, h_img, params)
     split        = _t("split_wide_boxes",        split_wide_boxes, boxes_ar, mask_white, params)
@@ -993,12 +923,12 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels, stats)
 
 
     screen = rgb.copy()
-    write_rects(screen, boxes, get_color("void"),2)
     write_rects(screen, plates, get_color("vert"),1)
 
     cv2.imshow("screen", screen)
     cv2.waitKey(0)
     """
+
 
     for box in plates:
         box.template = make_template(box.rect, rgb)

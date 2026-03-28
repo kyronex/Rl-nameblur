@@ -31,8 +31,8 @@ from detect import _build_params
 from detect_tools_mask import (
     saturation_variance_mask,
     compute_white_mask,
-    compute_sobel_interiors,
     refine_and_merge,
+    compute_sobel_interior_unified,
 )
 from detect_tools_boxes import (
     process_channel,
@@ -102,11 +102,11 @@ def bench_once(frame, scale):
     timings["5_combine"] = (time.perf_counter() - t) * 1000
 
     # ── 6. Sobel interiors ──
-    (interior_v1, interior_v2), ms = _timed(compute_sobel_interiors, gray,combined, kernels)
+    interior, ms = _timed(compute_sobel_interior_unified, gray, combined, kernels)
     timings["6_sobel"] = ms
 
     # ── 7. Refine and merge ──
-    closed, ms = _timed(refine_and_merge, combined, interior_v1, interior_v2, kernels)
+    closed, ms = _timed(refine_and_merge, combined, interior, kernels)
     timings["7_refine_merge"] = ms
 
     # ── 8. Process channel (contours + filtres géométriques) ──
@@ -122,7 +122,7 @@ def bench_once(frame, scale):
             "y": int(box.y * scale),
             "w": int(box.w * scale),
             "h": int(box.h * scale),
-            "score": getattr(box, "score", 0),
+            "score": box.confidence,
         })
     timings["9_remap_scale"] = (time.perf_counter() - t) * 1000
 
@@ -136,8 +136,6 @@ def bench_once(frame, scale):
         "mask_white": mask_white,
         "white_clean": white_clean,
         "combined": combined,
-        "interior_v1": interior_v1,
-        "interior_v2": interior_v2,
         "closed": closed,
         "candidates": candidates,
     }
