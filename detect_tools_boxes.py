@@ -4,7 +4,6 @@ import numpy as np
 import time
 import logging
 from config import cfg
-from detect_stats import flush_local
 from detect_tools import write_circles , write_rects , get_color
 from box import Box
 
@@ -828,8 +827,7 @@ def make_template( boxes, frame):
     return crop.copy()
 
 
-def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
-    t0 = time.perf_counter()
+def process_channel(masked,rgb, mask_white, h_img, params, kernels):
     plates = []
 
     log.debug("boxes")
@@ -852,10 +850,10 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
     log.debug("merge_nearby_horizontal")
     merge = merge_nearby_horizontal(validated_t, params["max_gap_x"],params["max_gap_y"])
 
-    log.debug("validated_b_ar")
-    validated_b_ar = adjust_resolve(merge, mask_white, h_img, params, resolve=False)
+    log.debug("merge_ar")
+    merge_ar = adjust_resolve(merge, mask_white, h_img, params, resolve=False)
     log.debug("expand_plates")
-    expanded = expand_plates(validated_b_ar,rgb)
+    expanded = expand_plates(merge_ar,rgb)
 
     log.debug("filter_horizontal_bands")
     banded = filter_horizontal_bands(expanded, mask_white, params)
@@ -870,7 +868,7 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels, stats):
 
     return plates
 
-def process_channel_test(masked, rgb, mask_white, h_img, params, kernels, stats):
+def process_channel_test(masked, rgb, mask_white, h_img, params, kernels):
     import time
 
     def _t(name, fn, *args, **kwargs):
@@ -900,36 +898,19 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels, stats)
     merge        = _t("merge_nearby",            merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
 
     # ── PHASE 5 : ajustement final + filtres fins ──
-    validated_ar = _t("adjust_resolve_3",        adjust_resolve, merge, mask_white, h_img, params, resolve=False)
-    expanded     = _t("expand_plates",           expand_plates, validated_ar, rgb)
+    merge_ar     = _t("adjust_resolve_3",        adjust_resolve, merge, mask_white, h_img, params, resolve=False)
+    expanded     = _t("expand_plates",           expand_plates, merge_ar, rgb)
     banded       = _t("filter_horizontal_bands", filter_horizontal_bands, expanded, mask_white, params)
     aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
     plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
 
-    """validate_text_v2
-    boxes        = _t("extract_raw_boxes",       extract_raw_boxes, masked, params)
-    boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, boxes, mask_white, h_img, params)
-    split        = _t("split_wide_boxes",        split_wide_boxes, boxes_ar, mask_white, params)
-    split_ar     = _t("adjust_resolve_2",        adjust_resolve, split, mask_white, h_img, params, resolve=False)
-    validated_t  = _t("validate_text",           validate_text, split_ar, mask_white, params, kernels)
-    merge        = _t("merge_nearby",            merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
-    validated_b  = _t("validate_background",     validate_background, merge, mask_white, rgb, params)
-    validated_b_ar = _t("adjust_resolve_3",      adjust_resolve, validated_b, mask_white, h_img, params, resolve=False)
-    expanded     = _t("expand_plates",           expand_plates, validated_b_ar, rgb)
-    geometryed   = _t("filter_geometry",         filter_geometry, expanded, masked, params)
-    banded       = _t("filter_horizontal_bands", filter_horizontal_bands, geometryed, mask_white, params)
-    aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
-    plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
-
-
+    """
     screen = rgb.copy()
     write_rects(screen, plates, get_color("vert"),1)
 
     cv2.imshow("screen", screen)
     cv2.waitKey(0)
     """
-
-
     for box in plates:
         box.template = make_template(box.rect, rgb)
 

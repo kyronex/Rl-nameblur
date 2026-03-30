@@ -2,59 +2,90 @@
 import os
 import time
 import csv
+from config import cfg
 
-CSV_HEADERS = [
-    "timestamp",
-    "frame_id",
-    "loop_ms",
-    "capture_wait_ms",
-    "slow_poll_ms",
-    "fast_poll_ms",
-    "predict_ms",
-    "blur_ms",
-    "send_ms",
-    "detect_age_ms",
-    "fast_age_ms",
-    "mask_age_avg_ms",
-    "slow_updated",
-    "fast_updated",
-    "predicted",
-    "mask_count",
-    "jitter_center_px",
-    "jitter_corners_px",
-    "masks_created",
-    "masks_killed",
-]
+# ── état interne ──────────────────────────────────────────────
+_frame_file = None
+_frame_writer = None
+_frame_headers_written = False
 
-_csv_file = None
-_csv_writer = None
+_agg_file = None
+_agg_writer = None
+_agg_headers_written = False
 
+_frame_enabled = False
+_agg_enabled = False
 
 def csv_open():
-    global _csv_file, _csv_writer
+    """Ouvre 0, 1 ou 2 fichiers CSV selon la config."""
+    global _frame_file, _frame_writer, _frame_headers_written
+    global _agg_file, _agg_writer, _agg_headers_written
+    global _frame_enabled, _agg_enabled
+
+    _frame_enabled = cfg.get("debug.csv_per_frame", False)
+    _agg_enabled = cfg.get("debug.csv_aggregated", False)
+
+    if not _frame_enabled and not _agg_enabled:
+        return
+
     os.makedirs("logs", exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    path = f"logs/bench_{ts}.csv"
-    _csv_file = open(path, "w", newline="")
-    _csv_writer = csv.DictWriter(_csv_file, fieldnames=CSV_HEADERS)
-    _csv_writer.writeheader()
-    print(f"📊 CSV benchmark → {path}")
+    if _frame_enabled:
+        path_f = f"logs/bench_frame_{ts}.csv"
+        _frame_file = open(path_f, "w", newline="")
+        _frame_writer = None
+        _frame_headers_written = False
+        print(f"📊 CSV per-frame  → {path_f}")
+
+    if _agg_enabled:
+        path_a = f"logs/bench_agg_{ts}.csv"
+        _agg_file = open(path_a, "w", newline="")
+        _agg_writer = None
+        _agg_headers_written = False
+        print(f"📊 CSV aggregated → {path_a}")
+
+def csv_write_frame(row: dict):
+    """Écrit une ligne par frame (valeurs instantanées via bench.last())."""
+    global _frame_writer, _frame_headers_written
+    if not _frame_enabled or _frame_file is None:
+        return
+    # filtrer les None → colonnes vides
+    cleaned = {k: (v if v is not None else "") for k, v in row.items()}
+    if not _frame_headers_written:
+        _frame_writer = csv.DictWriter(_frame_file, fieldnames=list(cleaned.keys()))
+        _frame_writer.writeheader()
+        _frame_headers_written = True
+    _frame_writer.writerow(cleaned)
 
 
-def csv_write(row: dict):
-    if _csv_writer is not None:
-        _csv_writer.writerow(row)
-
+def csv_write_agg(row: dict):
+    """Écrit une ligne agrégée (avg/max/min via bench.flat_row())."""
+    global _agg_writer, _agg_headers_written
+    if not _agg_enabled or _agg_file is None:
+        return
+    cleaned = {k: (v if v is not None else "") for k, v in row.items()}
+    if not _agg_headers_written:
+        _agg_writer = csv.DictWriter(_agg_file, fieldnames=list(cleaned.keys()))
+        _agg_writer.writeheader()
+        _agg_headers_written = True
+    _agg_writer.writerow(cleaned)
 
 def csv_flush():
-    if _csv_file is not None:
-        _csv_file.flush()
+    """Flush les deux fichiers si ouverts."""
+    if _frame_file is not None:
+        _frame_file.flush()
+    if _agg_file is not None:
+        _agg_file.flush()
 
 
 def csv_close():
-    global _csv_file, _csv_writer
-    if _csv_file is not None:
-        _csv_file.flush()
-        _csv_file.close()
-        _csv_file = None
-        _csv_writer = None
+    """Ferme proprement les deux fichiers."""
+    global _frame_file, _frame_writer, _frame_headers_written
+    global _agg_file, _agg_writer, _agg_headers_written
+
+    if _frame_file is not None:
+        _frame_file.flush()
+        _frame_file.close()
+        _frame_file = None
+        _frame_writer = None
+        _frame_headers_written = False

@@ -19,6 +19,7 @@ predict:
   active: true # true ou false
 
 matching:
+  use_ambiguity: true
   mode: "distance" # "distance" ou "iou"
   iou_thresh: 0.15
   dist_thresh: 60
@@ -34,6 +35,10 @@ blur:
 
 # ── Debug / affichage ──
 debug:
+  bench_enabled: true
+  csv_per_frame: true # CSV A — 1 ligne par frame
+  csv_aggregated: true # CSV B — 1 ligne par intervalle agrégé
+  csv_agg_interval: 2.0 # secondes entre chaque ligne agrégée
   log_level: "INFO" # DEBUG       , INFO, WARNING, ERROR
   draw: false # true ou false
   colors:

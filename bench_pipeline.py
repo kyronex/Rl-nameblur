@@ -28,21 +28,9 @@ import time
 import argparse
 
 from detect import _build_params
-from detect_tools_mask import (
-    saturation_variance_mask,
-    compute_white_mask,
-    refine_and_merge,
-    compute_sobel_interior_unified,
-)
-from detect_tools_boxes import (
-    process_channel,
-)
-from detect_tools import (
-    write_circles,
-    write_rects,
-    get_color,
-)
-from detect_stats import  make_local
+from detect_tools_mask import (saturation_variance_mask,compute_white_mask,refine_and_merge,compute_sobel_interior_unified)
+from detect_tools_boxes import (process_channel)
+from detect_tools import (write_circles,write_rects,get_color)
 log = logging.getLogger("bench_pipeline")
 # ═══════════════════════════════════════════════════
 # Helpers
@@ -74,7 +62,7 @@ def bench_once(frame, scale):
     """Exécute le pipeline étape par étape, retourne un dict de timings (ms)."""
     timings = {}
     colors, kernels, params, letter_connect_iter = _build_params(scale)
-    local = make_local()
+
     # ── 1. Resize ──
     t = time.perf_counter()
     h_orig, w_orig = frame.shape[:2]
@@ -110,7 +98,7 @@ def bench_once(frame, scale):
     timings["7_refine_merge"] = ms
 
     # ── 8. Process channel (contours + filtres géométriques) ──
-    candidates, ms = _timed(process_channel, closed ,small, mask_white, h_small, params, kernels, local)
+    candidates, ms = _timed(process_channel, closed ,small, mask_white, h_small, params, kernels)
     timings["8_process_channel"] = ms
 
     # ── 9. Remap scale ──

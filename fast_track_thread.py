@@ -2,14 +2,11 @@
 import cv2
 import threading
 import time
-import numpy as np
 from config import cfg
 from detect import ncc_match
-from box import Box
 from optical_flow import of_track
 
 _MAX_STALE_FRAMES = cfg.get("detect.fast.max_stale_frames", 15)
-
 
 class FastTrackThread:
     """
@@ -33,14 +30,6 @@ class FastTrackThread:
 
         self._prev_gray = None
         self._last_known = {}
-
-        self._stats_lock = threading.Lock()
-        self._total_ms = 0.0
-        self._track_count = 0
-        self._roi_count = 0
-        self._found_count = 0
-        self._of_ok_count = 0
-        self._of_fb_count = 0
 
         self._running = False
         self._thread = None
@@ -74,35 +63,6 @@ class FastTrackThread:
         with self._results_lock:
             return self._result_version, list(self._results), self._results_ts
 
-    def get_stats(self):
-        with self._stats_lock:
-            count = self._track_count
-            if count == 0:
-                return {
-                    "avg_ms": 0.0,
-                    "count": 0,
-                    "roi_total": 0,
-                    "found_total": 0,
-                    "of_ok_rate": 0.0,
-                    "of_fb_rate": 0.0,
-                }
-            return {
-                "avg_ms": round(self._total_ms / count, 2),
-                "count": count,
-                "roi_total": self._roi_count,
-                "found_total": self._found_count,
-                "of_ok_rate": round(self._of_ok_count / max(self._roi_count, 1), 3),
-                "of_fb_rate": round(self._of_fb_count / max(self._roi_count, 1), 3),
-            }
-
-    def reset_stats(self):
-        with self._stats_lock:
-            self._total_ms    = 0.0
-            self._track_count = 0
-            self._roi_count   = 0
-            self._found_count = 0
-            self._of_ok_count = 0
-            self._of_fb_count = 0
     # ──────────── NCC sur ROI ────────────
 
     def _ncc_on_roi(self, gray, rect, template):
@@ -145,8 +105,6 @@ class FastTrackThread:
                 self._prev_gray = None
                 continue
 
-            t0 = time.perf_counter()
-
             # ── 2. Convertir en gris ──
             curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -157,7 +115,6 @@ class FastTrackThread:
                 for m in masks:
                     uid = m["uid"]
                     rect = m["rect"]
-                    template = m.get("template")
                     self._last_known[uid] = {"rect": rect, "stale": 0}
                     results.append((uid, rect, 1.0))
                 with self._results_lock:
@@ -169,10 +126,6 @@ class FastTrackThread:
             # ── 4. Tracking par masque ──
             results = []
             active_ids = set()
-            roi_count = 0
-            found_count = 0
-            of_ok = 0
-            of_fb = 0
 
             for m in masks:
                 uid = m["uid"]
@@ -190,14 +143,11 @@ class FastTrackThread:
                 candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
 
                 if of_succeeded:
-                    of_ok += 1
+                    pass
                 else:
-                    of_fb += 1
                     candidate_rect = last_state["rect"]
 
                 # ── 4b. NCC confirme ──
-                roi_count += 1
-
                 if template is not None:
                     ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, template)
                 else:
@@ -206,7 +156,6 @@ class FastTrackThread:
                 if ncc_rect is not None:
                     last_state["rect"] = ncc_rect
                     last_state["stale"] = 0
-                    found_count += 1
                     results.append((uid, ncc_rect, score))
                 else:
                     last_state["stale"] += 1
@@ -223,18 +172,8 @@ class FastTrackThread:
             # ── 6. Mémoriser frame courante ──
             self._prev_gray = curr_gray
 
-            dt = (time.perf_counter() - t0) * 1000
-
             # ── 7. Publier ──
             with self._results_lock:
                 self._results = results
                 self._results_ts = frame_ts
                 self._result_version += 1
-
-            with self._stats_lock:
-                self._total_ms += dt
-                self._track_count += 1
-                self._roi_count += roi_count
-                self._found_count += found_count
-                self._of_ok_count += of_ok
-                self._of_fb_count += of_fb

@@ -237,11 +237,9 @@ def match_and_update(active_masks, new_rects, detect_ts, source):
     """
     use_ambiguity = cfg.get("matching.use_ambiguity", False)
     if use_ambiguity:
-        matched, unmatched_masks, unmatched_dets = \
-            match_hungarian_ambiguity(active_masks, new_rects)
+        matched, unmatched_masks, unmatched_dets = match_hungarian_ambiguity(active_masks, new_rects)
     else:
-        matched, unmatched_masks, unmatched_dets = \
-            match_hungarian(active_masks, new_rects)
+        matched, unmatched_masks, unmatched_dets = match_hungarian(active_masks, new_rects)
 
     assigned_uids = [None] * len(new_rects)
 

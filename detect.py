@@ -1,11 +1,8 @@
 # detect.py — v8 dual detect
 import cv2
 import numpy as np
-import time
 import logging
 from config import cfg
-#from detect_stats import _stats, get_stats, reset_stats
-from detect_stats import flush_local, make_local, get_stats, reset_stats
 from detect_tools import write_circles , write_rects , get_color
 from detect_tools_mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
 from detect_tools_boxes import process_channel
@@ -143,8 +140,6 @@ def _build_params(scale):
     return colors, kernels, params, letter_connect_iter
 
 def _run_pipeline(frame, scale):
-    local = make_local()
-    t_start = time.perf_counter()
     colors, kernels, params, letter_connect_iter = _build_params(scale)
 
     # ══════════════════════════════════════════════════
@@ -152,49 +147,34 @@ def _run_pipeline(frame, scale):
     # ══════════════════════════════════════════════════
 
     # ── 1. Resize ──
-    t0 = time.perf_counter()
     h_orig, w_orig = frame.shape[:2]
     small = cv2.resize(frame,(int(w_orig / scale), int(h_orig / scale)),interpolation=cv2.INTER_LINEAR)
     h_small, w_small = small.shape[:2]
-    local["resize_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── Grayscale ──
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
 
-    t0 = time.perf_counter()
     sat_mask = saturation_variance_mask(small, scale)
-    local["sat_mask_ms"] = (time.perf_counter() - t0) * 1000
 
     # ── 2. Masque blanc → nettoyage ──
-    t0 = time.perf_counter()
     mask_white, white_clean = compute_white_mask(gray, kernels, letter_connect_iter)
-    local["compute_white_mask_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 3. Combinaison : blanc ET dans une zone à forte variance de saturation ──
     combined = cv2.bitwise_and(white_clean, sat_mask)
 
     # ── 4. Sobel interiors ──
-    t0 = time.perf_counter()
     interior = compute_sobel_interior_unified(gray, combined, kernels)
-    local["compute_sobel_interiors_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 5. Refine and merge ──
-    t0 = time.perf_counter()
     closed = refine_and_merge(combined, interior, kernels)
-    local["refine_and_merge_ms"] += (time.perf_counter() - t0) * 1000
 
     # ── 6. Contours + filtre géométrique (ratio, area, fill) ──
     log.debug("START")
-    candidates = process_channel(closed,small, mask_white, h_small, params, kernels, local )
+    candidates = process_channel(closed,small, mask_white, h_small, params, kernels )
     log.debug("END")
 
     if not candidates:
-        local["total_ms"] += (time.perf_counter() - t_start) * 1000
-        flush_local(local)
         return []
-
-    local["filter_uniform_ms"] = (time.perf_counter() - t0) * 1000
-    local["plates_found"] = len(candidates)
 
     # ── 7. Remap vers résolution d'entrée ──
     plates = [
@@ -202,8 +182,6 @@ def _run_pipeline(frame, scale):
         for b in candidates
     ]
 
-    local["total_ms"] += (time.perf_counter() - t_start) * 1000
-    flush_local(local)
     return plates
 
 
@@ -215,8 +193,6 @@ def detect_plates(frame):
     """Slow detect — full frame."""
     scale = cfg.get("detect.slow.scale", 2.0)
     return _run_pipeline(frame, scale)
-
-
 
 # ═══════════════════════════════════════════════════════
 #  FAST TRACKING — léger, pour ROI connues

@@ -20,13 +20,6 @@ class SendThread:
         self._has_frame = False
         self._lock = threading.Lock()
 
-        # Benchmark
-        self._total_send_ms = 0.0
-        self._send_count = 0
-        self._total_borrow_ms = 0.0
-        self._borrow_count = 0
-        self._stats_lock = threading.Lock()
-
     # ──────────── Contrôle ────────────
 
     def start(self):
@@ -49,36 +42,9 @@ class SendThread:
 
     def publish(self):
         """Signale que le write buffer est prêt → swap avec le send buffer."""
-        t0 = time.perf_counter()
         with self._lock:
             self._write_buf, self._send_buf = self._send_buf, self._write_buf
             self._has_frame = True
-        dt = (time.perf_counter() - t0) * 1000
-
-        with self._stats_lock:
-            self._total_borrow_ms += dt
-            self._borrow_count += 1
-
-    # ──────────── Benchmark ────────────
-
-    def get_stats(self):
-        with self._stats_lock:
-            n_send = max(self._send_count, 1)
-            n_pub  = max(self._borrow_count, 1)
-            return {
-                "send_avg_ms":    round(self._total_send_ms / n_send, 2),
-                "send_count":     self._send_count,
-                "send_total_ms":  round(self._total_send_ms, 2),
-                "publish_avg_ms": round(self._total_borrow_ms / n_pub, 2),
-                "publish_count":  self._borrow_count,
-            }
-
-    def reset_stats(self):
-        with self._stats_lock:
-            self._total_send_ms = 0.0
-            self._send_count = 0
-            self._total_borrow_ms = 0.0
-            self._borrow_count = 0
 
     # ──────────── Worker ────────────
 
@@ -95,10 +61,4 @@ class SendThread:
                 time.sleep(0.001)
                 continue
 
-            t0 = time.perf_counter()
             self._vcam.send(frame_to_send)
-            dt = (time.perf_counter() - t0) * 1000
-
-            with self._stats_lock:
-                self._total_send_ms += dt
-                self._send_count += 1

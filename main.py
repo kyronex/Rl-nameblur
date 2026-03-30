@@ -1,4 +1,4 @@
-# main.py — v11 (mask_manager extracted)
+# main.py —v12 (main allégé)
 import logging
 from config import cfg
 
@@ -12,7 +12,6 @@ def setup_logging():
 setup_logging()
 
 import time
-import cv2
 import numpy as np
 import pyvirtualcam
 
@@ -20,13 +19,10 @@ from capture_thread   import CaptureThread
 from detect_thread    import DetectThread
 from fast_track_thread import FastTrackThread
 from send_thread      import SendThread
-from detect_stats     import get_stats as detect_stats
-from detect_stats     import reset_stats as detect_diag_reset
 from blur             import apply_blur
-from blur             import get_stats as blur_stats, reset_stats as blur_reset
-from box              import Box
-from csv_bench        import csv_open, csv_write, csv_flush, csv_close
-from mask_manager     import (match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss)
+from bench            import bench
+from csv_bench        import csv_open, csv_write_frame, csv_write_agg, csv_flush, csv_close
+from mask_manager     import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss
 
 log = logging.getLogger("main")
 
@@ -37,112 +33,6 @@ CAPTURE_FPS   = cfg.get("screen.capture_fps")
 VCAM_FPS      = cfg.get("screen.vcam_fps")
 cfg.start_watcher()
 
-# ═══════════════════════════════════════════════════════
-#  STATS / BENCHMARK
-# ═══════════════════════════════════════════════════════
-
-_main_stats = {
-    "loop_ms":       0.0,
-    "blur_ms":       0.0,
-    "total_frames":  0,
-    "mask_peak":     0,
-    "slow_updates":  0,
-    "fast_updates":  0,
-    "predict_count": 0,
-}
-
-_interval_stats = {
-    "capture_wait_ms": 0.0,
-    "slow_poll_ms":    0.0,
-    "fast_poll_ms":    0.0,
-    "predict_ms":      0.0,
-    "blur_ms":         0.0,
-    "send_ms":         0.0,
-    "detect_age_ms":   0.0,
-    "fast_age_ms":     0.0,
-    "mask_age_ms":     0.0,
-    "slow_updates":    0,
-    "fast_updates":    0,
-    "predict_frames":  0,
-    "frames":          0,
-    "jitter_center":   0.0,
-    "jitter_corners":  0.0,
-    "masks_created":   0,
-    "masks_killed":    0,
-}
-
-def _reset_interval():
-    for k in _interval_stats:
-        _interval_stats[k] = 0.0 if isinstance(_interval_stats[k], float) else 0
-
-def print_all_stats():
-    matching_mode = cfg.get("matching.mode")
-    n = max(_main_stats["total_frames"], 1)
-    cs = capturer.get_stats()
-    ds = detector.get_stats()
-    bs = blur_stats()
-    ss = sender.get_stats()
-    dd = detect_stats()
-
-    print("\n" + "=" * 55)
-    print("        BENCHMARK PIPELINE v11.0 (mask_manager)")
-    print("=" * 55)
-
-    print(f"\n  📷 CAPTURE (thread @ {CAPTURE_FPS}fps cible)")
-    for k, v in cs.items():
-        print(f"    {k:22s} : {v}")
-
-    print(f"\n  🔍 SLOW DETECT (thread)")
-    for k, v in ds.items():
-        print(f"    {k:22s} : {v}")
-
-    if fast_enabled:
-        fs = fast_tracker.get_stats()
-        print(f"\n  ⚡ FAST TRACK (ROI)")
-        for k, v in fs.items():
-            print(f"    {k:22s} : {v}")
-
-    print(f"\n  🌀 BLUR + CVT (fusionnés)")
-    for k, v in bs.items():
-        print(f"    {k:22s} : {v}")
-
-    print(f"\n  📤 SEND (thread, vcam @ {VCAM_FPS}fps déclaré)")
-    for k, v in ss.items():
-        print(f"    {k:22s} : {v}")
-
-    print(f"\n  🔬 DETECT DIAGNOSTIC")
-    for k, v in dd.items():
-        print(f"    {k:22s} : {v}")
-
-    print(f"\n  🎬 MAIN LOOP")
-    loop_avg = round(_main_stats['loop_ms'] / n, 2)
-    blur_avg = round(_main_stats['blur_ms'] / n, 2)
-    print(f"    {'loop_avg_ms':22s} : {loop_avg}")
-    print(f"    {'blur_avg_ms':22s} : {blur_avg}")
-    print(f"    {'total_frames':22s} : {_main_stats['total_frames']}")
-    print(f"    {'mask_peak':22s} : {_main_stats['mask_peak']}")
-    print(f"    {'slow_updates':22s} : {_main_stats['slow_updates']}")
-    print(f"    {'fast_updates':22s} : {_main_stats['fast_updates']}")
-    print(f"    {'predict_count':22s} : {_main_stats['predict_count']}")
-    print(f"    {'ttl_max':22s} : {cfg.get('masks.ttl_max')}")
-    print(f"    {'matching_mode':22s} : {matching_mode}")
-    if matching_mode == "distance":
-        print(f"    {'dist_thresh':22s} : {cfg.get('matching.dist_thresh')}")
-    else:
-        print(f"    {'iou_thresh':22s} : {cfg.get('matching.iou_thresh')}")
-
-    old_loop = 32.66
-    new_loop = loop_avg
-    saved    = round(old_loop - new_loop, 2)
-    old_fps  = round(1000 / old_loop, 1)
-    new_fps  = round(1000 / max(new_loop, 0.01), 1)
-
-    print(f"\n  📉 GAIN vs v5.1")
-    print(f"    {'v5.1 loop_avg':22s} : {old_loop} ms ({old_fps} FPS)")
-    print(f"    {'v11 loop_avg':22s} : {new_loop} ms ({new_fps} FPS)")
-    print(f"    {'économisé':22s} : {saved} ms/frame")
-    print(f"    {'accélération':22s} : x{round(old_loop / max(new_loop, 0.01), 2)}")
-    print("=" * 55)
 
 # ═══════════════════════════════════════════════════════
 #  LANCEMENT
@@ -175,31 +65,26 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     frame_count = 0
     csv_open()
 
+    csv_agg_interval = cfg.get("debug.csv_agg_interval", 2.0)
+    last_agg_time    = time.perf_counter()
+
     try:
         active_masks       = []
         last_detect_version = 0
         last_fast_version   = 0
         last_frame_id       = 0
-
-        capturer.reset_stats()
-        detector.reset_stats()
-        if fast_enabled:
-            fast_tracker.reset_stats()
-        detect_diag_reset()
-        blur_reset()
-        sender.reset_stats()
-        _reset_interval()
+        last_csv_frame      = -1
 
         while True:
+            t_loop_start = time.perf_counter()
             now = time.perf_counter()
 
             # ── snapshot masques avant pour jitter ──
             rects_before = {m['uid']: m['rect'] for m in active_masks}
 
             # ── 1. Capture (NON BLOQUANT) ──
-            t0 = time.perf_counter()
-            frame, frame_ts = capturer.get_frame()
-            t_capture_wait = (time.perf_counter() - t0) * 1000
+            with bench.timer("capture_wait"):
+                frame, frame_ts = capturer.get_frame()
             if frame is None:
                 time.sleep(0.001)
                 continue
@@ -220,84 +105,75 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             row_fast_age     = 0.0
 
             # ── 3. Slow detect ──
-            t0 = time.perf_counter()
-            current_version = detector.get_detect_count()
-            slow_updated = False
+            with bench.timer("slow_poll"):
+                current_version = detector.get_detect_count()
+                slow_updated = False
 
-            if current_version > last_detect_version:
-                slow_updated         = True
-                last_detect_version  = current_version
-                row_slow_updated     = 1
-                _main_stats["slow_updates"] += 1
+                if current_version > last_detect_version:
+                    slow_updated         = True
+                    last_detect_version  = current_version
+                    row_slow_updated     = 1
 
-                new_plates, detect_ts = detector.get_zones()
-                row_detect_age = (now - detect_ts) * 1000 if detect_ts else 0.0
+                    new_plates, detect_ts = detector.get_zones()
+                    row_detect_age = (now - detect_ts) * 1000 if detect_ts else 0.0
 
-                padded = [
-                    pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                    for box in new_plates
-                ]
+                    padded = [
+                        pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                        for box in new_plates
+                    ]
 
-                uids = match_and_update(active_masks, padded, detect_ts, source="slow")
+                    uids = match_and_update(active_masks, padded, detect_ts, source="slow")
 
-                for i, box in enumerate(new_plates):
-                    if uids[i] is not None:
-                        for m in active_masks:
-                            if m['uid'] == uids[i]:
-                                m['confidence'] = box.confidence
-                                m['template']   = box.template
-                                break
-                        updated_uids.add(uids[i])
+                    for i, box in enumerate(new_plates):
+                        if uids[i] is not None:
+                            for m in active_masks:
+                                if m['uid'] == uids[i]:
+                                    m['confidence'] = box.confidence
+                                    m['template']   = box.template
+                                    break
+                            updated_uids.add(uids[i])
 
-                # décrémenter TTL des non-matchés puis purger
-                for m in active_masks:
-                    if m['uid'] not in updated_uids:
-                        m['ttl'] -= 1
-                active_masks = [m for m in active_masks if m['ttl'] > 0]
-
-            t_slow_poll = (time.perf_counter() - t0) * 1000
+                    for m in active_masks:
+                        if m['uid'] not in updated_uids:
+                            m['ttl'] -= 1
+                    active_masks = [m for m in active_masks if m['ttl'] > 0]
 
             # ── 3b. Fast track ──
-            t0 = time.perf_counter()
-            if fast_enabled and not slow_updated:
-                fast_version, fast_results, fast_ts = fast_tracker.get_results()
-                if fast_version > last_fast_version:
-                    last_fast_version = fast_version
-                    _main_stats["fast_updates"] += 1
-                    row_fast_updated = 1
-                    row_fast_age = (now - fast_ts) * 1000 if fast_ts else 0.0
+            with bench.timer("fast_poll"):
+                if fast_enabled and not slow_updated:
+                    fast_version, fast_results, fast_ts = fast_tracker.get_results()
+                    if fast_version > last_fast_version:
+                        last_fast_version = fast_version
+                        row_fast_updated = 1
+                        row_fast_age = (now - fast_ts) * 1000 if fast_ts else 0.0
 
-                    found_uids = set()
-                    for mask_uid, new_rect, score in fast_results:
-                        if new_rect is not None:
-                            found_uids.add(mask_uid)
-                            for m in active_masks:
-                                if m['uid'] == mask_uid:
-                                    padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                                    update_mask(m, padded, fast_ts, source="fast")
-                                    updated_uids.add(mask_uid)
-                                    break
+                        found_uids = set()
+                        for mask_uid, new_rect, score in fast_results:
+                            if new_rect is not None:
+                                found_uids.add(mask_uid)
+                                for m in active_masks:
+                                    if m['uid'] == mask_uid:
+                                        padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                                        update_mask(m, padded, fast_ts, source="fast")
+                                        updated_uids.add(mask_uid)
+                                        break
 
-                    # miss count sur masques non trouvés
-                    for m in active_masks:
-                        if m['uid'] not in found_uids and m['last_source'] != "new":
-                            m['fast_miss_count'] += 1
+                        # miss count sur masques non trouvés
+                        for m in active_masks:
+                            if m['uid'] not in found_uids and m['last_source'] != "new":
+                                m['fast_miss_count'] += 1
 
-                    # kill sur seuils fast_miss
-                    active_masks = kill_fast_miss(active_masks, now)
-
-            t_fast_poll = (time.perf_counter() - t0) * 1000
+                        # kill sur seuils fast_miss
+                        active_masks = kill_fast_miss(active_masks, now)
 
             # ── 4. Prédiction ──
-            t0 = time.perf_counter()
-            if predict:
-                n_predicted = predict_masks(
-                    active_masks, updated_uids, now,
-                    SCREEN_WIDTH, SCREEN_HEIGHT
-                )
-                row_predicted = 1 if n_predicted > 0 else 0
-                _main_stats["predict_count"] += n_predicted
-            t_predict = (time.perf_counter() - t0) * 1000
+            with bench.timer("predict"):
+                if predict:
+                    n_predicted = predict_masks(
+                        active_masks, updated_uids, now,
+                        SCREEN_WIDTH, SCREEN_HEIGHT
+                    )
+                    row_predicted = 1 if n_predicted > 0 else 0
 
             # ── 5. Cap max masques ──
             max_masks = cfg.get("masks.max_masks")
@@ -315,71 +191,53 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             buf = sender.borrow()
             np.copyto(buf, frame)
 
-            t_blur_start = time.perf_counter()
-            apply_blur(buf, blur_zones)
-            if debug_draw:
-                draw_debug(buf, active_masks)
-            t_blur_ms = (time.perf_counter() - t_blur_start) * 1000
+            with bench.timer("blur"):
+                apply_blur(buf, blur_zones)
+                if debug_draw:
+                    draw_debug(buf, active_masks)
 
             # ── 7. Envoi ──
-            t_send_start = time.perf_counter()
-            sender.publish()
-            t_send_ms = (time.perf_counter() - t_send_start) * 1000
+            with bench.timer("send"):
+                sender.publish()
 
             # ── 8. Jitter + ages ──
-            jitter_center_avg, jitter_corners_avg, masks_created, masks_killed = \
-                compute_jitter(active_masks, rects_before)
-
+            jitter_center_avg, jitter_corners_avg, masks_created, masks_killed = compute_jitter(active_masks, rects_before)
             mask_age_avg = compute_mask_age(active_masks, now)
 
-            # ── 8b. Stats loop ──
-            loop_ms = (time.perf_counter() - now) * 1000
-            _main_stats["loop_ms"]   += loop_ms
-            _main_stats["blur_ms"]   += t_blur_ms
-            _main_stats["total_frames"] += 1
-            _main_stats["mask_peak"]  = max(_main_stats["mask_peak"], len(active_masks))
+            bench.count("frames")
+            bench.count("masks_total", len(active_masks))
 
-            _interval_stats["capture_wait_ms"] += t_capture_wait
-            _interval_stats["slow_poll_ms"]    += t_slow_poll
-            _interval_stats["fast_poll_ms"]    += t_fast_poll
-            _interval_stats["predict_ms"]      += t_predict
-            _interval_stats["blur_ms"]         += t_blur_ms
-            _interval_stats["send_ms"]         += t_send_ms
-            _interval_stats["detect_age_ms"]   += row_detect_age
-            _interval_stats["fast_age_ms"]     += row_fast_age
-            _interval_stats["mask_age_ms"]     += mask_age_avg
-            _interval_stats["slow_updates"]    += row_slow_updated
-            _interval_stats["fast_updates"]    += row_fast_updated
-            _interval_stats["predict_frames"]  += row_predicted
-            _interval_stats["frames"]          += 1
-            _interval_stats["jitter_center"]   += jitter_center_avg
-            _interval_stats["jitter_corners"]  += jitter_corners_avg
-            _interval_stats["masks_created"]   += masks_created
-            _interval_stats["masks_killed"]    += masks_killed
-
+            loop_ms = round((time.perf_counter() - t_loop_start) * 1000, 3)
             # ── CSV ──
-            csv_write({
-                "timestamp":         round(now, 6),
-                "frame_id":          frame_id,
-                "loop_ms":           round(loop_ms, 3),
-                "capture_wait_ms":   round(t_capture_wait, 3),
-                "slow_poll_ms":      round(t_slow_poll, 3),
-                "fast_poll_ms":      round(t_fast_poll, 3),
-                "predict_ms":        round(t_predict, 3),
-                "blur_ms":           round(t_blur_ms, 3),
-                "send_ms":           round(t_send_ms, 3),
-                "detect_age_ms":     round(row_detect_age, 2),
-                "fast_age_ms":       round(row_fast_age, 2),
-                "mask_age_avg_ms":   round(mask_age_avg, 2),
-                "slow_updated":      row_slow_updated,
-                "fast_updated":      row_fast_updated,
-                "predicted":         row_predicted,
-                "mask_count":        len(active_masks),
-                "jitter_center_px":  round(jitter_center_avg, 2),
-                "jitter_corners_px": round(jitter_corners_avg, 2),
-                "masks_created":     masks_created,
-                "masks_killed":      masks_killed,
-            })
+            if frame_id != last_csv_frame:
+                last_csv_frame = frame_id
+
+                def _safe_last(name):
+                    v = bench.last(name)
+                    return round(v, 3) if v is not None else None
+
+                csv_write_frame({
+                    "timestamp":         round(now, 6),
+                    "frame_id":          frame_id,
+                    "capture_wait_ms":   _safe_last("capture_wait"),
+                    "slow_poll_ms":      _safe_last("slow_poll"),
+                    "fast_poll_ms":      _safe_last("fast_poll"),
+                    "predict_ms":        _safe_last("predict"),
+                    "blur_ms":           _safe_last("blur"),
+                    "send_ms":           _safe_last("send"),
+                    "detect_age_ms":     round(row_detect_age, 2),
+                    "fast_age_ms":       round(row_fast_age, 2),
+                    "mask_age_avg_ms":   round(mask_age_avg, 2),
+                    "slow_updated":      row_slow_updated,
+                    "fast_updated":      row_fast_updated,
+                    "predicted":         row_predicted,
+                    "mask_count":        len(active_masks),
+                    "jitter_center_px":  round(jitter_center_avg, 2),
+                    "jitter_corners_px": round(jitter_corners_avg, 2),
+                    "masks_created":     masks_created,
+                    "masks_killed":      masks_killed,
+                    "loop_ms":           loop_ms,
+                })
 
             # ── 9. FPS print toutes les 2s ──
             frame_count += 1
@@ -388,46 +246,20 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 fps      = frame_count / elapsed
                 mode     = "DEBUG" if debug_draw else "PROD"
                 fast_tag = "+FAST" if fast_enabled else ""
-                n        = max(_interval_stats["frames"], 1)
-                n_slow   = max(_interval_stats["slow_updates"], 1)
-                n_fast   = max(_interval_stats["fast_updates"], 1)
-
-                cap_avg  = round(_interval_stats["capture_wait_ms"] / n, 2)
-                slow_avg = round(_interval_stats["slow_poll_ms"]    / n, 2)
-                fast_avg = round(_interval_stats["fast_poll_ms"]    / n, 2)
-                pred_avg = round(_interval_stats["predict_ms"]      / n, 2)
-                blur_avg = round(_interval_stats["blur_ms"]         / n, 2)
-                send_avg = round(_interval_stats["send_ms"]         / n, 2)
-                loop_avg = round(cap_avg + slow_avg + fast_avg + pred_avg + blur_avg + send_avg, 2)
-
-                det_age  = round(_interval_stats["detect_age_ms"] / n_slow, 1)
-                fst_age  = round(_interval_stats["fast_age_ms"]   / n_fast, 1) if fast_enabled else 0.0
-                msk_age  = round(_interval_stats["mask_age_ms"]   / n, 1)
-
-                s_up  = int(_interval_stats["slow_updates"])
-                f_up  = int(_interval_stats["fast_updates"])
-                p_fr  = int(_interval_stats["predict_frames"])
-                p_pct = round(100.0 * p_fr / n, 1)
-
-                j_c  = round(_interval_stats["jitter_center"]  / n, 2)
-                j_4  = round(_interval_stats["jitter_corners"] / n, 2)
-                m_cr = int(_interval_stats["masks_created"])
-                m_ki = int(_interval_stats["masks_killed"])
-
                 print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode} {fast_tag}")
-                print(f"  ├─ loop: {loop_avg}ms (cap:{cap_avg} slow:{slow_avg} fast:{fast_avg} pred:{pred_avg} blur:{blur_avg} send:{send_avg})")
-                print(f"  ├─ age: slow={det_age}ms fast={fst_age}ms mask_avg={msk_age}ms")
-                print(f"  ├─ updates: slow={s_up} fast={f_up} predict={p_fr}/{int(n)} ({p_pct}%)")
-                print(f"  └─ masks: jitter_c={j_c}px jitter_4={j_4}px created={m_cr} killed={m_ki}")
+                bench.print_summary()
 
+                if now - last_agg_time >= csv_agg_interval:
+                    csv_write_agg(bench.flat_row())
+                    last_agg_time = now
+
+                bench.reset()
                 frame_count = 0
                 fps_timer   = time.time()
-                _reset_interval()
                 csv_flush()
 
     except KeyboardInterrupt:
         print("\n🛑 Arrêt propre")
-        print_all_stats()
 
     finally:
         csv_close()
