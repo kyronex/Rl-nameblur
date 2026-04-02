@@ -13,6 +13,10 @@ masks:
   smooth_alpha: 0.90
   dead_zone: 10
   velocity_dead_zone: 10
+  dt_slow_max: 500 # ms → s
+  teleport_thresh: 300 # px
+  vx_max: 4000 # px/s
+  vy_max: 2000 # px/s
   fast_miss_threshold: 8 # N cycles fast ratés consécutifs avant TTL--
   fast_miss_timeout_ms: 250 # X ms sans détection fast avant TTL--
 predict:
@@ -23,6 +27,7 @@ matching:
   mode: "distance" # "distance" ou "iou"
   iou_thresh: 0.15
   dist_thresh: 60
+  ambiguity_ratio: 0.0
 
 # ── Floutage ──
 blur:
@@ -67,6 +72,7 @@ detect:
     ncc_threshold: 0.6
     roi_margin: 0.3 # +% chaque côté
     enabled: true
+    event_timeout_s: 0.5
   hsv:
     white_core:
       lower: [0, 0, 200]

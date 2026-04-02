@@ -22,7 +22,7 @@ from send_thread      import SendThread
 from blur             import apply_blur
 from bench            import bench
 from csv_bench        import csv_open, csv_write_frame, csv_write_agg, csv_flush, csv_close
-from mask_manager     import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss
+from mask_manager     import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss, increment_fast_miss
 
 log = logging.getLogger("main")
 
@@ -61,7 +61,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     sender = SendThread(vcam, SCREEN_WIDTH, SCREEN_HEIGHT)
     sender.start()
 
-    fps_timer   = time.time()
+    fps_timer   = time.perf_counter()
     frame_count = 0
     csv_open()
 
@@ -106,7 +106,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             # ── 3. Slow detect ──
             with bench.timer("slow_poll"):
-                current_version = detector.get_detect_count()
+                new_plates, detect_ts, current_version, detected_frame_ts = detector.get_result()
                 slow_updated = False
 
                 if current_version > last_detect_version:
@@ -114,15 +114,18 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     last_detect_version  = current_version
                     row_slow_updated     = 1
 
-                    new_plates, detect_ts = detector.get_zones()
-                    row_detect_age = (now - detect_ts) * 1000 if detect_ts else 0.0
+                    _read_ts = time.perf_counter()
+                    row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)if detected_frame_ts else 0.0)
 
                     padded = [
                         pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT)
                         for box in new_plates
                     ]
 
-                    uids = match_and_update(active_masks, padded, detect_ts, source="slow")
+
+            with bench.timer("match"):
+                if slow_updated and new_plates:
+                    uids = match_and_update(active_masks, padded, detect_ts, source="slow" , now=now)
 
                     for i, box in enumerate(new_plates):
                         if uids[i] is not None:
@@ -133,10 +136,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                                     break
                             updated_uids.add(uids[i])
 
-                    for m in active_masks:
-                        if m['uid'] not in updated_uids:
-                            m['ttl'] -= 1
-                    active_masks = [m for m in active_masks if m['ttl'] > 0]
+                    increment_fast_miss(active_masks, updated_uids)
+                    active_masks = kill_fast_miss(active_masks, now)
 
             # ── 3b. Fast track ──
             with bench.timer("fast_poll"):
@@ -158,21 +159,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                                         updated_uids.add(mask_uid)
                                         break
 
-                        # miss count sur masques non trouvés
-                        for m in active_masks:
-                            if m['uid'] not in found_uids and m['last_source'] != "new":
-                                m['fast_miss_count'] += 1
-
-                        # kill sur seuils fast_miss
+                        increment_fast_miss(active_masks, updated_uids)
                         active_masks = kill_fast_miss(active_masks, now)
 
             # ── 4. Prédiction ──
             with bench.timer("predict"):
                 if predict:
-                    n_predicted = predict_masks(
-                        active_masks, updated_uids, now,
-                        SCREEN_WIDTH, SCREEN_HEIGHT
-                    )
+                    n_predicted = predict_masks(active_masks, updated_uids, now,SCREEN_WIDTH, SCREEN_HEIGHT)
                     row_predicted = 1 if n_predicted > 0 else 0
 
             # ── 5. Cap max masques ──
@@ -221,6 +214,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     "frame_id":          frame_id,
                     "capture_wait_ms":   _safe_last("capture_wait"),
                     "slow_poll_ms":      _safe_last("slow_poll"),
+                    "match_ms":          _safe_last("match"),
                     "fast_poll_ms":      _safe_last("fast_poll"),
                     "predict_ms":        _safe_last("predict"),
                     "blur_ms":           _safe_last("blur"),
@@ -241,7 +235,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             # ── 9. FPS print toutes les 2s ──
             frame_count += 1
-            elapsed = time.time() - fps_timer
+            elapsed = time.perf_counter() - fps_timer
             if elapsed >= 2.0:
                 fps      = frame_count / elapsed
                 mode     = "DEBUG" if debug_draw else "PROD"
@@ -255,7 +249,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
                 bench.reset()
                 frame_count = 0
-                fps_timer   = time.time()
+                fps_timer   = time.perf_counter()
                 csv_flush()
 
     except KeyboardInterrupt:

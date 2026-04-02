@@ -1,8 +1,7 @@
-# detect_thread.py — Slow detect (full frame)
+# detect_thread.py — v2
 import threading
 import time
 from detect import detect_plates
-
 
 class DetectThread:
     """Slow detect — full frame, scale lent."""
@@ -12,13 +11,12 @@ class DetectThread:
         self._latest_frame_ts = 0.0
         self._latest_zones = []
         self._latest_zones_ts = 0.0
+        self._latest_frame_ts_detected = 0.0
         self._frame_lock = threading.Lock()
         self._zones_lock = threading.Lock()
         self._running = False
         self._thread = None
-
         self._detect_count = 0
-        self._detect_lock = threading.Lock()
 
     def start(self):
         self._running = True
@@ -33,20 +31,16 @@ class DetectThread:
         print("[DetectThread/Slow] Arrêté")
 
     def give_frame(self, frame, ts):
-        copy = frame.copy()
         with self._frame_lock:
-            self._latest_frame = copy
+            self._latest_frame = frame.copy()
             self._latest_frame_ts = ts
 
-    def get_zones(self):
+    def get_result(self):
         with self._zones_lock:
-            return self._latest_zones.copy(), self._latest_zones_ts
-
-    def get_detect_count(self):
-        with self._detect_lock:
-            return self._detect_count
+            return self._latest_zones.copy(), self._latest_zones_ts, self._detect_count, self._latest_frame_ts_detected
 
     def _worker(self):
+        last_processed_ts = None
         while self._running:
             with self._frame_lock:
                 frame = self._latest_frame
@@ -56,11 +50,15 @@ class DetectThread:
                 time.sleep(0.001)
                 continue
 
+            if last_processed_ts == frame_ts:
+                time.sleep(0.001)
+                continue
+
+            last_processed_ts = frame_ts
             zones = detect_plates(frame)
 
             with self._zones_lock:
                 self._latest_zones = zones
-                self._latest_zones_ts = frame_ts
-
-            with self._detect_lock:
+                self._latest_zones_ts = time.perf_counter()
+                self._latest_frame_ts_detected = frame_ts
                 self._detect_count += 1

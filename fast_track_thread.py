@@ -1,7 +1,6 @@
 # fast_track_thread.py
 import cv2
 import threading
-import time
 from config import cfg
 from detect import ncc_match
 from optical_flow import of_track
@@ -11,7 +10,9 @@ _MAX_STALE_FRAMES = cfg.get("detect.fast.max_stale_frames", 15)
 class FastTrackThread:
     """
     Reçoit la frame courante + les masques actifs.
-    Tracking OF → NCC confirme → Option B si échec.
+    Tracking OF → NCC confirme → fallback stale si échec.
+    F1 : le worker est piloté par Event — traite uniquement
+         quand une nouvelle frame est déposée.
     """
 
     def __init__(self, screen_width, screen_height):
@@ -23,6 +24,8 @@ class FastTrackThread:
         self._latest_masks = []
         self._frame_lock = threading.Lock()
 
+        self._new_frame_event = threading.Event()
+
         self._results = []
         self._results_ts = 0.0
         self._result_version = 0
@@ -30,6 +33,7 @@ class FastTrackThread:
 
         self._prev_gray = None
         self._last_known = {}
+        self._last_processed_ts = -1.0
 
         self._running = False
         self._thread = None
@@ -47,6 +51,7 @@ class FastTrackThread:
 
     def stop(self):
         self._running = False
+        self._new_frame_event.set()
         if self._thread:
             self._thread.join(timeout=1.0)
         print("[FastTrackThread] Arrêté")
@@ -55,9 +60,11 @@ class FastTrackThread:
 
     def give_frame_and_masks(self,frame, masks, frame_ts):
         with self._frame_lock:
-            self._latest_frame = frame
+            #self._latest_frame = frame
+            self._latest_frame = frame.copy()
             self._latest_frame_ts = frame_ts
             self._latest_masks = list(masks)
+        self._new_frame_event.set()
 
     def get_results(self):
         with self._results_lock:
@@ -89,11 +96,16 @@ class FastTrackThread:
     # ──────────── Worker ────────────
 
     def _worker(self):
-        interval = 1.0 / cfg.get("detect.fast.fps", 60)
         max_stale = _MAX_STALE_FRAMES
-
+        event_timeout = cfg.get("detect.fast.event_timeout_s", 0.5)
         while self._running:
-            time.sleep(interval)
+            triggered = self._new_frame_event.wait(timeout=event_timeout)
+            if not self._running:
+                break
+            self._new_frame_event.clear()
+
+            if not triggered:
+                continue
 
             # ── 1. Récupérer frame + masques ──
             with self._frame_lock:
@@ -104,6 +116,10 @@ class FastTrackThread:
             if frame is None or not masks:
                 self._prev_gray = None
                 continue
+
+            if frame_ts <= self._last_processed_ts:
+                continue
+            self._last_processed_ts = frame_ts
 
             # ── 2. Convertir en gris ──
             curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
