@@ -14,31 +14,19 @@ _next_mask_id = 0
 #  GÉOMÉTRIE
 # ═══════════════════════════════════════════════════════
 
-def compute_iou(r1, r2):
-    """IoU entre deux rectangles (x,y,w,h)."""
-    x1, y1, w1, h1 = r1
-    x2, y2, w2, h2 = r2
-    xa = max(x1, x2);  ya = max(y1, y2)
-    xb = min(x1+w1, x2+w2); yb = min(y1+h1, y2+h2)
-    inter = max(0, xb-xa) * max(0, yb-ya)
-    if inter == 0:
-        return 0.0
-    union = w1*h1 + w2*h2 - inter
-    return inter / union if union > 0 else 0.0
-
-def center_distance(r1, r2):
+def _center_distance(r1, r2):
     """Distance euclidienne entre centres (x,y,w,h)."""
     cx1 = r1[0] + r1[2]/2;  cy1 = r1[1] + r1[3]/2
     cx2 = r2[0] + r2[2]/2;  cy2 = r2[1] + r2[3]/2
     return ((cx1-cx2)**2 + (cy1-cy2)**2)**0.5
 
-def rect_corners(r):
+def _rect_corners(r):
     x, y, w, h = r
     return [(x,y), (x+w,y), (x,y+h), (x+w,y+h)]
 
-def corners_distance(r1, r2):
+def _corners_distance(r1, r2):
     """Distance moyenne entre les 4 coins."""
-    c1 = rect_corners(r1);  c2 = rect_corners(r2)
+    c1 = _rect_corners(r1);  c2 = _rect_corners(r2)
     return sum(((ax-bx)**2+(ay-by)**2)**0.5
                for (ax,ay),(bx,by) in zip(c1,c2)) / 4.0
 
@@ -56,7 +44,7 @@ def pad_rect(x, y, w, h, screen_w, screen_h):
 #  TTL / COULEURS DEBUG
 # ═══════════════════════════════════════════════════════
 
-def ttl_color(ttl):
+def _ttl_color(ttl):
     if ttl >= 3:
         return tuple(cfg.get("debug.colors.fresh"))
     elif ttl >= 2:
@@ -64,7 +52,7 @@ def ttl_color(ttl):
     else:
         return tuple(cfg.get("debug.colors.dying"))
 
-def ttl_label(ttl, source="S"):
+def _ttl_label(ttl, source="S"):
     return f"TTL={ttl} [{source}]"
 
 # ═══════════════════════════════════════════════════════
@@ -280,7 +268,7 @@ def _cost_fallback(masks_np, new_rects):
     cost = np.zeros((n, m), dtype=np.float32)
     for i, rect in enumerate(rects_masks):
         for j, det in enumerate(new_rects):
-            cost[i, j] = center_distance(rect, det)
+            cost[i, j] = _center_distance(rect, det)
     return cost
 
 
@@ -305,7 +293,7 @@ def _apply_threshold(cost_value, mode, iou_thresh, dist_thresh):
         return (1.0 - cost_value) >= iou_thresh
     return cost_value <= dist_thresh
 
-def match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh):
+def _match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh):
     """
     Matching hongrois basé sur IoU ou distance selon config.
     Reçoit cost + résultat linear_sum_assignment déjà calculés.
@@ -329,12 +317,12 @@ def match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh)
 
     return matched, unmatched_masks, unmatched_dets
 
-def match_hungarian_ambiguity(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh, ambiguity_ratio):
+def _match_hungarian_ambiguity(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh, ambiguity_ratio):
     """
     Matching hongrois avec rejet des matchs ambigus (ratio top-2).
     Reçoit cost + résultat linear_sum_assignment déjà calculés.
     """
-    matched, unmatched_masks, unmatched_dets = match_hungarian(
+    matched, unmatched_masks, unmatched_dets = _match_hungarian(
         cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh
     )
 
@@ -399,9 +387,9 @@ def match_and_update(active_masks, new_rects, detect_ts, source, now=None):
 
     # ── sélection branche ─────────────────────────────
     if use_ambiguity:
-        matched, unmatched_masks, unmatched_dets = match_hungarian_ambiguity(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh, ambiguity_ratio)
+        matched, unmatched_masks, unmatched_dets = _match_hungarian_ambiguity(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh, ambiguity_ratio)
     else:
-        matched, unmatched_masks, unmatched_dets = match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh)
+        matched, unmatched_masks, unmatched_dets = _match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh)
 
     # ── update masques matchés ─────────────────────────
     for mask_idx, det_idx in matched:
@@ -512,8 +500,8 @@ def compute_jitter(active_masks, rects_before):
     for m in active_masks:
         uid = m.uid
         if uid in rects_before:
-            jitter_c_sum += center_distance(rects_before[uid], m.rect)
-            jitter_4_sum += corners_distance(rects_before[uid], m.rect)
+            jitter_c_sum += _center_distance(rects_before[uid], m.rect)
+            jitter_4_sum += _corners_distance(rects_before[uid], m.rect)
             jitter_n += 1
         else:
             masks_created += 1
@@ -542,9 +530,9 @@ def draw_debug(frame, active_masks):
     """Dessine les rectangles et labels TTL sur le frame (in-place)."""
     for m in active_masks:
         x, y, w, h = (int(v) for v in m.rect)
-        color = ttl_color(m.ttl)
+        color = _ttl_color(m.ttl)
         source = m.last_source[0].upper() if m.last_source else "?"
-        label  = ttl_label(m.ttl, source)
+        label  = _ttl_label(m.ttl, source)
         cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
         cv2.putText(
             frame, label,

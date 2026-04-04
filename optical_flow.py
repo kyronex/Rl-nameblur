@@ -12,7 +12,7 @@ _LK_PARAMS = dict(
 _ROI_PAD = 40
 
 
-def rect_to_points(rect):
+def _rect_to_points(rect):
     """
     Convertit (x, y, w, h) en 4 coins float32 pour Lucas-Kanade.
     Retourne shape (4, 1, 2).
@@ -59,7 +59,7 @@ def of_track(prev_gray, curr_gray, rect):
         return rect, False
 
     # ── Points en coordonnées locales ──
-    pts = rect_to_points((x - cx0, y - cy0, w, h))
+    pts = _rect_to_points((x - cx0, y - cy0, w, h))
 
     new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
         prev_crop, curr_crop, pts, None, **_LK_PARAMS

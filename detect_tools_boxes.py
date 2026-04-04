@@ -9,8 +9,8 @@ from box import Box
 
 log = logging.getLogger("detect_tools_boxes")
 
-# ── extract_raw_boxes ──
-def extract_raw_boxes(masked, params):
+# ── _extract_raw_boxes ──
+def _extract_raw_boxes(masked, params):
     """Contours → bounding boxes brutes (filtre min_area seulement)."""
     contours, _ = cv2.findContours(masked, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes = []
@@ -20,8 +20,8 @@ def extract_raw_boxes(masked, params):
             boxes.append(Box(x, y, w, h))
     return boxes
 
-# ── adjust_boxes ──
-def adjust_boxes(boxes, mask_white, h_img, params):
+# ── _adjust_boxes ──
+def _adjust_boxes(boxes, mask_white, h_img, params):
     min_blob = params.get("adjust_min_blob_area", 10)
     expand_search = params.get("expand_search_px", 2)
     retract_density = 0.25
@@ -83,8 +83,8 @@ def adjust_boxes(boxes, mask_white, h_img, params):
         result.append(box.copy_with(x=nx, y=ny, w=nw, h=nh))
     return result
 
-# ── merge_nearby_horizontal ──
-def merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
+# ── _merge_nearby_horizontal ──
+def _merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
     """Fusionne les boxes proches horizontalement et alignées en Y."""
     if not boxes:
         return []
@@ -124,8 +124,8 @@ def merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
         merged.append(Box(x1, y1, x2 - x1, y2 - y1, scores=merged_scores))
     return merged
 
-# ── split_wide_boxes ──
-def split_wide_boxes(boxes, mask_white, params):
+# ── _split_wide_boxes ──
+def _split_wide_boxes(boxes, mask_white, params):
     """Fractionne les boîtes trop larges en sous-blobs via projection verticale."""
     min_valley_w = params.get("min_valley_width", 8)
     max_density  = params.get("max_valley_density", 0.10)
@@ -178,10 +178,10 @@ def split_wide_boxes(boxes, mask_white, params):
             result.append(box.copy_with(x=bx + fx + rx, y=by + ry, w=rw, h=rh))
     return result
 
-# ── validate_text_v2 ──
+# ── _validate_text_v2 ──
 _EMPTY_PROJ = {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "proj_score": 0.0}
 
-def projection_fill_score(crop):
+def _projection_fill_score(crop):
     if crop.size == 0:
         return _EMPTY_PROJ
 
@@ -228,7 +228,7 @@ def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
     Calcule cc (nombre de CC) et hreg (régularité des hauteurs)
     à partir des stats CC déjà connues, filtrées sur la bbox du groupe.
 
-    Remplace : connectedComponentsWithStats(crop) dans has_text
+    Remplace : connectedComponentsWithStats(crop) dans _has_text
     """
     # ── Filtrer les CC dont le centre tombe dans la bbox du groupe ──
     cx = cc_stats[:, 0] + cc_stats[:, 2] * 0.5   # center_x = left + width/2
@@ -253,9 +253,9 @@ def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
 
     return cc, hreg, mean_h
 
-def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20,min_proj_score=0.10):
+def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20,min_proj_score=0.10):
     """
-    Même logique que has_text, SANS connectedComponentsWithStats interne.
+    Même logique que _has_text, SANS connectedComponentsWithStats interne.
     Les métriques cc/hreg viennent de cc_stats (pré-calculé).
     """
     crop = roi[y1:y2, x1:x2]
@@ -309,12 +309,12 @@ def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transi
 
     # ── 6. CC + hreg ── ★ CHANGEMENT PRINCIPAL ★
     # v1 : faisait connectedComponentsWithStats(crop) ici → COÛTEUX
-    # v2 : lookup dans cc_stats déjà calculé par validate_text
+    # v2 : lookup dans cc_stats déjà calculé par _validate_text
     cc, hreg, _ = _cc_metrics_from_stats(cc_stats, x1, y1, x2, y2)
 
     # ── 7. Projection fill score ──
     # IDENTIQUE à v1
-    pf = projection_fill_score(crop)
+    pf = _projection_fill_score(crop)
 
     # ── 8. Score final ── IDENTIQUE à v1
     s_td   = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
@@ -340,7 +340,7 @@ def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transi
 
     return score > min_proj_score, scores
 
-def sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score):
+def _sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score):
     validated = []
     n = len(cc_stats)
     if n == 0:
@@ -354,7 +354,7 @@ def sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min
     gy1 = int(all_y1[0])
     gx2 = int(cc_x2[0])
     gy2 = int(cc_y2[0])
-    g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, cc_stats, min_text_fill, 2, min_transition, min_proj_score)
+    g_ok, g_scores = _has_text(roi, gx1, gy1, gx2, gy2, cc_stats, min_text_fill, 2, min_transition, min_proj_score)
 
     for i in range(1, n):
         cx1 = int(all_x1[i])
@@ -367,7 +367,7 @@ def sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min
         nx2 = max(gx2, cx2)
         ny2 = max(gy2, cy2)
 
-        valid, scores = has_text(roi, nx1, ny1, nx2, ny2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
+        valid, scores = _has_text(roi, nx1, ny1, nx2, ny2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
 
         if valid:
             gx1, gy1, gx2, gy2 = nx1, ny1, nx2, ny2
@@ -376,14 +376,14 @@ def sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min
             if g_ok:
                 validated.append((gx1, gy1, gx2, gy2, g_scores))
             gx1, gy1, gx2, gy2 = cx1, cy1, cx2, cy2
-            g_ok, g_scores = has_text(roi, gx1, gy1, gx2, gy2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
+            g_ok, g_scores = _has_text(roi, gx1, gy1, gx2, gy2, cc_stats,min_text_fill, 2, min_transition, min_proj_score)
 
     if g_ok:
         validated.append((gx1, gy1, gx2, gy2, g_scores))
 
     return validated
 
-def validate_text(boxes, mask_white, params, kernels):
+def _validate_text(boxes, mask_white, params, kernels):
     result = []
     min_blob_area  = params["refine_min_blob_area"]
     min_text_fill  = params["min_text_fill"]
@@ -422,7 +422,7 @@ def validate_text(boxes, mask_white, params, kernels):
         cc_x2 = cc_stats[:, cv2.CC_STAT_LEFT] + cc_stats[:, cv2.CC_STAT_WIDTH]
         cc_y2 = cc_stats[:, cv2.CC_STAT_TOP]  + cc_stats[:, cv2.CC_STAT_HEIGHT]
 
-        groups = sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score)
+        groups = _sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score)
 
         for (gx1, gy1, gx2, gy2, scores) in groups:
             new_box = box.copy_with(x=bx + gx1, y=by + gy1, w=gx2 - gx1, h=gy2 - gy1)
@@ -431,8 +431,8 @@ def validate_text(boxes, mask_white, params, kernels):
 
     return result
 
-# ── validate_background ──
-def validate_background(boxes, mask_white, rgb, params):
+# ── _validate_background ──
+def _validate_background(boxes, mask_white, rgb, params):
     var_norm        = params.get("var_norm", 200.0)
     coherent_delta  = params.get("coherent_delta", 33)
     min_score       = params.get("min_bg_score", 0.5)
@@ -441,7 +441,7 @@ def validate_background(boxes, mask_white, rgb, params):
     max_hue_bins    = params.get("max_hue_bins", 3)
     min_hue_score   = params.get("min_hue_score", 0.1)
 
-    #log.debug(f"[validate_background] nb_boxes={len(boxes)} var_norm={var_norm} "f"coherent_delta={coherent_delta} min_score={min_score} "f"hue_bin_size={hue_bin_size} max_hue_bins={max_hue_bins}"f"min_hue_score={min_hue_score}")
+    #log.debug(f"[_validate_background] nb_boxes={len(boxes)} var_norm={var_norm} "f"coherent_delta={coherent_delta} min_score={min_score} "f"hue_bin_size={hue_bin_size} max_hue_bins={max_hue_bins}"f"min_hue_score={min_hue_score}")
 
     result = []
     for box in boxes:
@@ -503,8 +503,8 @@ def validate_background(boxes, mask_white, rgb, params):
             result.append(new_box)
     return result
 
-# ── resolve_overlaps ──
-def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
+# ── _resolve_overlaps ──
+def _edge_confidence(mask_white, x, y, w, h, img_h, img_w):
     """
     Score de confiance d'une box basé sur le contraste
     bande intérieure (2px) vs bande extérieure (2px) sur 4 bords.
@@ -555,7 +555,7 @@ def edge_confidence(mask_white, x, y, w, h, img_h, img_w):
         return 0.0
     return total / count
 
-def resolve_overlaps(boxes, mask_white, params):
+def _resolve_overlaps(boxes, mask_white, params):
     if len(boxes) < 2:
         return list(boxes)
     img_h, img_w = mask_white.shape[:2]
@@ -563,7 +563,7 @@ def resolve_overlaps(boxes, mask_white, params):
     scored = []
     for box in boxes:
         x, y, w, h = box.rect
-        score = edge_confidence(mask_white, x, y, w, h, img_h, img_w)
+        score = _edge_confidence(mask_white, x, y, w, h, img_h, img_w)
         scored.append((box, score))
     # ── 2. Trier par score décroissant ──
     scored.sort(key=lambda s: (s[1], s[0].w * s[0].h), reverse=True)
@@ -603,8 +603,8 @@ def resolve_overlaps(boxes, mask_white, params):
             result.append(box.copy_with(x=cx, y=cy, w=cw, h=ch))
     return result
 
-# ── tight_crop_white ──
-def tight_crop_white(boxes, mask_white):
+# ── _tight_crop_white ──
+def _tight_crop_white(boxes, mask_white):
     """Recadre chaque box au bounding-box réel des pixels blancs qu'elle contient."""
     result = []
     for box in boxes:
@@ -617,16 +617,16 @@ def tight_crop_white(boxes, mask_white):
         result.append(box.copy_with(x=x + rx, y=y + ry, w=rw, h=rh))
     return result
 
-# ── adjust_resolve ──
-def adjust_resolve(boxes, mask_white, h_img, params, resolve=True):
-    adjusted = adjust_boxes(boxes, mask_white, h_img, params)
+# ── _adjust_resolve ──
+def _adjust_resolve(boxes, mask_white, h_img, params, resolve=True):
+    adjusted = _adjust_boxes(boxes, mask_white, h_img, params)
     if resolve:
-        #cropped  = tight_crop_white(resolved, mask_white)
-        adjusted = resolve_overlaps(adjusted, mask_white, params)
+        #cropped  = _tight_crop_white(resolved, mask_white)
+        adjusted = _resolve_overlaps(adjusted, mask_white, params)
     return adjusted
 
-# ── expand_plates ──
-def expand_plates(boxes, img):
+# ── _expand_plates ──
+def _expand_plates(boxes, img):
     img_h, img_w = img.shape[:2]
     expanded = []
     for box in boxes:
@@ -638,8 +638,8 @@ def expand_plates(boxes, img):
         expanded.append(box.copy_with(x=nx, y=ny, w=nx2 - nx, h=ny2 - ny))
     return expanded
 
-# ── filter_geometry ──
-def filter_geometry(boxes, masked, params):
+# ── _filter_geometry ──
+def _filter_geometry(boxes, masked, params):
     """Filtre ratio/area/fill sur des boxes (déjà mergées)."""
     min_area   = params["min_area"]
     max_area   = params["max_area"]
@@ -653,28 +653,28 @@ def filter_geometry(boxes, masked, params):
     plates = []
     for box in boxes:
         x, y, w, h = box.rect
-        #log.info(f"filter_geometry: x={x} y={y} w={w} h={h}")
+        #log.info(f"_filter_geometry: x={x} y={y} w={w} h={h}")
         if w < min_width or h < min_height:
-            #log.info(f"filter_geometry: w={w} < min_width={min_width} or h={h} < min_height={min_height}")
+            #log.info(f"_filter_geometry: w={w} < min_width={min_width} or h={h} < min_height={min_height}")
             continue
         area = w * h
         if area < min_area or area > max_area:
-            #log.info(f"filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
+            #log.info(f"_filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
             continue
         ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
 
         if ratio < min_ratio or ratio > max_ratio:
-            #log.info(f"filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
+            #log.info(f"_filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
             continue
         fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
         if fill < min_fill or fill > max_fill:
-            #log.info(f"filter_geometry: min_fill={min_fill} fill={fill}  max_fill={max_fill}")
+            #log.info(f"_filter_geometry: min_fill={min_fill} fill={fill}  max_fill={max_fill}")
             continue
         plates.append(box)
     return plates
 
-# ── filter_horizontal_alignment ──
-def filter_horizontal_alignment(boxes, mask_white, params):
+# ── _filter_horizontal_alignment ──
+def _filter_horizontal_alignment(boxes, mask_white, params):
     max_y_std_ratio = params.get("align_max_y_std_ratio", 0.20)
     min_cols        = params.get("align_min_cols", 3)
     min_col_fill    = params.get("align_min_col_fill", 0.15)
@@ -718,8 +718,8 @@ def filter_horizontal_alignment(boxes, mask_white, params):
 
     return kept
 
-# ── filter_horizontal_bands ──
-def filter_horizontal_bands(boxes, mask_white, params):
+# ── _filter_horizontal_bands ──
+def _filter_horizontal_bands(boxes, mask_white, params):
     min_fill  = params.get("bands_min_fill", 0.15)
     gap_fill  = params.get("bands_gap_fill", 0.08)
     max_bands = params.get("bands_max_bands", 2)
@@ -760,8 +760,8 @@ def filter_horizontal_bands(boxes, mask_white, params):
 
     return kept
 
-# ── filter_perspective_gradient ──
-def filter_perspective_gradient(boxes, mask_white, params):
+# ── _filter_perspective_gradient ──
+def _filter_perspective_gradient(boxes, mask_white, params):
     n_zones        = params.get("n_zones", 4)
     min_drop_ratio = params.get("min_drop_ratio", 0.50)
     min_zone_width = params.get("min_zone_width", 8)
@@ -819,8 +819,8 @@ def filter_perspective_gradient(boxes, mask_white, params):
 
     return kept
 
-# ── make_template ──
-def make_template( boxes, frame):
+# ── _make_template ──
+def _make_template( boxes, frame):
     x, y, w, h = boxes
     crop = frame[y:y+h, x:x+w]
     if len(crop.shape) == 3:
@@ -832,40 +832,40 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels):
     plates = []
 
     log.debug("boxes")
-    boxes = extract_raw_boxes(masked, params)
+    boxes = _extract_raw_boxes(masked, params)
     log.debug("boxes_ar")
-    boxes_ar = adjust_resolve(boxes, mask_white, h_img, params)
-    log.debug("filter_geometry")
-    geometryed = filter_geometry(boxes_ar, masked, params)
+    boxes_ar = _adjust_resolve(boxes, mask_white, h_img, params)
+    log.debug("_filter_geometry")
+    geometryed = _filter_geometry(boxes_ar, masked, params)
 
-    log.debug("split_wide_boxes")
-    split = split_wide_boxes(geometryed, mask_white, params)
+    log.debug("_split_wide_boxes")
+    split = _split_wide_boxes(geometryed, mask_white, params)
     log.debug("split_ar")
-    split_ar = adjust_resolve(split, mask_white, h_img, params, resolve=False)
+    split_ar = _adjust_resolve(split, mask_white, h_img, params, resolve=False)
 
-    log.debug("validate_background")
-    validated_b = validate_background(split_ar,mask_white, rgb, params)
+    log.debug("_validate_background")
+    validated_b = _validate_background(split_ar,mask_white, rgb, params)
 
-    log.debug("validate_text")
-    validated_t = validate_text(validated_b, mask_white, params, kernels)
-    log.debug("merge_nearby_horizontal")
-    merge = merge_nearby_horizontal(validated_t, params["max_gap_x"],params["max_gap_y"])
+    log.debug("_validate_text")
+    validated_t = _validate_text(validated_b, mask_white, params, kernels)
+    log.debug("_merge_nearby_horizontal")
+    merge = _merge_nearby_horizontal(validated_t, params["max_gap_x"],params["max_gap_y"])
 
     log.debug("merge_ar")
-    merge_ar = adjust_resolve(merge, mask_white, h_img, params, resolve=False)
-    log.debug("expand_plates")
-    expanded = expand_plates(merge_ar,rgb)
+    merge_ar = _adjust_resolve(merge, mask_white, h_img, params, resolve=False)
+    log.debug("_expand_plates")
+    expanded = _expand_plates(merge_ar,rgb)
 
-    log.debug("filter_horizontal_bands")
-    banded = filter_horizontal_bands(expanded, mask_white, params)
-    log.debug("filter_horizontal_alignment")
-    aligned = filter_horizontal_alignment(banded, mask_white, params)
-    log.debug("filter_perspective_gradient")
-    plates = filter_perspective_gradient(aligned, mask_white, params)
+    log.debug("_filter_horizontal_bands")
+    banded = _filter_horizontal_bands(expanded, mask_white, params)
+    log.debug("_filter_horizontal_alignment")
+    aligned = _filter_horizontal_alignment(banded, mask_white, params)
+    log.debug("_filter_perspective_gradient")
+    plates = _filter_perspective_gradient(aligned, mask_white, params)
 
-    log.debug("make_template")
+    log.debug("_make_template")
     for box in plates:
-        box.template = make_template(box.rect, rgb)
+        box.template = _make_template(box.rect, rgb)
 
     return plates
 
@@ -882,28 +882,27 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels):
     log.info("── process_channel breakdown ──")
 
     # ── PHASE 1 : extraction + filtre géométrique immédiat (quasi gratuit) ──
-    boxes        = _t("extract_raw_boxes",       extract_raw_boxes, masked, params)
-    boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, boxes, mask_white, h_img, params)
-    geometryed   = _t("filter_geometry",         filter_geometry, boxes_ar, masked, params)
+    boxes        = _t("_extract_raw_boxes",       _extract_raw_boxes, masked, params)
+    boxes_ar     = _t("_adjust_resolve_1",        _adjust_resolve, boxes, mask_white, h_img, params)
+    geometryed   = _t("_filter_geometry",         _filter_geometry, boxes_ar, masked, params)
 
     # ── PHASE 2 : ajustement sur le set réduit ──
-    #boxes_ar     = _t("adjust_resolve_1",        adjust_resolve, geometryed, mask_white, h_img, params)
-    split        = _t("split_wide_boxes",        split_wide_boxes, geometryed, mask_white, params)
-    split_ar     = _t("adjust_resolve_2",        adjust_resolve, split, mask_white, h_img, params, resolve=False)
+    split        = _t("_split_wide_boxes",        _split_wide_boxes, geometryed, mask_white, params)
+    split_ar     = _t("_adjust_resolve_2",        _adjust_resolve, split, mask_white, h_img, params, resolve=False)
 
-    # ── PHASE 3 : veto hue rapide AVANT validate_text (le plus coûteux) ──
-    validated_b  = _t("validate_background",     validate_background, split_ar, mask_white, rgb, params)
+    # ── PHASE 3 : veto hue rapide AVANT _validate_text (le plus coûteux) ──
+    validated_b  = _t("_validate_background",     _validate_background, split_ar, mask_white, rgb, params)
 
-    # ── PHASE 4 : validate_text sur set déjà filtré ──
-    validated_t  = _t("validate_text",           validate_text, validated_b, mask_white, params, kernels)
-    merge        = _t("merge_nearby",            merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
+    # ── PHASE 4 : _validate_text sur set déjà filtré ──
+    validated_t  = _t("_validate_text",           _validate_text, validated_b, mask_white, params, kernels)
+    merge        = _t("_merge_nearby_horizontal",            _merge_nearby_horizontal, validated_t, params["max_gap_x"], params["max_gap_y"])
 
     # ── PHASE 5 : ajustement final + filtres fins ──
-    merge_ar     = _t("adjust_resolve_3",        adjust_resolve, merge, mask_white, h_img, params, resolve=False)
-    expanded     = _t("expand_plates",           expand_plates, merge_ar, rgb)
-    banded       = _t("filter_horizontal_bands", filter_horizontal_bands, expanded, mask_white, params)
-    aligned      = _t("filter_horizontal_alignment", filter_horizontal_alignment, banded, mask_white, params)
-    plates       = _t("filter_perspective",      filter_perspective_gradient, aligned, mask_white, params)
+    merge_ar     = _t("_adjust_resolve_3",        _adjust_resolve, merge, mask_white, h_img, params, resolve=False)
+    expanded     = _t("_expand_plates",           _expand_plates, merge_ar, rgb)
+    banded       = _t("_filter_horizontal_bands", _filter_horizontal_bands, expanded, mask_white, params)
+    aligned      = _t("_filter_horizontal_alignment", _filter_horizontal_alignment, banded, mask_white, params)
+    plates       = _t("_filter_perspective_gradient",      _filter_perspective_gradient, aligned, mask_white, params)
 
     """
     screen = rgb.copy()
@@ -913,7 +912,7 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels):
     cv2.waitKey(0)
     """
     for box in plates:
-        box.template = make_template(box.rect, rgb)
+        box.template = _make_template(box.rect, rgb)
 
     return plates
 

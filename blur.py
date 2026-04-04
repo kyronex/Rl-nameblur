@@ -17,7 +17,7 @@ def _pixelate_roi(roi, pixel_size):
     small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
     cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST, dst=roi)
 
-def snap_to_grid(x, y, w, h, grid=8):
+def _snap_to_grid(x, y, w, h, grid=8):
     """Aligne le rectangle sur une grille fixe pour éviter le scintillement."""
     sx = (x // grid) * grid
     sy = (y // grid) * grid
@@ -54,7 +54,7 @@ def apply_blur(frame, plates):
 
         # ── Snap grille (anti-scintillement pixelate/box) ──
         if grid > 1 :
-            x, y, w, h = snap_to_grid(x, y, w, h, grid)
+            x, y, w, h = _snap_to_grid(x, y, w, h, grid)
 
         # ── Clamp ──
         x1 = max(0, x)
