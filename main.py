@@ -1,4 +1,4 @@
-# main.py —v12 (main allégé)
+# main.py — v13 (migration Mask dataclass)
 import logging
 from config import cfg
 
@@ -15,14 +15,14 @@ import time
 import numpy as np
 import pyvirtualcam
 
-from capture_thread   import CaptureThread
-from detect_thread    import DetectThread
+from capture_thread    import CaptureThread
+from detect_thread     import DetectThread
 from fast_track_thread import FastTrackThread
-from send_thread      import SendThread
-from blur             import apply_blur
-from bench            import bench
-from csv_bench        import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
-from mask_manager     import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss, increment_fast_miss
+from send_thread       import SendThread
+from blur              import apply_blur
+from bench             import bench
+from csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
+from mask_manager      import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss, increment_fast_miss
 
 log = logging.getLogger("main")
 
@@ -80,7 +80,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             now = time.perf_counter()
 
             # ── snapshot masques avant pour jitter ──
-            rects_before = {m['uid']: m['rect'] for m in active_masks}
+            rects_before = {m.uid: m.rect for m in active_masks}
 
             # ── 1. Capture (NON BLOQUANT) ──
             with bench.timer("capture_wait"):
@@ -115,7 +115,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     row_slow_updated     = 1
 
                     _read_ts = time.perf_counter()
-                    row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)if detected_frame_ts else 0.0)
+                    row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)
+                                      if detected_frame_ts else 0.0)
 
                     padded = [
                         pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -130,9 +131,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     for i, box in enumerate(new_plates):
                         if uids[i] is not None:
                             for m in active_masks:
-                                if m['uid'] == uids[i]:
-                                    m['confidence'] = box.confidence
-                                    m['template']   = box.template
+                                if m.uid == uids[i]:
+                                    m.confidence = box.confidence
+                                    m.template   = box.template
+                                    m.scores     = box.scores
                                     break
                             updated_uids.add(uids[i])
 
@@ -153,7 +155,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                             if new_rect is not None:
                                 found_uids.add(mask_uid)
                                 for m in active_masks:
-                                    if m['uid'] == mask_uid:
+                                    if m.uid == mask_uid:
                                         padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
                                         update_mask(m, padded, fast_ts, source="fast")
                                         updated_uids.add(mask_uid)
@@ -171,13 +173,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             # ── 5. Cap max masques ──
             max_masks = cfg.get("masks.max_masks")
             if len(active_masks) > max_masks:
-                active_masks.sort(key=lambda m: m['ttl'], reverse=True)
+                active_masks.sort(key=lambda m: m.ttl, reverse=True)
                 active_masks = active_masks[:max_masks]
 
             # ── 6. Blur / debug draw ──
             blur_zones = [
-                (int(m['rect'][0]), int(m['rect'][1]),
-                 int(m['rect'][2]), int(m['rect'][3]))
+                (int(m.rect[0]), int(m.rect[1]),
+                 int(m.rect[2]), int(m.rect[3]))
                 for m in active_masks
             ]
 
@@ -234,21 +236,21 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 })
 
                 for m in active_masks:
-                    r = m['rect']
+                    #r = m['rect']
                     csv_write_mask({
                         "timestamp":       round(now, 6),
                         "frame_id":        frame_id,
-                        "uid":             m['uid'],
-                        "x":               int(r[0]),
-                        "y":               int(r[1]),
-                        "w":               int(r[2]),
-                        "h":               int(r[3]),
-                        "last_source":     m['last_source'],
-                        "confidence":      round(m['confidence'], 4),
-                        "ttl":             round(m['ttl'], 3),
-                        "fast_miss_count": m['fast_miss_count'],
-                        "vx":              round(m['vx'], 3),
-                        "vy":              round(m['vy'], 3),
+                        "uid":             m.uid,
+                        "x":               int(m.rect[0]),
+                        "y":               int(m.rect[1]),
+                        "w":               int(m.rect[2]),
+                        "h":               int(m.rect[3]),
+                        "last_source":     m.last_source,
+                        "confidence":      round(m.confidence, 4),
+                        "ttl":             round(m.ttl, 3),
+                        "fast_miss_count": m.fast_miss_count,
+                        "vx":              round(m.vx, 3),
+                        "vy":              round(m.vy, 3),
                     })
 
             # ── 9. FPS print toutes les 2s ──

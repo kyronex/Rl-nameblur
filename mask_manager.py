@@ -1,9 +1,10 @@
-# mask_manager.py — v1
+# mask_manager.py — v2 (migration Mask dataclass)
 import logging
 import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from config import cfg
+from mask import Mask
 
 log = logging.getLogger("mask_manager")
 
@@ -75,19 +76,19 @@ def _new_mask(rect, detect_ts, now=None):
     uid = _next_mask_id
     _next_mask_id += 1
     creation_ts = max(now, detect_ts) if now is not None else detect_ts
-    return {
-        'uid':               uid,
-        'rect':              rect,
-        'last_detected_rect': rect,
-        'last_detected_ts':  creation_ts,
-        'last_source':       'new',
-        'ttl':               cfg.get("masks.ttl_max"),
-        'vx':                0.0,
-        'vy':                0.0,
-        'confidence':        0.0,
-        'template':          None,
-        'fast_miss_count':   0,
-    }
+    return Mask(
+        uid=uid,
+        rect=rect,
+        last_detected_rect=rect,
+        last_detected_ts=creation_ts,
+        last_source="new",
+        ttl=cfg.get("masks.ttl_max"),
+        vx=0.0,
+        vy=0.0,
+        confidence=0.0,
+        template=None,
+        fast_miss_count=0,
+    )
 
 
 def update_mask(mask, new_rect, detect_ts, source):
@@ -96,28 +97,28 @@ def update_mask(mask, new_rect, detect_ts, source):
     dead_zone    = cfg.get("masks.update_mask.dead_zone", 3)
     vel_dz       = cfg.get("masks.update_mask.velocity_dead_zone", 10)
 
-    dt_slow_max      = cfg.get("masks.update_mask.dt_slow_max", 500) / 1000.0   # ms → s
+    dt_slow_max      = cfg.get("masks.update_mask.dt_slow_max", 500) / 1000.0    # ms → s
     teleport_thresh  = cfg.get("masks.update_mask.teleport_thresh", 300)         # px
     vx_max           = cfg.get("masks.update_mask.vx_max", 4000)                 # px/s
     vy_max           = cfg.get("masks.update_mask.vy_max", 2000)                 # px/s
 
     nx, ny, nw, nh = new_rect
-    ox, oy, ow, oh = mask['rect']
+    ox, oy, ow, oh = mask.rect
 
     # dead zone : pas de mouvement significatif
     if (abs(nx-ox) < dead_zone and abs(ny-oy) < dead_zone
             and abs(nw-ow) < dead_zone and abs(nh-oh) < dead_zone):
         if source == "slow":
-            mask['ttl'] = cfg.get("masks.ttl_max")
-        mask['fast_miss_count'] = 0
-        mask['last_detected_ts'] = detect_ts
-        mask['last_source'] = source
+            mask.ttl = cfg.get("masks.ttl_max")
+        mask.fast_miss_count = 0
+        mask.last_detected_ts = detect_ts
+        mask.last_source = source
         return
 
-     # ── Fix 3 : vélocité calculée UNIQUEMENT sur base Slow ──
+    # ── Fix 3 : vélocité calculée UNIQUEMENT sur base Slow ──
     if source == "slow":
-        lx, ly, _, _ = mask['last_detected_rect']
-        dt = detect_ts - mask['last_detected_ts']
+        lx, ly, _, _ = mask.last_detected_rect
+        dt = detect_ts - mask.last_detected_ts
 
         if dt > 0.001:
             delta_x = nx - lx
@@ -126,42 +127,42 @@ def update_mask(mask, new_rect, detect_ts, source):
             # ── Amendement B : reset si dt trop grand (cut caméra) ──
             if dt > dt_slow_max:
                 log.debug(
-                    f"uid={mask['uid']} Amend-B reset vx/vy "
+                    f"uid={mask.uid} Amend-B reset vx/vy "
                     f"dt={dt*1000:.0f}ms > dt_slow_max={dt_slow_max*1000:.0f}ms"
                 )
-                mask['vx'] = 0.0
-                mask['vy'] = 0.0
+                mask.vx = 0.0
+                mask.vy = 0.0
 
             # ── Amendement C : reset si saut spatial (téléportation) ──
             elif abs(delta_x) > teleport_thresh or abs(delta_y) > teleport_thresh:
                 log.debug(
-                    f"uid={mask['uid']} Amend-C reset vx/vy "
+                    f"uid={mask.uid} Amend-C reset vx/vy "
                     f"dx={delta_x:.0f} dy={delta_y:.0f} > thresh={teleport_thresh}"
                 )
-                mask['vx'] = 0.0
-                mask['vy'] = 0.0
+                mask.vx = 0.0
+                mask.vy = 0.0
 
             else:
                 raw_vx = 0.0 if abs(delta_x) < vel_dz else delta_x / dt
                 raw_vy = 0.0 if abs(delta_y) < vel_dz else delta_y / dt
 
                 # ── Amendement A : borne vx/vy max ──
-                mask['vx'] = max(-vx_max, min(raw_vx, vx_max))
-                mask['vy'] = max(-vy_max, min(raw_vy, vy_max))
+                mask.vx = max(-vx_max, min(raw_vx, vx_max))
+                mask.vy = max(-vy_max, min(raw_vy, vy_max))
 
-                if raw_vx != mask['vx'] or raw_vy != mask['vy']:
+                if raw_vx != mask.vx or raw_vy != mask.vy:
                     log.debug(
-                        f"uid={mask['uid']} Amend-A clamp "
-                        f"vx {raw_vx:.0f}→{mask['vx']:.0f} "
-                        f"vy {raw_vy:.0f}→{mask['vy']:.0f}"
+                        f"uid={mask.uid} Amend-A clamp "
+                        f"vx {raw_vx:.0f}→{mask.vx:.0f} "
+                        f"vy {raw_vy:.0f}→{mask.vy:.0f}"
                     )
 
         # ── Fix 3 : last_detected_rect mis à jour Slow seulement ──
-        mask['last_detected_rect'] = new_rect
+        mask.last_detected_rect = new_rect
 
     # EMA
     a = smooth_alpha
-    mask['rect'] = (
+    mask.rect = (
         ox + a*(nx-ox),
         oy + a*(ny-oy),
         ow + a*(nw-ow),
@@ -169,11 +170,11 @@ def update_mask(mask, new_rect, detect_ts, source):
     )
 
     if source == "slow":
-        mask['ttl'] = cfg.get("masks.ttl_max")
+        mask.ttl = cfg.get("masks.ttl_max")
 
-    mask['last_detected_ts']   = detect_ts
-    mask['last_source']        = source
-    mask['fast_miss_count']    = 0
+    mask.last_detected_ts   = detect_ts
+    mask.last_source        = source
+    mask.fast_miss_count    = 0
 
 def increment_fast_miss(active_masks, updated_uids):
     """
@@ -183,8 +184,8 @@ def increment_fast_miss(active_masks, updated_uids):
     NE décrémente PAS TTL — c'est le rôle exclusif de kill_fast_miss.
     """
     for m in active_masks:
-        if m['uid'] not in updated_uids:
-            m['fast_miss_count'] += 1
+        if m.uid not in updated_uids:
+            m.fast_miss_count += 1
 
 # ═══════════════════════════════════════════════════════
 #  MATCHING / HONGROIS
@@ -194,9 +195,9 @@ def increment_fast_miss(active_masks, updated_uids):
 def _extract_centers_masks(active_masks):
     return np.array(
         [
-            (mask['rect'][0] + mask['rect'][2] / 2.0,
-             mask['rect'][1] + mask['rect'][3] / 2.0)
-            for mask in active_masks
+            (m.rect[0] + m.rect[2] / 2.0,
+             m.rect[1] + m.rect[3] / 2.0)
+            for m in active_masks
         ],
         dtype=np.float32
     )
@@ -214,7 +215,7 @@ def _extract_centers_dets(new_rects):
 
 def _precompute_masks_np(active_masks):
     rects = np.array(
-        [mask['rect'] for mask in active_masks],
+        [m.rect for m in active_masks],
         dtype=np.float32
     )                                                      # (n, 4)
     centers = np.stack(
@@ -237,8 +238,8 @@ def _cost_distance(masks_np, new_rects):
 # ── Mode IoU ──────────────────────────────────────────────────────────────────
 
 def _cost_iou(active_masks, new_rects):
-    rects_masks = np.array([mask['rect'] for mask in active_masks],dtype=np.float32)                          # (n, 4)
-    rects_dets = np.array(new_rects,dtype=np.float32)                                                      # (m, 4)
+    rects_masks = np.array([m.rect for m in active_masks], dtype=np.float32)
+    rects_dets = np.array(new_rects, dtype=np.float32)                                                      # (m, 4)
 
     # Coins masks (n,)
     mx1 = rects_masks[:, 0]
@@ -309,7 +310,6 @@ def match_hungarian(cost, row_ind, col_ind, n, m, mode, iou_thresh, dist_thresh)
     Matching hongrois basé sur IoU ou distance selon config.
     Reçoit cost + résultat linear_sum_assignment déjà calculés.
     Retourne (matched_pairs, unmatched_masks, unmatched_detections)
-    matched_pairs : list[(mask_idx, det_idx)]
     """
     matched       = []
     matched_rows  = set()
@@ -373,8 +373,8 @@ def match_and_update(active_masks, new_rects, detect_ts, source, now=None):
         for det_idx in range(len(new_rects)):
             new_m = _new_mask(new_rects[det_idx], detect_ts, now=now)
             active_masks.append(new_m)
-            assigned_uids[det_idx] = new_m['uid']
-            log.debug(f"Nouveau masque uid={new_m['uid']} rect={new_rects[det_idx]}")
+            assigned_uids[det_idx] = new_m.uid
+            log.debug(f"Nouveau masque uid={new_m.uid} rect={new_rects[det_idx]}")
         return assigned_uids
 
     # ── paramètres config ──────────────────────────────
@@ -406,14 +406,14 @@ def match_and_update(active_masks, new_rects, detect_ts, source, now=None):
     # ── update masques matchés ─────────────────────────
     for mask_idx, det_idx in matched:
         update_mask(active_masks[mask_idx], new_rects[det_idx], detect_ts, source)
-        assigned_uids[det_idx] = active_masks[mask_idx]['uid']
+        assigned_uids[det_idx] = active_masks[mask_idx].uid
 
     # ── création nouveaux masques ──────────────────────
     for det_idx in unmatched_dets:
         new_m = _new_mask(new_rects[det_idx], detect_ts, now=now)
         active_masks.append(new_m)
-        assigned_uids[det_idx] = new_m['uid']
-        log.debug(f"Nouveau masque uid={new_m['uid']} rect={new_rects[det_idx]}")
+        assigned_uids[det_idx] = new_m.uid
+        log.debug(f"Nouveau masque uid={new_m.uid} rect={new_rects[det_idx]}")
 
     return assigned_uids
 
@@ -428,19 +428,19 @@ def predict_masks(active_masks, updated_uids, now, screen_w, screen_h):
     """
     count = 0
     for m in active_masks:
-        if m['uid'] in updated_uids:
+        if m.uid in updated_uids:
             continue
         count += 1
-        dt          = now - m['last_detected_ts']
+        dt          = now - m.last_detected_ts
         dt_capped   = min(dt, 0.10)
         damping     = max(0.0, 1.0 - dt * 2.0)
-        lx, ly, _, _= m['last_detected_rect']
-        w, h        = m['rect'][2], m['rect'][3]
-        x = lx + m['vx'] * dt_capped * damping
-        y = ly + m['vy'] * dt_capped * damping
+        lx, ly, _, _ = m.last_detected_rect
+        w, h        = m.rect[2], m.rect[3]
+        x = lx + m.vx * dt_capped * damping
+        y = ly + m.vy * dt_capped * damping
         x = max(0.0, min(x, screen_w - w))
         y = max(0.0, min(y, screen_h - h))
-        m['rect'] = (x, y, w, h)
+        m.rect = (x, y, w, h)
     return count
 
     """
@@ -481,13 +481,13 @@ def kill_fast_miss(active_masks, now):
 
     alive = []
     for m in active_masks:
-        time_since = now - m['last_detected_ts']
+        time_since = now - m.last_detected_ts
 
-        if m['fast_miss_count'] >= fast_miss_thresh:
-            continue                        # drop direct, pas de ttl -= 1
+        if m.fast_miss_count >= fast_miss_thresh:
+            continue
 
         if time_since >= fast_miss_timeout:
-            continue                        # drop direct, pas de ttl -= 1
+            continue
 
         alive.append(m)
 
@@ -502,7 +502,7 @@ def compute_jitter(active_masks, rects_before):
     Calcule le jitter centre/coins et compte créations/kills.
     Retourne (center_avg, corners_avg, masks_created, masks_killed).
     """
-    after_uids       = {m['uid'] for m in active_masks}
+    after_uids       = {m.uid for m in active_masks}
     jitter_c_sum     = 0.0
     jitter_4_sum     = 0.0
     jitter_n         = 0
@@ -510,10 +510,10 @@ def compute_jitter(active_masks, rects_before):
     masks_killed     = 0
 
     for m in active_masks:
-        uid = m['uid']
+        uid = m.uid
         if uid in rects_before:
-            jitter_c_sum += center_distance(rects_before[uid], m['rect'])
-            jitter_4_sum += corners_distance(rects_before[uid], m['rect'])
+            jitter_c_sum += center_distance(rects_before[uid], m.rect)
+            jitter_4_sum += corners_distance(rects_before[uid], m.rect)
             jitter_n += 1
         else:
             masks_created += 1
@@ -530,7 +530,7 @@ def compute_mask_age(active_masks, now):
     """Age moyen des masques en ms. Retourne 0.0 si aucun masque."""
     if not active_masks:
         return 0.0
-    return sum(max(0.0, now - m['last_detected_ts']) * 1000
+    return sum(max(0.0, now - m.last_detected_ts) * 1000
                for m in active_masks) / len(active_masks)
     #return sum((now - m['last_detected_ts']) * 1000 for m in active_masks) / len(active_masks)
 
@@ -541,10 +541,10 @@ def compute_mask_age(active_masks, now):
 def draw_debug(frame, active_masks):
     """Dessine les rectangles et labels TTL sur le frame (in-place)."""
     for m in active_masks:
-        x, y, w, h = (int(v) for v in m['rect'])
-        color = ttl_color(m['ttl'])
-        source = m.get('last_source', '?')[0].upper()
-        label  = ttl_label(m['ttl'], source)
+        x, y, w, h = (int(v) for v in m.rect)
+        color = ttl_color(m.ttl)
+        source = m.last_source[0].upper() if m.last_source else "?"
+        label  = ttl_label(m.ttl, source)
         cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
         cv2.putText(
             frame, label,
