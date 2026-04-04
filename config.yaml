@@ -10,15 +10,23 @@ screen:
 masks:
   ttl_max: 4
   max_masks: 8
-  smooth_alpha: 0.90
-  dead_zone: 10
-  velocity_dead_zone: 10
-  dt_slow_max: 500 # ms → s
-  teleport_thresh: 300 # px
-  vx_max: 4000 # px/s
-  vy_max: 2000 # px/s
-  fast_miss_threshold: 8 # N cycles fast ratés consécutifs avant TTL--
-  fast_miss_timeout_ms: 250 # X ms sans détection fast avant TTL--
+  update_mask:
+    smooth_alpha: 0.90
+    dead_zone: 10
+    velocity_dead_zone: 10
+    dt_slow_max: 500 # ms → s
+    teleport_thresh: 300 # px
+    vx_max: 4000 # px/s
+    vy_max: 2000 # px/s
+  kill_fast_miss:
+    fast_miss_threshold: 8 # N cycles fast ratés consécutifs avant TTL--
+    fast_miss_timeout_ms: 250 # X ms sans détection fast avant TTL--
+  _adaptive_margin:
+    margin_base: 10
+    margin_factor: 1.5
+    margin_min: 10
+    margin_max: 80
+
 predict:
   active: true # true ou false
 
@@ -43,6 +51,7 @@ debug:
   bench_enabled: true
   csv_per_frame: true # CSV A — 1 ligne par frame
   csv_aggregated: true # CSV B — 1 ligne par intervalle agrégé
+  csv_mask: true # CSV C — 1 ligne par mask
   csv_agg_interval: 2.0 # secondes entre chaque ligne agrégée
   log_level: "INFO" # DEBUG       , INFO, WARNING, ERROR
   draw: false # true ou false

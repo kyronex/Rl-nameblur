@@ -21,7 +21,7 @@ from fast_track_thread import FastTrackThread
 from send_thread      import SendThread
 from blur             import apply_blur
 from bench            import bench
-from csv_bench        import csv_open, csv_write_frame, csv_write_agg, csv_flush, csv_close
+from csv_bench        import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
 from mask_manager     import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss, increment_fast_miss
 
 log = logging.getLogger("main")
@@ -232,6 +232,24 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     "masks_killed":      masks_killed,
                     "loop_ms":           loop_ms,
                 })
+
+                for m in active_masks:
+                    r = m['rect']
+                    csv_write_mask({
+                        "timestamp":       round(now, 6),
+                        "frame_id":        frame_id,
+                        "uid":             m['uid'],
+                        "x":               int(r[0]),
+                        "y":               int(r[1]),
+                        "w":               int(r[2]),
+                        "h":               int(r[3]),
+                        "last_source":     m['last_source'],
+                        "confidence":      round(m['confidence'], 4),
+                        "ttl":             round(m['ttl'], 3),
+                        "fast_miss_count": m['fast_miss_count'],
+                        "vx":              round(m['vx'], 3),
+                        "vy":              round(m['vy'], 3),
+                    })
 
             # ── 9. FPS print toutes les 2s ──
             frame_count += 1

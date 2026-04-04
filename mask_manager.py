@@ -92,14 +92,14 @@ def _new_mask(rect, detect_ts, now=None):
 
 def update_mask(mask, new_rect, detect_ts, source):
     """Met à jour un masque existant (smooth EMA + vélocité)."""
-    smooth_alpha = cfg.get("masks.smooth_alpha", 1.0)
-    dead_zone    = cfg.get("masks.dead_zone", 3)
-    vel_dz       = cfg.get("masks.velocity_dead_zone", 10)
+    smooth_alpha = cfg.get("masks.update_mask.smooth_alpha", 1.0)
+    dead_zone    = cfg.get("masks.update_mask.dead_zone", 3)
+    vel_dz       = cfg.get("masks.update_mask.velocity_dead_zone", 10)
 
-    dt_slow_max      = cfg.get("masks.dt_slow_max", 500) / 1000.0   # ms → s
-    teleport_thresh  = cfg.get("masks.teleport_thresh", 300)         # px
-    vx_max           = cfg.get("masks.vx_max", 4000)                 # px/s
-    vy_max           = cfg.get("masks.vy_max", 2000)                 # px/s
+    dt_slow_max      = cfg.get("masks.update_mask.dt_slow_max", 500) / 1000.0   # ms → s
+    teleport_thresh  = cfg.get("masks.update_mask.teleport_thresh", 300)         # px
+    vx_max           = cfg.get("masks.update_mask.vx_max", 4000)                 # px/s
+    vy_max           = cfg.get("masks.update_mask.vy_max", 2000)                 # px/s
 
     nx, ny, nw, nh = new_rect
     ox, oy, ow, oh = mask['rect']
@@ -476,8 +476,8 @@ def predict_masks(active_masks, updated_uids, now, screen_w, screen_h):
 # ═══════════════════════════════════════════════════════
 
 def kill_fast_miss(active_masks, now):
-    fast_miss_thresh  = cfg.get("masks.fast_miss_threshold", 5)
-    fast_miss_timeout = cfg.get("masks.fast_miss_timeout_ms", 300) / 1000.0
+    fast_miss_thresh  = cfg.get("masks.kill_fast_miss.fast_miss_threshold", 5)
+    fast_miss_timeout = cfg.get("masks.kill_fast_miss.fast_miss_timeout_ms", 300) / 1000.0
 
     alive = []
     for m in active_masks:

@@ -1,6 +1,7 @@
 # fast_track_thread.py
 import cv2
 import threading
+import math
 from config import cfg
 from detect import ncc_match
 from optical_flow import of_track
@@ -71,10 +72,27 @@ class FastTrackThread:
             return self._result_version, list(self._results), self._results_ts
 
     # ──────────── NCC sur ROI ────────────
+    def _adaptive_margin(self, mask, now):
+        base   = cfg.get("masks._adaptive_margin.margin_base", 10)
+        factor = cfg.get("masks._adaptive_margin.margin_factor", 1.5)
+        m_min  = cfg.get("masks._adaptive_margin.margin_min", 10)
+        m_max  = cfg.get("masks._adaptive_margin.margin_max", 150)
 
-    def _ncc_on_roi(self, gray, rect, template):
+        vx = mask.get("vx", 0.0)
+        vy = mask.get("vy", 0.0)
+        speed = math.sqrt(vx * vx + vy * vy)
+
+        dt = now - mask.get("last_detected_ts", now)
+        if dt < 0:
+            dt = 0
+
+        margin = base + speed * dt * factor
+        return int(max(m_min, min(margin, m_max)))
+
+    def _ncc_on_roi(self, gray, rect, template,margin=None):
         x, y, w, h = rect
-        margin = self._roi_margin
+        if margin is None:
+            margin = self._roi_margin
         rx = max(x - margin, 0)
         ry = max(y - margin, 0)
         rx2 = min(x + w + margin, self._screen_w)
@@ -165,7 +183,8 @@ class FastTrackThread:
 
                 # ── 4b. NCC confirme ──
                 if template is not None:
-                    ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, template)
+                    margin = self._adaptive_margin(m, frame_ts)
+                    ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, template, margin=margin)
                 else:
                     ncc_rect, score = None, 0.0
 
