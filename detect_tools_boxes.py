@@ -300,7 +300,8 @@ def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transi
     # ── 4. Projection verticale ──
     # IDENTIQUE à v1 : variance normalisée de la somme par colonne
     col_sum = np.sum(crop, axis=0)         # somme par colonne (0 ou 255)
-    vproj   = float(np.var(col_sum)) / max(w * w * 0.25, 1.0)
+    var_max  = (h * 255.0) ** 2 / 4.0
+    vproj    = float(np.var(col_sum)) / max(var_max, 1.0)
 
     # ── 5. Densité ──
     # IDENTIQUE à v1 : ratio pixels blancs / surface totale
@@ -329,7 +330,7 @@ def has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transi
         "row_fill":           row_fill,
         "vproj":              vproj,
         "density":            density,
-        "cc":                 float(cc),
+        "cc":                 s_cc,
         "hreg":               hreg,
         "proj_ratio":         pf["proj_ratio"],
         "fill_ratio":         pf["fill_ratio"],
