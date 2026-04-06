@@ -236,7 +236,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 })
 
                 for m in active_masks:
-                    #r = m['rect']
+                    s = m.scores if isinstance(m.scores, dict) else {}
                     csv_write_mask({
                         "timestamp":       round(now, 6),
                         "frame_id":        frame_id,
@@ -251,6 +251,23 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         "fast_miss_count": m.fast_miss_count,
                         "vx":              round(m.vx, 3),
                         "vy":              round(m.vy, 3),
+                        # ── détail confidence ──
+                        "score":               round(s.get("score", 0.0), 4),
+                        "score_brut":          round(s.get("score_brut", 0.0), 4),
+                        "fp_penalty":          round(s.get("fp_penalty", 0.0), 4),
+                        "transition_density":  round(s.get("transition_density", 0.0), 4),
+                        "s_td":                round(s.get("s_td", 0.0), 4),
+                        "density_raw":         round(s.get("density_raw", 0.0), 4),
+                        "s_dens":              round(s.get("s_dens", 0.0), 4),
+                        "cc_raw":              round(s.get("cc_raw", 0.0), 4),
+                        "s_cc":                round(s.get("s_cc", 0.0), 4),
+                        "s_hreg":              round(s.get("s_hreg", 0.0), 4),
+                        "row_fill":            round(s.get("row_fill", 0.0), 4),
+                        "tiers_active":        round(s.get("tiers_active", 0.0), 4),
+                        "vproj":               round(s.get("vproj", 0.0), 4),
+                        "s_vp":                round(s.get("s_vp", 0.0), 4),
+                        "s_pf":                round(s.get("s_pf", 0.0), 4),
+                        "bg_score":            round(s.get("bg_score", 0.0), 4),
                     })
 
             # ── 9. FPS print toutes les 2s ──

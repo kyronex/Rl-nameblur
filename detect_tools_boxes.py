@@ -179,7 +179,7 @@ def _split_wide_boxes(boxes, mask_white, params):
     return result
 
 # ── _validate_text_v2 ──
-_EMPTY_PROJ = {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "proj_score": 0.0}
+_EMPTY_PROJ = {"proj_ratio": 0.0, "fill_ratio": 0.0, "compactness": 0.0, "s_pf": 0.0}
 
 def _projection_fill_score(crop):
     if crop.size == 0:
@@ -209,13 +209,13 @@ def _projection_fill_score(crop):
     s_proj = max(0.0, 1.0 - abs(proj_ratio - 0.70) * 2.5)   # 1/0.40 = 2.5
     s_comp = max(0.0, 1.0 - abs(compactness - 0.40) * 2.857) # 1/0.35 ≈ 2.857
 
-    proj_score = s_proj * s_comp
+    s_pf = s_proj * s_comp
 
     return {
         "proj_ratio":  proj_ratio,
         "fill_ratio":  fill_ratio,
         "compactness": compactness,
-        "proj_score":  proj_score,
+        "s_pf":  s_pf,
     }
 
 _EMPTY_SCORES = {
@@ -253,7 +253,7 @@ def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
 
     return cc, hreg, mean_h
 
-def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20,min_proj_score=0.10):
+def _has_text_old(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20, min_proj_score=0.10):
     """
     Même logique que _has_text, SANS connectedComponentsWithStats interne.
     Les métriques cc/hreg viennent de cc_stats (pré-calculé).
@@ -264,29 +264,32 @@ def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_trans
 
     h, w = crop.shape
 
+    print(f"[SCORE_DEBUG] pos=({x1},{y1},{x2},{y2})")
+
     # ── 1. Transitions horizontales ──
-    # IDENTIQUE à v1 : on compare pixel gauche vs pixel droit
-    # C'est le filtre le moins cher → premier early exit
     if w > 1:
-        left  = crop[:, :-1]          # vue numpy, pas de copie
-        right = crop[:, 1:]           # vue numpy, pas de copie
+        left  = crop[:, :-1]
+        right = crop[:, 1:]
         transition_density = float(np.count_nonzero(left != right)) / (h * max(w - 1, 1))
     else:
         transition_density = 0.0
 
+    s_td = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
+    print(f"  transition_density={transition_density:.3f}  s_td={s_td:.3f}")
+
     if transition_density < min_transition:
-        return False, {**_EMPTY_SCORES, "transition_density": transition_density}
+        return False, {**_EMPTY_SCORES, "transition_density": s_td}
 
     # ── 2. Row fill ──
-    # IDENTIQUE à v1 : proportion de lignes ayant au moins un pixel blanc
     row_any  = np.any(crop, axis=1)
     row_fill = float(np.count_nonzero(row_any)) / max(h, 1)
 
+    print(f"  row_fill={row_fill:.3f}")
+
     if row_fill < 0.5:
-        return False, {**_EMPTY_SCORES,"transition_density": transition_density,"row_fill": row_fill}
+        return False, {**_EMPTY_SCORES,"transition_density": s_td,"row_fill": row_fill}
 
     # ── 3. Tiers ──
-    # IDENTIQUE à v1 : le texte doit occuper au moins 2 tiers verticaux
     t1 = h // 3
     t2 = 2 * h // 3
     tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
@@ -294,51 +297,296 @@ def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_trans
         1 for t in tiers
         if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
     )
+
+    print(f"  tiers_active={active}")
+
     if active < min_tiers:
-        return False, {**_EMPTY_SCORES,"transition_density": transition_density,"row_fill": row_fill}
+        return False, {**_EMPTY_SCORES,"transition_density": s_td,"row_fill": row_fill}
 
     # ── 4. Projection verticale ──
-    # IDENTIQUE à v1 : variance normalisée de la somme par colonne
-    col_sum = np.sum(crop, axis=0)         # somme par colonne (0 ou 255)
+    col_sum = np.sum(crop, axis=0)
     var_max  = (h * 255.0) ** 2 / 4.0
     vproj    = float(np.var(col_sum)) / max(var_max, 1.0)
+    s_vp     = max(0.0, 1.0 - abs(vproj - 0.35) * 2.86)
+
+    print(f"  vproj={vproj:.3f}  s_vp={s_vp:.3f}")
 
     # ── 5. Densité ──
-    # IDENTIQUE à v1 : ratio pixels blancs / surface totale
     density = float(cv2.countNonZero(crop)) / crop.size
 
-    # ── 6. CC + hreg ── ★ CHANGEMENT PRINCIPAL ★
-    # v1 : faisait connectedComponentsWithStats(crop) ici → COÛTEUX
-    # v2 : lookup dans cc_stats déjà calculé par _validate_text
-    cc, hreg, _ = _cc_metrics_from_stats(cc_stats, x1, y1, x2, y2)
+    s_dens  = max(0.0, 1.0 - abs(density - 0.30) * 3.33)
 
+    print(f"  density={density:.3f}  s_dens={s_dens:.3f}")
+
+    # ── 6. CC + hreg ──
+    cc, hreg, _ = _cc_metrics_from_stats(cc_stats, x1, y1, x2, y2)
+    s_cc = max(0.0, 1.0 - abs(cc - 8) * 0.125)
+    s_hr = hreg
+
+    print(f"  cc_brut={cc:.0f}  s_cc={s_cc:.3f}  hreg={hreg:.3f}")
     # ── 7. Projection fill score ──
-    # IDENTIQUE à v1
     pf = _projection_fill_score(crop)
 
-    # ── 8. Score final ── IDENTIQUE à v1
-    s_td   = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
-    s_vp   = max(0.0, 1.0 - abs(vproj - 0.35) * 2.86)
-    s_dens = max(0.0, 1.0 - abs(density - 0.30) * 3.33)
-    s_cc   = max(0.0, 1.0 - abs(cc - 8) * 0.125)
-    s_hr   = hreg
+    print(f"  proj_score={pf['proj_score']:.3f}")
 
+    # ── 8. Score final ──
+    # score interne _has_text (seuil de validation de la box)
     score = (s_td + s_vp + s_dens + s_cc + s_hr + pf["proj_score"]) / 6.0
 
+    print(f"  s_td={s_td:.3f}  s_vp={s_vp:.3f}  s_dens={s_dens:.3f}  "
+          f"s_cc={s_cc:.3f}  s_hr={s_hr:.3f}  score_final={score:.3f}")
+
     scores = {
-        "transition_density": transition_density,
-        "row_fill":           row_fill,
-        "vproj":              vproj,
-        "density":            density,
+        "transition_density": s_td,    # ← normalisé (était transition_density brut)
+        "hreg":               s_hr,
         "cc":                 s_cc,
-        "hreg":               hreg,
-        "proj_ratio":         pf["proj_ratio"],
-        "fill_ratio":         pf["fill_ratio"],
-        "compactness":        pf["compactness"],
         "proj_score":         pf["proj_score"],
+        "vproj":              s_vp,    # ← normalisé (était vproj brut)
+        "row_fill":           row_fill,
+        "density":            s_dens,  # ← normalisé (était density brut)
     }
 
     return score > min_proj_score, scores
+
+# ══════════════════════════════════════════════════════════════
+# PRÉ-CALCUL GROUPE CHEAP
+# ══════════════════════════════════════════════════════════════
+def _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill=0.08):
+    """
+    Calculs légers : numpy basique, 1 seul countNonZero.
+    Retourne un dict plat, zéro décision ici.
+    """
+    h, w = crop.shape
+
+    # density_raw — 1 seul countNonZero pour tout le groupe
+    nz          = cv2.countNonZero(crop)
+    density_raw = float(nz) / crop.size
+
+    # cc + hreg — 1 seul appel
+    cc_raw, hreg, _ = _cc_metrics_from_stats(cc_stats, x1, y1, x2, y2)
+
+    # transitions horizontales
+    if w > 1:
+        left  = crop[:, :-1]
+        right = crop[:, 1:]
+        transition_density = float(np.count_nonzero(left != right)) / (h * max(w - 1, 1))
+    else:
+        transition_density = 0.0
+
+    # row fill
+    row_any  = np.any(crop, axis=1)
+    row_fill = float(np.count_nonzero(row_any)) / max(h, 1)
+
+    # tiers
+    t1    = h // 3
+    t2    = 2 * h // 3
+    tiers = [crop[:t1, :], crop[t1:t2, :], crop[t2:, :]]
+    tiers_active = sum(
+        1 for t in tiers
+        if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
+    )
+
+    # scores normalisés cheap
+    s_td   = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
+    s_dens = max(0.0, 1.0 - abs(density_raw - 0.50) * 2)
+    s_cc   = max(0.0, 1.0 - abs(cc_raw - 8) * 0.125)
+
+    return {
+        "transition_density": transition_density,
+        "s_td":               s_td,
+        "density_raw":        density_raw,
+        "s_dens":             s_dens,
+        "cc_raw":             cc_raw,
+        "s_cc":               s_cc,
+        "s_hreg":             hreg,
+        "row_fill":           row_fill,
+        "tiers_active":       tiers_active,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# PRÉ-CALCUL GROUPE HEAVY
+# ══════════════════════════════════════════════════════════════
+def _compute_heavy_metrics(crop):
+    """
+    Calculs lourds : np.var + _projection_fill_score.
+    Appelé UNIQUEMENT si _decide_early() passe.
+    Retourne un dict plat, zéro décision ici.
+    """
+    h = crop.shape[0]
+
+    # projection verticale
+    col_sum = np.sum(crop, axis=0)
+    #var_max = (h * 255.0) ** 2 / 4.0
+    col_norm = col_sum / max(h * 255.0, 1.0)
+    vproj = float(np.var(col_norm))
+    #vproj = float(np.var(col_sum)) / max(var_max, 1.0)
+    #s_vp    = max(0.0, 1.0 - abs(vproj - 0.35) * 2.86)
+    #s_vp    = max(0.0, 1.0 - abs(vproj - 0.80) * 2.5)
+    s_vp    = max(0.0, 1.0 - abs(vproj - 0.08) / 0.10)
+
+    # projection fill score
+    pf      = _projection_fill_score(crop)
+
+    return {
+        "vproj":      vproj,
+        "s_vp":       s_vp,
+        "s_pf":     pf["s_pf"],
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# DÉCISION EARLY  (lecture seule sur cheap)
+# ══════════════════════════════════════════════════════════════
+def _decide_early(cheap, min_transition=0.20, min_tiers=2):
+    # step 0 — binaire absolu
+    if cheap["density_raw"] > 0.95:
+        return False, "density_raw>0.95"
+
+    # step 1 — transitions
+    if cheap["transition_density"] < min_transition:
+        return False, "transition<min"
+
+    # step 2 — row fill
+    if cheap["row_fill"] < 0.5:
+        return False, "row_fill<0.5"
+
+    # step 3 — tiers
+    if cheap["tiers_active"] < min_tiers:
+        return False, "tiers<min"
+
+    """
+    # step 3.5 — binaire post-tiers
+    if cheap["density_raw"] > 0.65 and cheap["cc_raw"] < 4:
+        return False, "density>0.65+cc<4"
+    """
+
+    return True, "ok"
+
+
+# ══════════════════════════════════════════════════════════════
+# DÉCISION FINALE  (lecture seule sur cheap + heavy)
+# ══════════════════════════════════════════════════════════════
+def _decide_final(crop, cheap, heavy, min_proj_score=0.10):
+    """
+    Step 8 — score + pénalité. ZERO calcul.
+    Retourne (result: bool, scores: dict, score_final: float)
+    """
+    h, w = crop.shape
+    score_brut = (
+        cheap["s_td"]   * 1.0 +
+        heavy["s_vp"]   * 0.5 +
+        cheap["s_dens"] * 0.5 +
+        cheap["s_hreg"] * 1.5 +
+        heavy["s_pf"]   * 0.8 +
+        cheap["s_cc"]   * 1.0
+    ) / 5.3
+    # pénalité FP zones grises
+    fp_penalty = 0.0
+
+    ar = w / max(h, 1)
+    if ar < 2.0 and cheap["transition_density"] < 0.15:
+        fp_penalty += 0.10  # blob carré sans transitions
+
+    if cheap["density_raw"] > 0.85:
+        fp_penalty += 0.20   # trop dense → blob solide, pas du texte
+
+    if heavy["vproj"] < 0.01:
+        fp_penalty += 0.15   # projection verticale morte → aucune structure colonne
+
+    if cheap["transition_density"] < 0.05 or cheap["transition_density"] > 0.75:
+        fp_penalty += 0.15    # transition_density hors range texte
+
+    if h < 6:
+        fp_penalty += 0.10    # hauteur trop petite
+
+    if heavy["vproj"] < 0.01 and cheap["s_hreg"] < 0.10:
+        fp_penalty += 0.15    # combo : vproj mort ET s_hreg mort → aucune structure
+
+    if heavy["vproj"] < 0.01 and cheap["s_hreg"] > 0.90 and heavy["s_pf"] < 0.75:
+        fp_penalty += 0.10    # fausse régularité : s_hreg élevé mais vproj mort
+
+    # cc_raw = 1 → blob unique, pas multi-caractères
+    if cheap["cc_raw"] <= 1:
+        fp_penalty += 0.10
+
+    # s_hreg nul → aucune régularité horizontale
+    if cheap["s_hreg"] == 0.0:
+        fp_penalty += 0.10
+
+    # vproj faible + hreg élevé → fausse structure
+    if heavy["vproj"] < 0.03 and cheap["s_hreg"] > 0.90:
+        fp_penalty += 0.15
+
+    score = max(0.0, score_brut - fp_penalty)
+
+    scores = {
+        "score":              score,
+        "score_brut":         score_brut,
+        "fp_penalty":         fp_penalty,
+        "transition_density": cheap["transition_density"],
+        "s_td":               cheap["s_td"],
+        "density_raw":        cheap["density_raw"],
+        "s_dens":             cheap["s_dens"],
+        "cc_raw":             cheap["cc_raw"],
+        "s_cc":               cheap["s_cc"],
+        "s_hreg":             cheap["s_hreg"],
+        "row_fill":           cheap["row_fill"],
+        "tiers_active":       cheap["tiers_active"],
+        "vproj":              heavy["vproj"],
+        "s_vp":               heavy["s_vp"],
+        "s_pf":               heavy["s_pf"],
+    }
+
+    return score > min_proj_score, scores, score, score_brut, fp_penalty
+
+
+# ══════════════════════════════════════════════════════════════
+# POINT D'ENTRÉE PUBLIC
+# ══════════════════════════════════════════════════════════════
+def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20, min_proj_score=0.10):
+    """
+    Orchestrateur pur — aucun calcul direct ici.
+    Séquence : crop → cheap → early → heavy → final
+    """
+    crop = roi[y1:y2, x1:x2]
+    if crop.size == 0:
+        return False, _EMPTY_SCORES
+
+    print(f"[SCORE_DEBUG] pos=({x1},{y1},{x2},{y2})")
+    print(f"min_fill={min_fill}  min_tiers={min_tiers}  min_transition={min_transition}  min_proj_score={min_proj_score}")
+
+    # ── CHEAP ──
+    cheap = _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill)
+    print(f"  [CHEAP] density_raw={cheap['density_raw']:.3f}  "
+          f"cc_raw={cheap['cc_raw']:.0f}  "
+          f"transition={cheap['transition_density']:.3f}  "
+          f"row_fill={cheap['row_fill']:.3f}  "
+          f"tiers_active={cheap['tiers_active']}   "
+          f"s_hreg={cheap['s_hreg']:.3f}  "
+          f"s_td={cheap['s_td']:.3f}  s_dens={cheap['s_dens']:.3f}  s_cc={cheap['s_cc']:.3f}  ")
+
+    # ── EARLY DECISION ──
+    passed, reason = _decide_early(cheap, min_transition, min_tiers)
+    if not passed:
+        print(f"  [EARLY] → rejet ({reason})")
+        return False, {**_EMPTY_SCORES,"transition_density": cheap["s_td"],"row_fill":cheap["row_fill"],"density":cheap["s_dens"]}
+
+    print(f"  [EARLY] → passé")
+
+    # ── HEAVY ──
+    heavy = _compute_heavy_metrics(crop)
+    print(f"  [HEAVY] vproj={heavy['vproj']:.3f}  s_vp={heavy['s_vp']:.3f}  "
+          f"s_pf={heavy['s_pf']:.3f}")
+
+    # ── FINAL DECISION ──
+    result, scores, score, score_brut, fp_penalty = _decide_final(crop,cheap, heavy, min_proj_score)
+    print(f"  [FINAL] score_brut={score_brut:.3f}  "
+          f"fp_penalty={fp_penalty:.3f}  "
+          f"score_final={score:.3f}  "
+          f"→ {'OK' if result else 'rejet'}")
+
+    return result, scores
 
 def _sweep_and_cut(cc_stats, cc_x2, cc_y2, roi,min_text_fill, min_transition, min_proj_score):
     validated = []
@@ -866,6 +1114,10 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels):
     log.debug("_make_template")
     for box in plates:
         box.template = _make_template(box.rect, rgb)
+        print("box.x, box.y, box.w, box.h",box.x, box.y, box.w, box.h)
+        print("box.confidence",box.confidence)
+        print("box.scores",box.scores)
+
 
     return plates
 

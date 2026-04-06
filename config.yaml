@@ -120,7 +120,7 @@ detect:
     refine_min_blob_area: 10
     min_text_fill: 0.08 # variance colonnes pour texte
     min_transition: 0.10
-    min_proj_score: 0.15
+    min_proj_score: 0.10
     thresh:
       var_norm: 1100.0
       coherent_delta: 30

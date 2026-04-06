@@ -16,21 +16,7 @@ class Box:
 
     @property
     def confidence(self):
-      s = self.scores
-      td = s.get("transition_density", 0.0)
-      rf = s.get("row_fill", 0.0)
-      vp = s.get("vproj", 0.0)
-      dn = s.get("density", 0.0)
-      cc = s.get("cc", 0.0)
-      hr = s.get("hreg", 0.0)
-      bg = s.get("bg_score", 0.0)
-      return (0.20 * td
-            + 0.10 * rf
-            + 0.10 * vp
-            + 0.10 * dn
-            + 0.15 * cc
-            + 0.15 * hr
-            + 0.20 * bg)
+      return self.scores.get("score", 0.0)
 
     def copy_with(self, x=None, y=None, w=None, h=None):
         return Box(
