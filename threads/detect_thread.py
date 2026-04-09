@@ -1,7 +1,7 @@
 # detect_thread.py — v2
 import threading
 import time
-from detect import detect_plates
+from detection.detect import detect_plates
 
 class DetectThread:
     """Slow detect — full frame, scale lent."""

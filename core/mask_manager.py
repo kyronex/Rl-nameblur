@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from config import cfg
-from mask import Mask
+from core.mask import Mask
 
 log = logging.getLogger("mask_manager")
 

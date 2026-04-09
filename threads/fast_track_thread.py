@@ -3,8 +3,8 @@ import cv2
 import threading
 import math
 from config import cfg
-from detect import ncc_match
-from optical_flow import of_track
+from detection.detect import ncc_match
+from core.optical_flow import of_track
 
 _MAX_STALE_FRAMES = cfg.get("detect.fast.max_stale_frames", 15)
 

@@ -3,10 +3,10 @@ import cv2
 import numpy as np
 import logging
 from config import cfg
-from detect_tools import write_circles , write_rects , get_color
-from detect_tools_mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
-from detect_tools_boxes import process_channel
-from box import Box
+from detection.tools import write_circles , write_rects , get_color
+from detection.mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
+from detection.boxes import process_channel
+from core.box import Box
 
 log = logging.getLogger("detect")
 

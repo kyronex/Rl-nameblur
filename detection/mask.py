@@ -1,11 +1,11 @@
-# detect_tools_mask.py
+# mask.py
 import cv2
 import numpy as np
 import logging
 from config import cfg
-from detect_tools import write_circles , write_rects , get_color
+from detection.tools import write_circles , write_rects , get_color
 
-log = logging.getLogger("detect_tools_mask")
+log = logging.getLogger("mask")
 _kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
 
 def saturation_variance_mask(frame, scale, kernel_size=(24, 11), threshold1=10000, threshold2=28500):

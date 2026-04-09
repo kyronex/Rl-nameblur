@@ -1,13 +1,12 @@
-# detect_tools_boxes.py
+# boxes.py
 import cv2
 import numpy as np
-import time
 import logging
 from config import cfg
-from detect_tools import write_circles , write_rects , get_color
-from box import Box
+from detection.tools import write_circles , write_rects , get_color
+from core.box import Box
 
-log = logging.getLogger("detect_tools_boxes")
+log = logging.getLogger("boxes")
 
 # ── _extract_raw_boxes ──
 def _extract_raw_boxes(masked, params):

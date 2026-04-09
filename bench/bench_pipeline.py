@@ -27,10 +27,10 @@ import sys
 import time
 import argparse
 
-from detect import _build_params
-from detect_tools_mask import (saturation_variance_mask,compute_white_mask,refine_and_merge,compute_sobel_interior_unified)
-from detect_tools_boxes import (process_channel)
-from detect_tools import (write_circles,write_rects,get_color)
+from detection.detect import _build_params
+from detection.mask   import saturation_variance_mask,compute_white_mask,refine_and_merge,compute_sobel_interior_unified
+from detection.boxes  import process_channel
+from detection.tools  import write_circles,write_rects,get_color
 log = logging.getLogger("bench_pipeline")
 # ═══════════════════════════════════════════════════
 # Helpers

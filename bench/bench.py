@@ -4,7 +4,6 @@ import threading
 from collections import defaultdict
 from config import cfg
 
-
 class BenchRegistry:
     """Registre centralisé + timer + affichage."""
 

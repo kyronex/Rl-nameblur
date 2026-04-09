@@ -15,14 +15,11 @@ import time
 import numpy as np
 import pyvirtualcam
 
-from capture_thread    import CaptureThread
-from detect_thread     import DetectThread
-from fast_track_thread import FastTrackThread
-from send_thread       import SendThread
-from blur              import apply_blur
-from bench             import bench
-from csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
-from mask_manager      import match_and_update,update_mask,predict_masks,compute_jitter,compute_mask_age,pad_rect,draw_debug,kill_fast_miss, increment_fast_miss
+from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
+from bench.bench             import bench
+from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
+from core.mask_manager       import match_and_update, update_mask, predict_masks, kill_fast_miss, increment_fast_miss, draw_debug, pad_rect, compute_jitter, compute_mask_age
+from core.blur               import apply_blur
 
 log = logging.getLogger("main")
 

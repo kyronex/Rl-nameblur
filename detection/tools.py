@@ -1,11 +1,9 @@
-# detect_tools.py
+# tools.py
 import cv2
-import numpy as np
-import time
 import logging
 from config import cfg
 
-log = logging.getLogger("detect_tools")
+log = logging.getLogger("tools")
 
 # ── write_rects ──
 def write_rects(image, rects, color , thickness=2):

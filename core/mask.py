@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, List
 import numpy as np
-from box import Box
+from core.box import Box
 
 
 @dataclass
