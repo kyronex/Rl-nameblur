@@ -489,12 +489,12 @@ def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_trans
     if crop.size == 0:
         return False, _EMPTY_SCORES
 
-    print(f"[SCORE_DEBUG] pos=({x1},{y1},{x2},{y2})")
-    print(f"min_fill={min_fill}  min_tiers={min_tiers}  min_transition={min_transition}  min_proj_score={min_proj_score}")
+    log.debug(f"[SCORE_DEBUG] pos=({x1},{y1},{x2},{y2})")
+    log.debug(f"min_fill={min_fill}  min_tiers={min_tiers}  min_transition={min_transition}  min_proj_score={min_proj_score}")
 
     # ── CHEAP ──
     cheap = _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill)
-    print(f"  [CHEAP] density_raw={cheap['density_raw']:.3f}  "
+    log.debug(f"  [CHEAP] density_raw={cheap['density_raw']:.3f}  "
           f"cc_raw={cheap['cc_raw']:.0f}  "
           f"transition={cheap['transition_density']:.3f}  "
           f"row_fill={cheap['row_fill']:.3f}  "
@@ -505,19 +505,19 @@ def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_trans
     # ── EARLY DECISION ──
     passed, reason = _decide_early(cheap, min_transition, min_tiers)
     if not passed:
-        print(f"  [EARLY] → rejet ({reason})")
+        log.debug(f"  [EARLY] → rejet ({reason})")
         return False, {**_EMPTY_SCORES,"transition_density": cheap["s_td"],"row_fill":cheap["row_fill"],"density":cheap["s_dens"]}
 
-    print(f"  [EARLY] → passé")
+    log.debug(f"  [EARLY] → passé")
 
     # ── HEAVY ──
     heavy = _compute_heavy_metrics(crop)
-    print(f"  [HEAVY] vproj={heavy['vproj']:.3f}  s_vp={heavy['s_vp']:.3f}  "
+    log.debug(f"  [HEAVY] vproj={heavy['vproj']:.3f}  s_vp={heavy['s_vp']:.3f}  "
           f"s_pf={heavy['s_pf']:.3f}")
 
     # ── FINAL DECISION ──
     result, scores, score, score_brut, fp_penalty = _decide_final(crop,cheap, heavy, min_proj_score)
-    print(f"  [FINAL] score_brut={score_brut:.3f}  "
+    log.debug(f"  [FINAL] score_brut={score_brut:.3f}  "
           f"fp_penalty={fp_penalty:.3f}  "
           f"score_final={score:.3f}  "
           f"→ {'OK' if result else 'rejet'}")
@@ -1050,9 +1050,9 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels):
     log.debug("_make_template")
     for box in plates:
         box.template = _make_template(box.rect, rgb)
-        print("box.x, box.y, box.w, box.h",box.x, box.y, box.w, box.h)
-        print("box.confidence",box.confidence)
-        print("box.scores",box.scores)
+        log.debug("box.x, box.y, box.w, box.h",box.x, box.y, box.w, box.h)
+        log.debug("box.confidence",box.confidence)
+        log.debug("box.scores",box.scores)
 
 
     return plates

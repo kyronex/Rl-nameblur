@@ -39,12 +39,15 @@ matching:
 
 # ── Floutage ──
 blur:
-  mode: "fill" # "pixelate", "box", "fill", "gaussian"
+  mode: "pixelate" # "pixelate", "box", "fill", "gaussian"
   pixel_size: 15
   strength: 25
   fill_color: [255, 0, 255] # gris pour mode fill
   margin: -5
   snap_grid: 8
+  merge_gap: 20 # combien d'espace entre zones pour fusionner
+  min_roi_area: 100 # ignore les micro-ROIs
+  merge_rects: true
 
 # ── Debug / affichage ──
 debug:
