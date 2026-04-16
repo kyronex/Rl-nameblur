@@ -20,6 +20,19 @@ class TrackerConfig:
     weights_fast: tuple = (0.8, 0.2)
     score_threshold: float = 0.3
 
+    # motion — apply_detection
+    motion_smooth_alpha: float = 1.0
+    motion_dead_zone: float = 3.0
+    motion_velocity_dead_zone: float = 10.0
+    motion_dt_slow_max: float = 0.5        # secondes
+    motion_teleport_thresh: float = 300.0   # pixels
+    motion_vx_max: float = 4000.0           # px/s
+    motion_vy_max: float = 2000.0           # px/s
+
+    # motion — predict_position
+    predict_dt_cap: float = 0.10            # secondes
+    predict_damping_rate: float = 2.0       # damping = 1 - dt * rate
+
 
 @dataclass
 class Detection:
