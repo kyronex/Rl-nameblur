@@ -1,4 +1,4 @@
-# detect_thread.py — v2
+# threads/detect_thread.py — v2
 import threading
 import time
 from detection.detect import detect_plates

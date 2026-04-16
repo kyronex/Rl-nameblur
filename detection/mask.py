@@ -1,4 +1,4 @@
-# mask.py
+# detection/mask.py
 import cv2
 import numpy as np
 import logging

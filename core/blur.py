@@ -1,4 +1,4 @@
-# blur.py
+# core/blur.py
 import cv2
 import numpy as np
 from config import cfg

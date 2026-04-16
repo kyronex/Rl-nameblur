@@ -1,4 +1,4 @@
-# tools.py
+# detection/tools.py
 import cv2
 import logging
 from config import cfg

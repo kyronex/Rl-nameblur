@@ -1,4 +1,4 @@
-# send_thread.py
+# threads/send_thread.py
 import threading
 import time
 import numpy as np

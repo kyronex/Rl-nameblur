@@ -1,4 +1,4 @@
-# mask_manager.py — v2 (migration Mask dataclass)
+# core/mask_manager.py — v2 (migration Mask dataclass)
 import logging
 import cv2
 import numpy as np

@@ -1,114 +1,78 @@
-# core/tracker/registry.py
-
+# tracker/registry.py
 from __future__ import annotations
-import time
-from core.mask import Mask , MaskState
+from typing import Dict, List, Optional
+from core.mask import Mask, MaskState
 
 
-class Registry:
-    """Registre centralisé des masks actifs."""
-
-    def __init__(self, ttl: int = 30, fast_miss_limit: int = 4, lost_timeout: int = 15):
-        self._masks: dict[int, Mask] = {}
+class MaskRegistry:
+    def __init__(self, max_masks: int = 20, ttl_default: int = 5):
+        self._masks: Dict[int, Mask] = {}
         self._next_uid: int = 0
-        self._ttl = ttl
-        self._fast_miss_limit = fast_miss_limit
-        self._lost_timeout = lost_timeout
+        self.max_masks = max_masks
+        self.ttl_default = ttl_default
 
-    # ── Création ─────────────────────────────────────────────
-    def create_mask(self, rect: tuple, confidence: float = 0.0,
-                    template=None, source: str = "new") -> Mask:
+    # ── accès ─────────────────────────────────────────────
+    @property
+    def masks(self) -> List[Mask]:
+        return list(self._masks.values())
+
+    def get(self, uid: int) -> Optional[Mask]:
+        return self._masks.get(uid)
+
+    def __len__(self) -> int:
+        return len(self._masks)
+
+    def __contains__(self, uid: int) -> bool:
+        return uid in self._masks
+
+    # ── CRUD ──────────────────────────────────────────────
+    def add(self, mask: Mask) -> Mask:
+        if mask.uid in self._masks:
+            raise ValueError(f"uid {mask.uid} déjà présent")
+        if len(self._masks) >= self.max_masks:
+            self._evict_one()
+        self._masks[mask.uid] = mask
+        return mask
+
+    def create(self, rect: tuple, ts: float, source: str = "slow",
+               confidence: float = 0.0, **kwargs) -> Mask:
         uid = self._next_uid
         self._next_uid += 1
-        now = time.time()
         mask = Mask(
             uid=uid,
             rect=rect,
             last_detected_rect=rect,
-            last_detected_ts=now,
+            last_detected_ts=ts,
             last_source=source,
-            ttl=self._ttl,
+            ttl=self.ttl_default,
             confidence=confidence,
-            template=template,
+            **kwargs,
         )
-        self._masks[uid] = mask
-        return mask
+        return self.add(mask)
 
-    # ── Accès ────────────────────────────────────────────────
-    def get_mask(self, uid: int) -> Mask | None:
-        return self._masks.get(uid)
+    def remove(self, uid: int) -> Optional[Mask]:
+        return self._masks.pop(uid, None)
 
-    def active_masks(self) -> list[Mask]:
-        """PENDING + CONFIRMED (pas LOST)."""
-        return [m for m in self._masks.values() if m.state != MaskState.LOST]
-
-    def all_masks(self) -> list[Mask]:
-        return list(self._masks.values())
-
-    def confirmed_masks(self) -> list[Mask]:
-        return [m for m in self._masks.values() if m.state == MaskState.CONFIRMED]
-
-    # ── Mise à jour d'un mask matché ────────────────────────
-    def update_mask(self, uid: int, rect: tuple, confidence: float = 0.0,
-                    phash: int | None = None, source: str = "") -> None:
-        mask = self._masks.get(uid)
-        if mask is None:
-            return
-        mask.rect = rect
-        mask.last_detected_rect = rect
-        mask.last_detected_ts = time.time()
-        mask.confidence = confidence
-        mask.ttl = self._ttl
-        mask.fast_miss_count = 0
-        if source:
-            mask.last_source = source
-        if phash is not None:
-            mask.add_hash(phash)
-        mask.transition("matched")
-
-    # ── Marquer des masks non-matchés ───────────────────────
-    def mark_missed(self, uids: list[int]) -> None:
-        for uid in uids:
-            mask = self._masks.get(uid)
-            if mask is None:
-                continue
-            mask.transition("missing")
-
-    # ── Tick fin de frame : expiration ──────────────────────
-    def tick(self) -> list[int]:
-        """Décrémente TTL, supprime les expirés. Retourne les uids supprimés."""
-        to_remove: list[int] = []
-
-        for uid, mask in self._masks.items():
+    # ── expiration ────────────────────────────────────────
+    def tick_and_expire(self) -> List[Mask]:
+        expired = []
+        for mask in list(self._masks.values()):
             mask.ttl -= 1
+            if mask.ttl <= 0 and mask.state == MaskState.LOST:
+                expired.append(mask)
+                del self._masks[mask.uid]
+        return expired
 
-            if mask.state == MaskState.PENDING:
-                # PENDING qui rate trop de fast → supprimé
-                if mask.fast_miss_count >= self._fast_miss_limit:
-                    to_remove.append(uid)
-                elif mask.ttl <= 0:
-                    to_remove.append(uid)
-
-            elif mask.state == MaskState.CONFIRMED:
-                if mask.ttl <= 0:
-                    # passe en LOST avec sursis
-                    mask.state = MaskState.LOST
-                    mask.ttl = self._lost_timeout
-
-            elif mask.state == MaskState.LOST:
-                if mask.ttl <= 0:
-                    to_remove.append(uid)
-
-        for uid in to_remove:
-            del self._masks[uid]
-
-        return to_remove
-
-    # ── Utils ────────────────────────────────────────────────
-    def __len__(self) -> int:
-        return len(self._masks)
-
-    def __repr__(self) -> str:
-        return (f"Registry(total={len(self._masks)}, "
-                f"confirmed={len(self.confirmed_masks())}, "
-                f"lost={len([m for m in self._masks.values() if m.state == MaskState.LOST])})")
+    # ── interne ───────────────────────────────────────────
+    def _evict_one(self) -> None:
+        if not self._masks:
+            return
+        worst = min(
+            self._masks.values(),
+            key=lambda m: (
+                0 if m.state == MaskState.LOST else
+                1 if m.state == MaskState.PENDING else 2,
+                m.ttl,
+            ),
+        )
+        del self._masks[worst.uid]

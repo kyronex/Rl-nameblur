@@ -1,4 +1,4 @@
-# capture_thread.py
+# threads/capture_thread.py
 import threading
 import time
 import dxcam

@@ -1,4 +1,4 @@
-# optical_flow.py
+# core/optical_flow.py
 import cv2
 import numpy as np
 

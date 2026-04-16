@@ -1,50 +1,35 @@
-# hasher.py — Optimisé
-
+# tracker/hasher.py
+from __future__ import annotations
+from typing import List
 import cv2
 import numpy as np
 
-# Pré-calcul des puissances de 2 (une seule fois au chargement du module)
-_HASH_SIZE = 8
-_N_BITS = _HASH_SIZE * _HASH_SIZE  # 64
-_POWERS = 1 << np.arange(_N_BITS - 1, -1, -1, dtype=np.uint64)
 
-
-def compute_phash(crop: np.ndarray) -> int:
-    """
-    pHash d'un crop.
-    Retourne 0 si crop invalide.
-    """
+def compute_phash(crop: np.ndarray, hash_size: int = 8) -> int | None:
     if crop is None or crop.size == 0:
-        return 0
-
-    # Grayscale si nécessaire
+        return None
+    if crop.shape[0] < 2 or crop.shape[1] < 2:
+        return None
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
-
-    # Resize + DCT
-    resized = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
-    dct = cv2.dct(np.float32(resized))
-
-    # Basses fréquences → bits → entier
-    low = dct[:_HASH_SIZE, :_HASH_SIZE]
-    bits = (low > np.median(low)).flatten().astype(np.uint64)
-
-    return int(np.dot(bits, _POWERS))
+    resized = cv2.resize(gray, (hash_size, hash_size), interpolation=cv2.INTER_AREA)
+    mean_val = resized.mean()
+    bits = (resized > mean_val).flatten()
+    h = 0
+    for b in bits:
+        h = (h << 1) | int(b)
+    return h
 
 
 def hamming_distance(h1: int, h2: int) -> int:
-    """Nombre de bits différents."""
     return bin(h1 ^ h2).count("1")
 
 
-def hash_similarity(h1: int, h2: int) -> float:
-    """Similarité [0, 1]. 0 si un hash est nul."""
-    if h1 == 0 or h2 == 0:
-        return 0.0
-    return 1.0 - hamming_distance(h1, h2) / _N_BITS
+def hash_similarity(h1: int, h2: int, hash_size: int = 8) -> float:
+    total_bits = hash_size * hash_size
+    return 1.0 - hamming_distance(h1, h2) / total_bits
 
 
-def best_hash_similarity(h: int, history: list[int]) -> float:
-    """Meilleure similarité entre h et un historique."""
-    if not history or h == 0:
+def best_hash_similarity(h: int, history: List[int], hash_size: int = 8) -> float:
+    if not history:
         return 0.0
-    return max(hash_similarity(h, old) for old in history if old != 0)
+    return max(hash_similarity(h, prev, hash_size) for prev in history)

@@ -1,4 +1,4 @@
-# mask.py — Dataclass Mask (étape 2)
+# core/mask.py — Dataclass Mask (étape 2)
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto

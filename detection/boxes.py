@@ -1,4 +1,4 @@
-# boxes.py
+# detection/boxes.py
 import cv2
 import numpy as np
 import logging
