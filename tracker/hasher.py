@@ -1,4 +1,4 @@
-# core/tracker/hasher.py — Optimisé
+# hasher.py — Optimisé
 
 import cv2
 import numpy as np
