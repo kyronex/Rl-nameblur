@@ -431,33 +431,7 @@ def predict_masks(active_masks, updated_uids, now, screen_w, screen_h):
         m.rect = (x, y, w, h)
     return count
 
-    """
-    def predict_masks(active_masks, updated_uids, now, screen_w, screen_h):
 
-    #Prédit la position des masques non mis à jour.
-    #Base = last_detected_rect → ancrage fixe, pas de dérive cumulée.
-    #Retourne le nombre de masques prédits.
-
-    count = 0
-    for m in active_masks:
-        if m['uid'] in updated_uids:
-            continue
-        count += 1
-        dt        = now - m['last_detected_ts']
-        dt_capped = min(dt, 0.10)
-        damping   = max(0.0, 1.0 - dt * 2.0)
-
-        # ── M3 : ancrage last_detected_rect ──────────────────────
-        lx, ly, w, h = m['last_detected_rect']   # ← w,h depuis last_detected
-        # ─────────────────────────────────────────────────────────
-
-        x = lx + m['vx'] * dt_capped * damping
-        y = ly + m['vy'] * dt_capped * damping
-        x = max(0.0, min(x, screen_w - w))
-        y = max(0.0, min(y, screen_h - h))
-        m['rect'] = (x, y, w, h)
-    return count
-    """
 
 # ═══════════════════════════════════════════════════════
 #  KILL FAST MISS

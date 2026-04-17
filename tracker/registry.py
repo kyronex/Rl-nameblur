@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 
-
 class MaskRegistry:
     def __init__(self, max_masks: int = 20, ttl_default: int = 5):
         self._masks: Dict[int, Mask] = {}
@@ -53,11 +52,23 @@ class MaskRegistry:
     def remove(self, uid: int) -> Optional[Mask]:
         return self._masks.pop(uid, None)
 
+    # ── mise à jour post-match ────────────────────────────
+    def mark_matched(self, uid: int) -> None:
+        mask = self._masks.get(uid)
+        if mask:
+            mask.transition("matched")
+            mask.ttl = self.ttl_default
+
     # ── expiration ────────────────────────────────────────
-    def tick_and_expire(self) -> List[Mask]:
+    def tick_and_expire(self, matched_uids: set = None) -> List[Mask]:
+        if matched_uids is None:
+            matched_uids = set()
         expired = []
         for mask in list(self._masks.values()):
+            if mask.uid in matched_uids:
+                continue
             mask.ttl -= 1
+            mask.transition("missing")
             if mask.ttl <= 0 and mask.state == MaskState.LOST:
                 expired.append(mask)
                 del self._masks[mask.uid]

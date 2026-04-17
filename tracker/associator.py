@@ -61,7 +61,7 @@ class Associator:
         return cost
 
     # ── assignation hongroise ─────────────────────────────
-    def assign(self, detections: List[Detection],
+    def associate(self, detections: List[Detection],
                masks: List[Mask]) -> Tuple[
         List[Tuple[int, int]], List[int], List[int]
     ]:
