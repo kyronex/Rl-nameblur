@@ -26,7 +26,7 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
         mask.last_detected_ts = detect_ts
         mask.last_source = source
         if source == "slow":
-            mask.last_detected_rect = mask.rect
+            mask.last_detected_rect = new_rect
         return
 
     # ── Vélocité : uniquement sur détections slow ──

@@ -2,13 +2,15 @@
 from __future__ import annotations
 from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
+from tracker.models import TrackerConfig
 
 class MaskRegistry:
-    def __init__(self, max_masks: int = 20, ttl_default: int = 5):
+    def __init__(self, config: TrackerConfig):
+        self.cfg = config
         self._masks: Dict[int, Mask] = {}
         self._next_uid: int = 0
-        self.max_masks = max_masks
-        self.ttl_default = ttl_default
+        self.max_masks = config.max_masks
+        self.ttl_default = config.ttl_default
 
     # ── accès ─────────────────────────────────────────────
     @property
@@ -45,6 +47,8 @@ class MaskRegistry:
             last_source=source,
             ttl=self.ttl_default,
             confidence=confidence,
+            CONFIRM_AFTER=self.cfg.confirm_hits,
+            LOST_AFTER=self.cfg.lost_after,
             **kwargs,
         )
         return self.add(mask)

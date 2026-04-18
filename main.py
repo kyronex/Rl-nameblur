@@ -18,9 +18,10 @@ import pyvirtualcam
 from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
 from bench.bench             import bench
 from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
-from core.mask_manager       import match_and_update, update_mask, predict_masks, kill_fast_miss, increment_fast_miss, draw_debug, pad_rect, compute_jitter, compute_mask_age
+from core.mask_manager       import draw_debug, pad_rect, compute_mask_age
 from core.blur               import apply_blur
-
+from tracker.tracker import Tracker
+from tracker.models import TrackerConfig , Detection
 log = logging.getLogger("main")
 
 # ── PARAMÈTRES ──
@@ -40,6 +41,8 @@ capturer.start()
 
 detector = DetectThread()
 detector.start()
+
+tracker = Tracker(TrackerConfig())
 
 fast_enabled = cfg.get("detect.fast.enabled", True)
 if fast_enabled:
@@ -96,49 +99,31 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 if fast_enabled and active_masks:
                     fast_tracker.give_frame_and_masks(frame, active_masks, frame_ts)
 
-            updated_uids    = set()
-            row_slow_updated = 0
-            row_fast_updated = 0
-            row_predicted    = 0
-            row_detect_age   = 0.0
-            row_fast_age     = 0.0
+            updated_uids = set()
+            row_slow_updated = row_fast_updated = row_predicted = 0
+            row_detect_age = row_fast_age = 0.0
 
             # ── 3. Slow detect ──
             with bench.timer("slow_poll"):
                 new_plates, detect_ts, current_version, detected_frame_ts = detector.get_result()
-                slow_updated = False
-
-                if current_version > last_detect_version:
-                    slow_updated         = True
-                    last_detect_version  = current_version
-                    row_slow_updated     = 1
-
+                slow_updated = current_version > last_detect_version
+                if slow_updated:
+                    last_detect_version = current_version
+                    row_slow_updated = 1
                     _read_ts = time.perf_counter()
                     row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)
                                       if detected_frame_ts else 0.0)
 
-                    padded = [
-                        pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                        for box in new_plates
-                    ]
-
-
             with bench.timer("match"):
                 if slow_updated and new_plates:
-                    uids = match_and_update(active_masks, padded, detect_ts, source="slow" , now=now)
-
-                    for i, box in enumerate(new_plates):
-                        if uids[i] is not None:
-                            for m in active_masks:
-                                if m.uid == uids[i]:
-                                    m.confidence = box.confidence
-                                    m.template   = box.template
-                                    m.scores     = box.scores
-                                    break
-                            updated_uids.add(uids[i])
-
-                    increment_fast_miss(active_masks, updated_uids)
-                    active_masks = kill_fast_miss(active_masks, now)
+                    dets = [Detection(
+                        rect=pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT),
+                        source="slow",
+                        confidence=box.confidence,
+                        template=box.template,
+                        scores=box.scores,
+                    ) for box in new_plates]
+                    updated_uids |= tracker.apply_detections(frame, dets, detect_ts, "slow")
 
             # ── 3b. Fast track ──
             with bench.timer("fast_poll"):
@@ -148,32 +133,19 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         last_fast_version = fast_version
                         row_fast_updated = 1
                         row_fast_age = (now - fast_ts) * 1000 if fast_ts else 0.0
+                        dets = [Detection(
+                            rect=pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT),
+                            source="fast",
+                        ) for _uid, new_rect, _score in fast_results if new_rect is not None]
+                        if dets:
+                            updated_uids |= tracker.apply_detections(frame, dets, fast_ts, "fast")
 
-                        found_uids = set()
-                        for mask_uid, new_rect, score in fast_results:
-                            if new_rect is not None:
-                                found_uids.add(mask_uid)
-                                for m in active_masks:
-                                    if m.uid == mask_uid:
-                                        padded = pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                                        update_mask(m, padded, fast_ts, source="fast")
-                                        updated_uids.add(mask_uid)
-                                        break
-
-                        increment_fast_miss(active_masks, updated_uids)
-                        active_masks = kill_fast_miss(active_masks, now)
-
-            # ── 4. Prédiction ──
+            # ── 4. Tick (predict + TTL + purge) ──
             with bench.timer("predict"):
-                if predict:
-                    n_predicted = predict_masks(active_masks, updated_uids, now,SCREEN_WIDTH, SCREEN_HEIGHT)
-                    row_predicted = 1 if n_predicted > 0 else 0
+                confirmed = tracker.tick(now, updated_uids)
+                row_predicted = 1 if (len(tracker.all_masks()) - len(updated_uids)) > 0 else 0
 
-            # ── 5. Cap max masques ──
-            max_masks = cfg.get("masks.max_masks")
-            if len(active_masks) > max_masks:
-                active_masks.sort(key=lambda m: m.ttl, reverse=True)
-                active_masks = active_masks[:max_masks]
+            active_masks = confirmed  # pour fast_tracker.give_frame_and_masks
 
             # ── 6. Blur / debug draw ──
             blur_zones = [

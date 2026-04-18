@@ -5,13 +5,14 @@ from typing import Optional
 
 @dataclass
 class TrackerConfig:
+    # Frame / écran
+    screen_w: int = 1920
+    screen_h: int = 1080
+
     iou_threshold: float = 0.3
     hash_weight: float = 0.4
     iou_weight: float = 0.6
     max_masks: int = 20
-    ttl_default: int = 5
-    confirm_after: int = 3
-    lost_after: int = 5
     speed_slow: float = 10.0
     speed_medium: float = 50.0
     weights_static: tuple = (0.6, 0.4)
@@ -36,13 +37,19 @@ class TrackerConfig:
     min_mask_size: float = 10.0             # px — taille min prédite w/h
 
     # registry / lifecycle
-    ttl_max: int = 5
+    ttl_default: int = 5
     confirm_hits: int = 3
+    lost_after: int = 5
     fast_miss_max: int = 3
-    lost_ttl: int = 2
+
+    # Hash history
+    hash_history_max: int = 5
 
 @dataclass
 class Detection:
     rect: tuple
     phash: Optional[int] = None
     source: str = "slow"
+    confidence: float = 1.0
+    template: Optional[object] = None
+    scores: dict = field(default_factory=dict)
