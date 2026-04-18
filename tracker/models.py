@@ -9,9 +9,6 @@ class TrackerConfig:
     screen_w: int = 1920
     screen_h: int = 1080
 
-    iou_threshold: float = 0.3
-    hash_weight: float = 0.4
-    iou_weight: float = 0.6
     max_masks: int = 20
     speed_slow: float = 10.0
     speed_medium: float = 50.0
@@ -37,10 +34,9 @@ class TrackerConfig:
     min_mask_size: float = 10.0             # px — taille min prédite w/h
 
     # registry / lifecycle
-    ttl_default: int = 5
-    confirm_hits: int = 3
-    lost_after: int = 5
-    fast_miss_max: int = 3
+    ttl_default: int = 500
+    confirm_hits: int = 1
+    lost_after: int = 500
 
     # Hash history
     hash_history_max: int = 5

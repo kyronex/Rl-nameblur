@@ -38,16 +38,26 @@ class Tracker:
         # ── 1. Detection objects + phash ──
         det_objects = []
         for d in detections:
-            x, y, w, h = d["rect"]
+            x, y, w, h = d.rect
+
+            x, y, w, h = int(x), int(y), int(w), int(h)
+
+            # 3. Clamp aux bornes du frame (sécurité anti-crash)
+            H, W = frame.shape[:2]
+            x = max(0, min(x, W - 1))    # x dans [0, W-1]
+            y = max(0, min(y, H - 1))    # y dans [0, H-1]
+            w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
+            h = max(1, min(h, H - y))
+
             crop = frame[y:y+h, x:x+w]
             phash = compute_phash(crop)
             det_objects.append(Detection(
-                rect=d["rect"],
+                rect=d.rect,
                 phash=phash,
-                source=d.get("source", source),
-                confidence=d.get("confidence", 1.0),
-                template=d.get("template"),
-                scores=d.get("scores", {}),
+                source=d.source or source,
+                confidence=d.confidence,
+                template=d.template,
+                scores=d.scores,
             ))
 
         active = self.registry.masks

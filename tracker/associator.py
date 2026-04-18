@@ -21,8 +21,15 @@ def compute_iou(rect1: tuple, rect2: tuple) -> float:
     union = w1 * h1 + w2 * h2 - inter
     return inter / union if union > 0 else 0.0
 
-
 def compute_hash_similarity(det_hash: Optional[int], mask: Mask) -> float:
+    if det_hash is None:
+        return 0.0
+    if len(mask.hash_history) == 0:
+        return 0.0
+    return best_hash_similarity(det_hash, mask.hash_history)
+
+
+def compute_hash_similarity1(det_hash: Optional[int], mask: Mask) -> float:
     if det_hash is None or len(mask.hash_history) == 0:
         return 0.0
     return best_hash_similarity(det_hash, mask.hash_history)
@@ -46,6 +53,8 @@ class Associator:
     def compute_score(self, det: Detection, mask: Mask) -> float:
         w_iou, w_hash = self._get_weights(mask)
         iou = compute_iou(det.rect, mask.rect)
+        if not mask.hash_history or det.phash is None:
+            return iou
         hsim = compute_hash_similarity(det.phash, mask)
         return w_iou * iou + w_hash * hsim
 
