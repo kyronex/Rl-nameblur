@@ -51,7 +51,7 @@ if fast_enabled:
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
-    debug_draw = cfg.get("debug.draw", False)
+    debug_draw = cfg.get("debug.overlay.enabled", False)
 
     if fast_enabled:
         print("⚡ FAST TRACKING ACTIVÉ")

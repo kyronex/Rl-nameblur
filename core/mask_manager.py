@@ -102,11 +102,11 @@ def draw_debug(frame, active_masks):
 
 def _ttl_color(ttl):
     if ttl >= 3:
-        return tuple(cfg.get("debug.colors.vert"))
+        return tuple(cfg.get("debug.overlay.colors.vert"))
     elif ttl >= 2:
-        return tuple(cfg.get("debug.colors.rouge"))
+        return tuple(cfg.get("debug.overlay.colors.rouge"))
     else:
-        return tuple(cfg.get("debug.colors.noir"))
+        return tuple(cfg.get("debug.overlay.colors.noir"))
 
 def _ttl_label(ttl, source="S"):
     return f"TTL={ttl} [{source}]"

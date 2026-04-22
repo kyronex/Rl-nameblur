@@ -73,10 +73,10 @@ class FastTrackThread:
 
     # ──────────── NCC sur ROI ────────────
     def _adaptive_margin(self, mask, now):
-        base   = cfg.get("masks.adaptive_margin.margin_base", 10)
-        factor = cfg.get("masks.adaptive_margin.margin_factor", 1.5)
-        m_min  = cfg.get("masks.adaptive_margin.margin_min", 10)
-        m_max  = cfg.get("masks.adaptive_margin.margin_max", 80)
+        base   = cfg.get("masks.adaptive_margin.base", 10)
+        factor = cfg.get("masks.adaptive_margin.factor", 1.5)
+        m_min  = cfg.get("masks.adaptive_margin.min", 10)
+        m_max  = cfg.get("masks.adaptive_margin.max", 80)
 
         speed = math.sqrt(mask.vx * mask.vx + mask.vy * mask.vy)
 
