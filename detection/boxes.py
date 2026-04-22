@@ -21,8 +21,8 @@ def _extract_raw_boxes(masked, params):
 
 # ── _adjust_boxes ──
 def _adjust_boxes(boxes, mask_white, h_img, params):
-    min_blob = params.get("adjust_min_blob_area", 10)
-    expand_search = params.get("expand_search_px", 2)
+    min_blob = params["adjust_min_blob_area"]
+    expand_search = params["expand_search_px"]
     retract_density = 0.25
     result = []
     for box in boxes:
@@ -83,7 +83,7 @@ def _adjust_boxes(boxes, mask_white, h_img, params):
     return result
 
 # ── _merge_nearby_horizontal ──
-def _merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
+def _merge_nearby_horizontal(boxes, max_gap_x, max_gap_y):
     """Fusionne les boxes proches horizontalement et alignées en Y."""
     if not boxes:
         return []
@@ -126,9 +126,9 @@ def _merge_nearby_horizontal(boxes, max_gap_x=30, max_gap_y=10):
 # ── _split_wide_boxes ──
 def _split_wide_boxes(boxes, mask_white, params):
     """Fractionne les boîtes trop larges en sous-blobs via projection verticale."""
-    min_valley_w = params.get("min_valley_width", 8)
-    max_density  = params.get("max_valley_density", 0.10)
-    min_frag_w   = params.get("min_fragment_width", 40)
+    min_valley_w = params["min_valley_width"]
+    max_density  = params["max_valley_density"]
+    min_frag_w   = params["min_fragment_width"]
     result = []
     for box in boxes:
         bx, by, bw, bh = box.rect
@@ -252,11 +252,10 @@ def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
 
     return cc, hreg, mean_h
 
-
 # ══════════════════════════════════════════════════════════════
 # PRÉ-CALCUL GROUPE CHEAP
 # ══════════════════════════════════════════════════════════════
-def _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill=0.08):
+def _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill):
     """
     Calculs légers : numpy basique, 1 seul countNonZero.
     Retourne un dict plat, zéro décision ici.
@@ -308,7 +307,6 @@ def _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill=0.08):
         "tiers_active":       tiers_active,
     }
 
-
 # ══════════════════════════════════════════════════════════════
 # PRÉ-CALCUL GROUPE HEAVY
 # ══════════════════════════════════════════════════════════════
@@ -335,11 +333,10 @@ def _compute_heavy_metrics(crop):
         "s_pf":     pf["s_pf"],
     }
 
-
 # ══════════════════════════════════════════════════════════════
 # DÉCISION EARLY  (lecture seule sur cheap)
 # ══════════════════════════════════════════════════════════════
-def _decide_early(cheap, min_transition=0.20, min_tiers=2):
+def _decide_early(cheap, min_transition, min_tiers):
     # step 0 — binaire absolu
     if cheap["density_raw"] > 0.95:
         return False, "density_raw>0.95"
@@ -372,11 +369,10 @@ def _decide_early(cheap, min_transition=0.20, min_tiers=2):
 
     return True, "ok"
 
-
 # ══════════════════════════════════════════════════════════════
 # DÉCISION FINALE  (lecture seule sur cheap + heavy)
 # ══════════════════════════════════════════════════════════════
-def _decide_final(crop, cheap, heavy, min_proj_score=0.10):
+def _decide_final(crop, cheap, heavy, min_proj_score):
     """
     Step 8 — score + pénalité. ZERO calcul.
     Retourne (result: bool, scores: dict, score_final: float)
@@ -476,11 +472,10 @@ def _decide_final(crop, cheap, heavy, min_proj_score=0.10):
 
     return score > min_proj_score, scores, score, score_brut, fp_penalty
 
-
 # ══════════════════════════════════════════════════════════════
 # POINT D'ENTRÉE PUBLIC
 # ══════════════════════════════════════════════════════════════
-def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill=0.08, min_tiers=2,min_transition=0.20, min_proj_score=0.10):
+def _has_text(roi, x1, y1, x2, y2, cc_stats,min_fill, min_tiers,min_transition, min_proj_score):
     """
     Orchestrateur pur — aucun calcul direct ici.
     Séquence : crop → cheap → early → heavy → final
@@ -859,9 +854,9 @@ def _filter_geometry(boxes, masked, params):
 
 # ── _filter_horizontal_alignment ──
 def _filter_horizontal_alignment(boxes, mask_white, params):
-    max_y_std_ratio = params.get("align_max_y_std_ratio", 0.20)
-    min_cols        = params.get("align_min_cols", 3)
-    min_col_fill    = params.get("align_min_col_fill", 0.15)
+    max_y_std_ratio = params["align_max_y_std_ratio"]
+    min_cols        = params["align_min_cols"]
+    min_col_fill    = params["align_min_col_fill"]
 
     kept = []
     for box in boxes:
@@ -904,9 +899,9 @@ def _filter_horizontal_alignment(boxes, mask_white, params):
 
 # ── _filter_horizontal_bands ──
 def _filter_horizontal_bands(boxes, mask_white, params):
-    min_fill  = params.get("bands_min_fill", 0.15)
-    gap_fill  = params.get("bands_gap_fill", 0.08)
-    max_bands = params.get("bands_max_bands", 2)
+    min_fill  = params["bands_min_fill"]
+    gap_fill  = params["bands_gap_fill"]
+    max_bands = params["bands_max_bands"]
 
     #log.debug(f"bands: min_fill={min_fill} gap_fill={gap_fill} max_bands={max_bands}")
 
@@ -946,9 +941,9 @@ def _filter_horizontal_bands(boxes, mask_white, params):
 
 # ── _filter_perspective_gradient ──
 def _filter_perspective_gradient(boxes, mask_white, params):
-    n_zones        = params.get("n_zones", 4)
-    min_drop_ratio = params.get("min_drop_ratio", 0.50)
-    min_zone_width = params.get("min_zone_width", 8)
+    n_zones        = params["n_zones"]
+    min_drop_ratio = params["min_drop_ratio"]
+    min_zone_width = params["min_zone_width"]
 
     #log.debug(f"gradient: n_zones={n_zones} min_drop_ratio={min_drop_ratio} min_zone_w={min_zone_width}")
 
@@ -1092,13 +1087,6 @@ def process_channel_test(masked, rgb, mask_white, h_img, params, kernels):
     aligned      = _t("_filter_horizontal_alignment", _filter_horizontal_alignment, banded, mask_white, params)
     plates       = _t("_filter_perspective_gradient",      _filter_perspective_gradient, aligned, mask_white, params)
 
-    """
-    screen = rgb.copy()
-    write_rects(screen, plates, get_color("vert"),1)
-
-    cv2.imshow("screen", screen)
-    cv2.waitKey(0)
-    """
     for box in plates:
         box.template = _make_template(box.rect, rgb)
 

@@ -1,6 +1,5 @@
 # core/blur.py
 import cv2
-import numpy as np
 from config import cfg
 
 # ─────────────────────────────────────────
@@ -121,10 +120,10 @@ def apply_blur(frame, plates):
         return
 
     blur_mode     = cfg.get("blur.mode",       "pixelate")
-    pixel_size    = cfg.get("blur.pixel_size",  11)
-    blur_strength = cfg.get("blur.strength",    31)
-    margin        = cfg.get("blur.margin",      0)
-    grid          = cfg.get("blur.snap_grid",   8)
+    pixel_size    = cfg.get("blur.pixel_size",  15)
+    kernel_size   = cfg.get("blur.kernel_size", 31)
+    margin        = cfg.get("blur.margin",       0)
+    grid          = cfg.get("blur.snap_grid",    8)
 
     # NEW: param fusion/skip (facultatif, sinon defaults)
     merge_gap     = cfg.get("blur.merge_gap",  20)      # combien d'espace entre zones pour fusionner
@@ -179,7 +178,7 @@ def apply_blur(frame, plates):
             _pixelate_roi_copy(frame, x1, y1, x2, y2, pixelated_full)
 
     elif blur_mode == "box":
-        ksize = (blur_strength | 1)  # impair
+        ksize = (kernel_size   | 1)  # impair
         # still ROI-based (box blur n'a pas un "full" aussi simple sans coût)
         for (x1, y1, w, h) in rects:
             roi = frame[y1:y1+h, x1:x1+w]
@@ -187,13 +186,13 @@ def apply_blur(frame, plates):
                 cv2.blur(roi, (ksize, ksize), dst=roi)
 
     elif blur_mode == "fill":
-        fill_color = cfg.get("blur.fill_color", (80, 80, 80))
+        fill_color = cfg.get("blur.fill_color", [80, 80, 80])
         for (x1, y1, w, h) in rects:
             frame[y1:y1+h, x1:x1+w] = fill_color
 
     else:
         # gaussian
-        ksize = (blur_strength | 1)
+        ksize = (kernel_size   | 1)
         for (x1, y1, w, h) in rects:
             roi = frame[y1:y1+h, x1:x1+w]
             if roi.size:

@@ -37,22 +37,6 @@ def pad_rect(x, y, w, h, screen_w, screen_h):
     return (x2, y2, w2, h2)
 
 # ═══════════════════════════════════════════════════════
-#  TTL / COULEURS DEBUG
-# ═══════════════════════════════════════════════════════
-
-def _ttl_color(ttl):
-    if ttl >= 3:
-        return tuple(cfg.get("debug.colors.fresh"))
-    elif ttl >= 2:
-        return tuple(cfg.get("debug.colors.persist"))
-    else:
-        return tuple(cfg.get("debug.colors.dying"))
-
-def _ttl_label(ttl, source="S"):
-    return f"TTL={ttl} [{source}]"
-
-
-# ═══════════════════════════════════════════════════════
 #  JITTER + AGE
 # ═══════════════════════════════════════════════════════
 
@@ -111,3 +95,18 @@ def draw_debug(frame, active_masks):
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
             cv2.LINE_AA,
         )
+
+# ═══════════════════════════════════════════════════════
+#  TTL / COULEURS DEBUG
+# ═══════════════════════════════════════════════════════
+
+def _ttl_color(ttl):
+    if ttl >= 3:
+        return tuple(cfg.get("debug.colors.vert"))
+    elif ttl >= 2:
+        return tuple(cfg.get("debug.colors.rouge"))
+    else:
+        return tuple(cfg.get("debug.colors.noir"))
+
+def _ttl_label(ttl, source="S"):
+    return f"TTL={ttl} [{source}]"

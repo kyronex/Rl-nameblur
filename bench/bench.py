@@ -130,5 +130,5 @@ class _BenchTimer:
 
 # ── singleton global ──
 bench = BenchRegistry()
-if cfg.get("debug.bench_enabled", False):
+if cfg.get("debug.bench", False):
     bench.enable()

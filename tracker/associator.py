@@ -7,34 +7,6 @@ from core.mask import Mask
 from tracker.hasher import best_hash_similarity
 from tracker.models import Detection, TrackerConfig
 
-
-def compute_iou(rect1: tuple, rect2: tuple) -> float:
-    x1, y1, w1, h1 = rect1
-    x2, y2, w2, h2 = rect2
-    xa = max(x1, x2)
-    ya = max(y1, y2)
-    xb = min(x1 + w1, x2 + w2)
-    yb = min(y1 + h1, y2 + h2)
-    inter = max(0, xb - xa) * max(0, yb - ya)
-    if inter == 0:
-        return 0.0
-    union = w1 * h1 + w2 * h2 - inter
-    return inter / union if union > 0 else 0.0
-
-def compute_hash_similarity(det_hash: Optional[int], mask: Mask) -> float:
-    if det_hash is None:
-        return 0.0
-    if len(mask.hash_history) == 0:
-        return 0.0
-    return best_hash_similarity(det_hash, mask.hash_history)
-
-
-def compute_hash_similarity1(det_hash: Optional[int], mask: Mask) -> float:
-    if det_hash is None or len(mask.hash_history) == 0:
-        return 0.0
-    return best_hash_similarity(det_hash, mask.hash_history)
-
-
 class Associator:
     def __init__(self, config: Optional[TrackerConfig] = None):
         self.cfg = config or TrackerConfig()
@@ -99,3 +71,30 @@ class Associator:
                 unmatched_masks.discard(mi)
 
         return matches, sorted(unmatched_dets), sorted(unmatched_masks)
+
+
+def compute_iou(rect1: tuple, rect2: tuple) -> float:
+    x1, y1, w1, h1 = rect1
+    x2, y2, w2, h2 = rect2
+    xa = max(x1, x2)
+    ya = max(y1, y2)
+    xb = min(x1 + w1, x2 + w2)
+    yb = min(y1 + h1, y2 + h2)
+    inter = max(0, xb - xa) * max(0, yb - ya)
+    if inter == 0:
+        return 0.0
+    union = w1 * h1 + w2 * h2 - inter
+    return inter / union if union > 0 else 0.0
+
+def compute_hash_similarity(det_hash: Optional[int], mask: Mask) -> float:
+    if det_hash is None:
+        return 0.0
+    if len(mask.hash_history) == 0:
+        return 0.0
+    return best_hash_similarity(det_hash, mask.hash_history)
+
+
+def compute_hash_similarity1(det_hash: Optional[int], mask: Mask) -> float:
+    if det_hash is None or len(mask.hash_history) == 0:
+        return 0.0
+    return best_hash_similarity(det_hash, mask.hash_history)

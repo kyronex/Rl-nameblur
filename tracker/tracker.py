@@ -22,12 +22,13 @@ class Tracker:
         self.cfg = config or TrackerConfig()
         self.registry = MaskRegistry(self.cfg)
         self.associator = Associator(self.cfg)
+        self._cfg_version = -1
 
     # ───────────────────────────────────────────────
     #  API PUBLIQUE
     # ───────────────────────────────────────────────
 
-    def apply_detections(self, frame: np.ndarray, detections: list,ts: float = None, source: str = "slow") -> set:
+    def apply_detections(self, frame: np.ndarray, detections: list, ts: float = None, source: str = "slow") -> set:
         """
         Applique une vague de détections (slow OU fast).
         Returns: set[uid] des masks mis à jour.
@@ -109,7 +110,7 @@ class Tracker:
         # predict pour les non-matchés cette frame
         for mask in self.registry.masks:
             if mask.uid not in updated_uids:
-                predict_position(mask, ts,self.cfg.screen_w, self.cfg.screen_h, self.cfg)
+                predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
 
         self.registry.tick_and_expire(updated_uids)
 
@@ -131,3 +132,37 @@ class Tracker:
             "confirmed": sum(1 for m in all_m if m.state == MaskState.CONFIRMED),
             "lost": sum(1 for m in all_m if m.state == MaskState.LOST),
         }
+
+    # ───────────────────────────────────────────────
+    #  HOT-RELOAD
+    # ───────────────────────────────────────────────
+
+    def reload_config(self, new_config: TrackerConfig) -> None:
+        """
+        Propage un nouveau snapshot de config à tous les sous-composants.
+        À appeler entre deux frames (jamais pendant apply_detections/tick)
+        depuis le thread main, quand cfg.version a changé.
+        """
+        self.cfg = new_config
+        self.registry.cfg = new_config
+        self.associator.cfg = new_config
+        log.info("[Tracker] Config rechargée")
+
+    def maybe_reload(self, cfg) -> bool:
+        """
+        Vérifie la version de `cfg` (objet YAML live) et recharge si changée.
+        À appeler en début de chaque frame — coût steady-state : 1 comparaison int.
+        Returns: True si reload effectué, False sinon.
+        """
+        current = cfg.version
+        if current == self._cfg_version:
+            return False
+        try:
+            self.reload_config(TrackerConfig())
+            log.info(f"[Tracker] Hot-reload v{self._cfg_version}→v{current}")
+            return True
+        except Exception as e:
+            log.error(f"[Tracker] Échec reload: {e}")
+            return False
+        finally:
+            self._cfg_version = current

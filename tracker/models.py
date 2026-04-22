@@ -2,44 +2,46 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
+from config import cfg
 
 @dataclass
 class TrackerConfig:
     # Frame / écran
-    screen_w: int = 1920
-    screen_h: int = 1080
-
-    max_masks: int = 20
-    speed_slow: float = 10.0
-    speed_medium: float = 50.0
-    weights_static: tuple = (0.6, 0.4)
-    weights_medium: tuple = (0.5, 0.5)
-    weights_fast: tuple = (0.8, 0.2)
-    score_threshold: float = 0.3
-
-    # motion — apply_detection
-    motion_smooth_alpha: float = 1.0
-    motion_dead_zone: float = 3.0
-    motion_velocity_dead_zone: float = 10.0
-    motion_dt_slow_max: float = 0.5         # secondes
-    motion_teleport_thresh: float = 300.0   # pixels
-    motion_vx_max: float = 4000.0           # px/s
-    motion_vy_max: float = 2000.0           # px/s
-    motion_vw_max: float = 1000.0           # px/s — vitesse max changement largeur
-    motion_vh_max: float = 500.0            # px/s — vitesse max changement hauteur
-
-    # motion — predict_position
-    predict_dt_cap: float = 0.10            # secondes
-    predict_damping_rate: float = 2.0       # damping = 1 - dt * rate
-    min_mask_size: float = 10.0             # px — taille min prédite w/h
+    screen_w: int = field(default_factory=lambda: cfg.get("screen.width"))
+    screen_h: int = field(default_factory=lambda: cfg.get("screen.height"))
 
     # registry / lifecycle
-    ttl_default: int = 500
-    confirm_hits: int = 1
-    lost_after: int = 500
+    max_masks: int = field(default_factory=lambda: cfg.get("masks.max_masks"))
+    ttl_default: int = field(default_factory=lambda: cfg.get("masks.ttl_default"))
+    confirm_after: int = field(default_factory=lambda: cfg.get("masks.confirm_after"))
+    lost_after: int = field(default_factory=lambda: cfg.get("masks.lost_after"))
 
-    # Hash history
-    hash_history_max: int = 5
+    # associator
+    speed_slow: float = field(default_factory=lambda: cfg.get("masks.associator.speed_slow"))
+    speed_medium: float = field(default_factory=lambda: cfg.get("masks.associator.speed_medium"))
+    weights_static: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_static"))
+    weights_medium: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_medium"))
+    weights_fast: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_fast"))
+    score_threshold: float = field(default_factory=lambda: cfg.get("masks.associator.score_threshold"))
+
+    # motion — apply_detection
+    smooth_alpha: float = field(default_factory=lambda: cfg.get("masks.motion.smooth_alpha"))
+    dead_zone: float = field(default_factory=lambda: cfg.get("masks.motion.dead_zone"))
+    velocity_dead_zone: float = field(default_factory=lambda: cfg.get("masks.motion.velocity_dead_zone"))
+    dt_slow_max: float = field(default_factory=lambda: cfg.get("masks.motion.dt_slow_max"))
+    teleport_thresh: float = field(default_factory=lambda: cfg.get("masks.motion.teleport_thresh"))
+    vx_max: float = field(default_factory=lambda: cfg.get("masks.motion.vx_max"))
+    vy_max: float = field(default_factory=lambda: cfg.get("masks.motion.vy_max"))
+    vw_max: float = field(default_factory=lambda: cfg.get("masks.motion.vw_max"))
+    vh_max: float = field(default_factory=lambda: cfg.get("masks.motion.vh_max"))
+
+    # motion — predict_position
+    dt_cap:       float = field(default_factory=lambda: cfg.get("masks.motion.dt_cap"))
+    damping_rate: float = field(default_factory=lambda: cfg.get("masks.motion.damping_rate"))
+    min_mask_size:        float = field(default_factory=lambda: cfg.get("masks.motion.min_mask_size"))
+
+    # tracker — Hash history
+    hash_history_max: int = field(default_factory=lambda: cfg.get("masks.hash_history_max"))
 
 @dataclass
 class Detection:

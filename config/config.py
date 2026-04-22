@@ -16,6 +16,11 @@ _RESTART_REQUIRED_KEYS = {
     "screen.vcam_fps",
 }
 
+_TUPLE_KEYS = {
+    "masks.associator.weights_static",
+    "masks.associator.weights_medium",
+    "masks.associator.weights_fast",
+}
 def _load_yaml(path: Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -30,6 +35,13 @@ def _flatten(d: dict, prefix: str = "") -> dict:
         else:
             out[key] = v
     return out
+
+def _normalize_tuples(flat: dict) -> dict:
+    """Convertit en tuple les clés listées dans _TUPLE_KEYS."""
+    for k in _TUPLE_KEYS:
+        if k in flat and isinstance(flat[k], list):
+            flat[k] = tuple(flat[k])
+    return flat
 
 def _diff(old: dict, new: dict) -> set:
     keys = set(old) | set(new)
@@ -59,12 +71,13 @@ class Config:
         self._reload_lock = threading.Lock()
         self._watcher_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._version: int = 0
 
         # Chargement initial — fatal si raté
         try:
             raw = _load_yaml(CONFIG_PATH)
             self._data = raw
-            self._flat = _flatten(raw)
+            self._flat = _normalize_tuples(_flatten(raw))
             self._last_good = raw
             self._last_good_flat = self._flat.copy()
             self._file_mtime = CONFIG_PATH.stat().st_mtime
@@ -81,9 +94,18 @@ class Config:
             return self._flat.get(key, default)
 
     def section(self, name: str) -> dict:
-        """cfg.section('masks') → {'ttl_max': 4, ...}"""
+        """cfg.section('masks') → {'ttl_default': 4, ...}"""
         with self._reload_lock:
             return dict(self._data.get(name, {}))
+
+    def version(self) -> int:
+        """
+        Compteur incrémenté à chaque hot-reload réussi.
+        Permet aux consommateurs de détecter un changement de config
+        en O(1) sans comparer les dicts.
+        """
+        with self._reload_lock:
+            return self._version
 
     # ── Hot-reload ─────────────────────────────────────────────────────────
 
@@ -110,7 +132,7 @@ class Config:
                     continue
 
                 raw = _load_yaml(CONFIG_PATH)
-                new_flat = _flatten(raw)
+                new_flat = _normalize_tuples(_flatten(raw))
                 changed = _diff(self._last_good_flat, new_flat)
 
                 restart_needed = changed & _RESTART_REQUIRED_KEYS
@@ -130,6 +152,7 @@ class Config:
                         self._last_good = raw
                         self._last_good_flat = new_flat.copy()
                         self._file_mtime = mtime
+                        self._version += 1
                     logger.info(f"[Config] Rechargé — clés modifiées : {hot_changed}")
 
             except Exception as e:

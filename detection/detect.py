@@ -23,11 +23,11 @@ def _build_params(scale):
     we_high     = tuple(cfg.get("detect.hsv.white_ext.upper",  [230, 30, 255]))
 
     # ── Morpho ──
-    letter_connect_w     = max(round(cfg.get("detect.morpho.white_dilate.width", 15) / scale), 5)
+    letter_connect_w     = max(round(cfg.get("detect.morpho.white_dilate.width", 20) / scale), 5)
     letter_connect_h     = max(round(cfg.get("detect.morpho.white_dilate.height", 10) / scale), 3)
     letter_connect_iter  = cfg.get("detect.morpho.white_dilate.iterations", 1)
 
-    gap_fill_w     = max(round(cfg.get("detect.morpho.close.width", 25) / scale), 3)
+    gap_fill_w     = max(round(cfg.get("detect.morpho.close.width", 30) / scale), 3)
     gap_fill_h     = max(round(cfg.get("detect.morpho.close.height", 2) / scale), 1)
 
     # Tailles hardcodées (à mettre en config si besoin de tuner)
@@ -83,16 +83,16 @@ def _build_params(scale):
     params = {
          # ── Morpho ──
         "max_gap_x":  max(int(cfg.get("detect.morpho.merge.max_gap_x", 30) / scale), 10),
-        "max_gap_y":  max(int(cfg.get("detect.morpho.merge.max_gap_y", 10) / scale), 2),
+        "max_gap_y":  max(int(cfg.get("detect.morpho.merge.max_gap_y", 2) / scale), 2),
         # ── Adjust ──
         "max_expand_x_ratio": cfg.get("detect.adjust.max_expand_x_ratio", 0.5),
         "max_expand_y_ratio": cfg.get("detect.adjust.max_expand_y_ratio", 0.3),
-        "padding": cfg.get("detect.adjust.padding", 3),
+        "padding": cfg.get("detect.adjust.padding", 2),
         "adjust_min_blob_area":    cfg.get("detect.adjust.min_blob_area", 10) ,
         "expand_search_px":    cfg.get("detect.adjust.expand_search_px", 10) ,
         # ── Split ──
-        "min_valley_width": cfg.get("detect.split.min_valley_width", 0.5),
-        "max_valley_density": cfg.get("detect.split.max_valley_density", 0.3),
+        "min_valley_width": cfg.get("detect.split.min_valley_width", 6),
+        "max_valley_density": cfg.get("detect.split.max_valley_density", 0.05),
         "min_fragment_width": cfg.get("detect.split.min_fragment_width", 3),
         # ── Refine ──
         "refine_min_blob_area":    cfg.get("detect.refine.min_blob_area", 10) ,

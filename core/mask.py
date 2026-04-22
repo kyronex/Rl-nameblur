@@ -34,21 +34,21 @@ class Mask:
     frames_matched:     int            = 0
     frames_missing:     int            = 0
 
-    CONFIRM_AFTER:      int            = field(default=3, repr=False)
-    LOST_AFTER:         int            = field(default=5, repr=False)
+    confirm_after:      int            = field(default=3, repr=False)
+    lost_after:         int            = field(default=5, repr=False)
 
     def transition(self, event: str) -> MaskState:
         if event == "matched":
             self.frames_matched += 1
             self.frames_missing = 0
-            if self.state == MaskState.PENDING and self.frames_matched >= self.CONFIRM_AFTER:
+            if self.state == MaskState.PENDING and self.frames_matched >= self.confirm_after:
                 self.state = MaskState.CONFIRMED
             elif self.state == MaskState.LOST:
                 self.state = MaskState.CONFIRMED
         elif event == "missing":
             self.frames_missing += 1
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
-                if self.frames_missing >= self.LOST_AFTER:
+                if self.frames_missing >= self.lost_after:
                     self.state = MaskState.LOST
         return self.state
 

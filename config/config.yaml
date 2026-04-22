@@ -1,69 +1,67 @@
 # config.yaml
-
 screen:
-  width: 1920 #
-  height: 1080 #
-  capture_fps: 120 #
-  vcam_fps: 120 #
-
+  width: 1920 # Résolution de capture — doit correspondre à la résolution réelle de l'écran source (main.py / TrackerConfig)
+  height: 1080 # Résolution de capture — doit correspondre à la résolution réelle de l'écran source (main.py / TrackerConfig)
+  capture_fps: 120 # Fréquence de capture écran — pilote la boucle principale (main.py)
+  vcam_fps: 120 # Fréquence de sortie vers la caméra virtuelle — indépendant du capture_fps (main.py)
 # ── Tracking des masques de flou ──
 masks:
-  ttl_max: 4
-  max_masks: 8
-  update_mask:
-    smooth_alpha: 0.90
-    dead_zone: 10
-    velocity_dead_zone: 10
-    dt_slow_max: 500 # ms → s
-    teleport_thresh: 300 # px
-    vx_max: 4000 # px/s
-    vy_max: 2000 # px/s
-  kill_fast_miss:
-    fast_miss_threshold: 8 # N cycles fast ratés consécutifs avant TTL--
-    fast_miss_timeout_ms: 250 # X ms sans détection fast avant TTL--
-  _adaptive_margin:
-    margin_base: 10
-    margin_factor: 1.5
-    margin_min: 10
-    margin_max: 80
-
-predict:
-  active: true # true ou false
-
-matching:
-  use_ambiguity: true
-  mode: "distance" # "distance" ou "iou"
-  iou_thresh: 0.15
-  dist_thresh: 60
-  ambiguity_ratio: 0.0
-
-# ── Floutage ──
+  max_masks: 20 # Nombre maximum de masques simultanés dans le registry — (registry.py › add)
+  ttl_default: 500 # Durée de vie initiale d'un masque et à chaque match confirmé — réinitialisé par mark_matched() (registry.py)
+  confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
+  lost_after: 500 # Nbr de frames missing consécutives pour basculer PENDING/CONFIRMED → LOST — (mask.py › transition / registry.py › create)
+  hash_history_max: 5 # Taille max du buffer phash par mask — comparaison temporelle de stabilité (tracker.py › apply_detections)
+  associator:
+    speed_slow: 10.0 # Seuil de vitesse (px/frame ou px/s selon unité de vx/vy) sous lequel le mask est considéré "statique"
+    speed_medium: 50.0 # Seuil vitesse sous lequel mask = "moyen" ; au-dessus → "rapide" (associator.py › _get_weights)
+    weights_static: [0.6, 0.4] # (w_iou, w_hash) pour mask statique — IoU dominant, hash en appoint (associator.py › compute_score)
+    weights_medium: [0.5, 0.5] # (w_iou, w_hash) pour mask vitesse moyenne — équilibré (associator.py › compute_score)
+    weights_fast: [0.2, 0.8] # (w_iou, w_hash) pour mask rapide — IoU prioritaire car hash moins fiable sous motion blur
+    score_threshold: 0.3 # Score minimum (IoU+hash pondéré) pour valider un match détection↔mask — (associator.py › associate)
+  motion:
+    smooth_alpha: 1.0 # Facteur EMA pour le lissage position/taille lors d'un match (0.0 = pas de mouvement, 1.0 = snap instantané)
+    dead_zone: 3.0 # Déplacement minimum (px) en x/y/w/h pour considérer qu'un mask a bougé — (motion.py › apply_detection)
+    velocity_dead_zone: 10.0 # Vitesse minimale (px/s) en x/y/w/h pour activer la prédiction de vélocité — en dessous, vx/vy/vw/vh restent à 0
+    dt_slow_max: 0.5 # Délai max (secondes) entre deux détections "slow" avant de considérer le tracking comme périmé
+    teleport_thresh: 300.0 # Distance (pixels) au-delà de laquelle un déplacement est considéré comme un téléport — reset de la vélocité
+    vx_max: 4000.0 # Vitesse max (px/s) en x — au-delà, la vélocité est clampée
+    vy_max: 2000.0 # Vitesse max (px/s) en y — au-delà, la vélocité est clampée
+    vw_max: 1000.0 # Vitesse max (px/s) en largeur — au-delà, la vélocité est clampée
+    vh_max: 500.0 # Vitesse max (px/s) en hauteur — au-delà, la vélocité est clampée
+    dt_cap: 0.10 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
+    damping_rate: 2.0 # Taux d'amortissement : damping = 1 - dt * rate → vélocité s'annule en ~0.5s
+    min_mask_size: 10.0 # Taille min (px) prédite pour w/h — évite un mask dégénéré
+  adaptive_margin:
+    margin_base: 10 # Marge minimale de base (px), masque immobile
+    margin_factor: 1.5 # Multiplicateur appliqué à (vitesse × dt)
+    margin_min: 10 # Borne inférieure après calcul (px)
+    margin_max: 80 # Borne supérieure après calcul (px)
+# ── Floutage des ROIs ──
+# Applique un effet visuel sur chaque masque actif.
+# Pipeline : margin → snap_grid → clamp → filter(min_roi_area) → merge → render
 blur:
-  mode: "pixelate" # "pixelate", "box", "fill", "gaussian"
-  pixel_size: 15
-  strength: 25
-  fill_color: [255, 0, 255] # gris pour mode fill
-  margin: -5
-  snap_grid: 8
-  merge_gap: 20 # combien d'espace entre zones pour fusionner
-  min_roi_area: 100 # ignore les micro-ROIs
-  merge_rects: true
-
+  # — Rendu —
+  mode: "pixelate" # "pixelate" | "box" | "fill" | "gaussian"
+  pixel_size: 15 # [pixelate] taille d'un bloc pixel (px)
+  kernel_size: 25 # [box|gaussian] taille du noyau (forcé impair)
+  fill_color: [255, 0, 255] # [fill] couleur BGR (ici magenta, debug)
+  # — Pipeline ROI —
+  margin: -5 # marge ajoutée autour du masque (px, négatif = rétrécit)
+  snap_grid: 8 # alignement des coords sur grille (px, 1 = désactivé)
+  min_roi_area: 100 # ROI plus petite que N px² → ignorée
+  merge_rects: true # fusionne les ROIs proches en un seul rectangle
+  merge_gap: 20 # distance max (px) entre 2 ROIs pour fusion
 # ── Debug / affichage ──
 debug:
-  bench_enabled: true
-  csv_per_frame: true # CSV A — 1 ligne par frame
-  csv_aggregated: true # CSV B — 1 ligne par intervalle agrégé
-  csv_mask: true # CSV C — 1 ligne par mask
-  csv_agg_interval: 2.0 # secondes entre chaque ligne agrégée
-  log_level: "INFO" # DEBUG       , INFO, WARNING, ERROR
-  draw: false # true ou false
+  draw: false # overlays visuels (rects + uids) sur la vcam  # ⚠ coût non-nul à true (cv2.rectangle/putText)
+  log_level: "INFO" # niveau logging Python # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  bench: true # active timers & compteurs internes (bench.py)
+  csv:
+    per_frame: true # 1 ligne / frame capturée
+    aggregated: true # 1 ligne / agg_interval
+    mask: true # 1 ligne / masque confirmé / frame
+    agg_interval: 2.0 # secondes entre 2 lignes agrégées
   colors:
-    fresh: [0, 255, 0]
-    persist: [0, 255, 255]
-    dying: [0, 0, 255]
-    void: [0, 0, 0]
-  colors_ttl:
     rouge: [255, 0, 0] # Rouge
     orange: [255, 165, 0] # Orange
     jaune: [255, 255, 0] # Jaune
@@ -71,84 +69,76 @@ debug:
     cyan: [0, 200, 255] # Cyan
     bleu: [0, 0, 255] # Bleu
     magenta: [255, 0, 255] # Magenta
-    gris: [222, 222, 222]
-    void: [0, 0, 0]
-
+    gris: [222, 222, 222] # Gris
+    noir: [0, 0, 0] # Noir
 # ── Détection des cartouches de noms ──
 detect:
   slow:
-    scale: 2.0 #
+    scale: 2.0 # Facteur de downscale de la frame (detect.py › detect_plates / _build_params)
   fast:
-    scale: 2.0
-    max_stale_frames: 15
-    ncc_threshold: 0.6
-    roi_margin: 0.3 # +% chaque côté
-    enabled: true
-    event_timeout_s: 0.5
+    enabled: true # Active le FastTracker (thread parallèle de suivi inter-frames ) — (main.py › bootstrap). false = pipeline slow uniquement à chaque frame.
+    max_stale_frames: 15 # Nbr de frames consécutives où le tracking NCC échoue avant d'émettre rect=None (mask perdu) — (fast_track_thread.py › _worker).
+    ncc_threshold: 0.6 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match). <0.6 = match rejeté → incrément stale.
+    roi_margin: 0.3 # ⚠ DEAD — utilisé comme fallback si adaptive_margin absent, mais _ncc_on_roi reçoit toujours margin=_adaptive_margin() depuis _worker. Voir point #14.
+    event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker). Au-delà, boucle repart (permet check _running pour stop propre).
   hsv:
-    white_core:
+    white_core: # Seuils HSV du blanc "strict" (cœur du cartouche) — Zone haute luminance, saturation très basse.
       lower: [0, 0, 200]
       upper: [230, 35, 255]
-    white_ext:
+    white_ext: # Seuils HSV du blanc "étendu" (halo/anti-aliasing autour du cœur) — utilisé pour dilatation conditionnelle.
       lower: [0, 0, 210]
       upper: [180, 35, 255]
-  flat:
-    kernel_w: 31
-    kernel_h: 9
-    variance_thresh: 5
-    min_area: 300
-    margin: 20
   morpho:
-    white_dilate:
+    white_dilate: # Kernel "letter_connect" — Étape 2b du pipeline
       width: 20
       height: 10
       iterations: 1
-    close:
+    close: # Kernel "gap_fill" — Étape 7a du pipeline
       width: 10
       height: 3
-    merge:
+    merge: # Seuils de fusion de boîtes proches — Étape 6 (refine_and_merge)
       max_gap_x: 30
       max_gap_y: 2
-  adjust:
-    max_expand_x_ratio: 0.5
-    max_expand_y_ratio: 0.3
-    padding: 2
-    adjust_min_blob_area: 10
-    expand_search_px: 10
-  split:
-    min_valley_width: 6
-    max_valley_density: 0.05
-    min_fragment_width: 3
-  refine:
-    refine_min_blob_area: 10
-    min_text_fill: 0.08 # variance colonnes pour texte
-    min_transition: 0.10
-    min_proj_score: 0.10
-    thresh:
+  adjust: # Ajustement fin des boîtes détectées : ré-expansion/recadrage autour du contenu réel du cartouche
+    max_expand_x_ratio: 0.5 # Expansion horizontale max autorisée, en ratio de la largeur initiale de la boîte (0.5 = +50% max).
+    max_expand_y_ratio: 0.3 # Expansion verticale max autorisée, en ratio de la hauteur initiale de la boîte (0.3 = +30% max).
+    padding: 2 # Marge (px) ajoutée autour de la boîte finale après ajustement.
+    adjust_min_blob_area: 10 # Aire min (px²) d'un blob pour être considéré pendant l'ajustement. Filtre le bruit
+    expand_search_px: 10 # Distance de recherche (px) autour de la boîte
+  split: # Fractionnement des boîtes trop larges qui contiennent plusieurs pseudos accolés
+    min_valley_width: 6 # Largeur min (px) d'une vallée pour valider une coupe. Plus petit = coupe plus agressive.
+    max_valley_density: 0.05 # Densité max pixels blancs par colonne pour la considérer "vide" . 0.05 = ≤5% de blanc → vallée.
+    min_fragment_width: 3 # Largeur min (px) d'un fragment après découpe pour être conservé. Filtre les miettes.
+  refine: # re-segmente chaque boîte candidate en sous-groupes de composantes connexes (CC), vérifie qu'ils ressemblent vraiment à du texte.
+    refine_min_blob_area: 10 # Aire min (px²) d'une composante connexe (lettre/tache) pour être retenue après dilatation ROI. < 10 = bruit, ignoré
+    min_text_fill: 0.08 # Score min de "remplissage texte" (variance normalisée des projections colonnes).
+    min_transition: 0.10 # Score min de transitions verticales (nb de passages blanc↔noir). Texte = nombreuses transitions. Filtre blocs uniformes.
+    min_proj_score: 0.10 # Score min combiné de projection (agrégat fill + transition). Seuil global de validation texte.
+    thresh: # Validation du fond derrière le texte
       var_norm: 1100.0
       coherent_delta: 30
       min_bg_score: 0.10
       hue_bin_size: 6
       max_hue_bins: 8
       min_hue_score: 0.65
-  geometry:
-    min_area: 500
-    max_area: 80000
-    min_width: 30
-    min_height: 10
-    min_ratio: 1.45
-    max_ratio: 18.0
-    min_fill: 0.15
-    max_fill: 0.95
-  horizontal_bands:
-    bands_min_fill: 0.15
-    bands_gap_fill: 0.08
-    bands_max_bands: 2
-  horizontal_alignment:
-    align_max_y_std_ratio: 0.20
-    align_min_cols: 3
-    align_min_col_fill: 0.15
-  gradient:
-    n_zones: 4
+  geometry: # Filtre géométrique final sur les boxes mergées
+    min_area: 500 # Aire min (px²) de la box
+    max_area: 80000 # Aire max (px²).
+    min_width: 30 # Largeur min (px).
+    min_height: 10 # Hauteur min (px).
+    min_ratio: 1.45 # Ratio w/h min. Un pseudo est toujours plus large que haut.
+    max_ratio: 18.0 # Ratio w/h max.
+    min_fill: 0.15 # Ratio min de pixels non-nuls dans `masked` sur l'aire totale. Sous 15% → box quasi-vide (faux positif).
+    max_fill: 0.95 # Ratio max. Au-dessus → bloc plein uniforme (pas de structure texte)
+  horizontal_bands: # Filtre anti-multi-lignes . Détecte les boxes contenant plusieurs bandes horizontales empilées.
+    bands_min_fill: 0.15 # Ratio min de pixels blancs sur une ligne pour entrer dans une "bande". Hystérésis haute.
+    bands_gap_fill: 0.08 # Ratio sous lequel on considère être dans un "gap" entre bandes. Hystérésis basse. Entre gap_fill et min_fill → on reste dans l'état courant (anti-bruit).
+    bands_max_bands: 2 # Nb max de bandes tolérées.
+  horizontal_alignment: # Filtre d'alignement horizontal. Un pseudo a ses lettres alignées sur une baseline ~constante.
+    align_max_y_std_ratio: 0.20 # Écart-type max des centres de masse Y par colonne, normalisé par h. >0.20 → lettres dispersées verticalement.
+    align_min_cols: 3 # Nb min de colonnes "actives" requis pour appliquer le test. Sous ce seuil → box gardée par défaut (pas assez de signal).
+    align_min_col_fill: 0.15 # Ratio min de pixels blancs dans une colonne pour la considérer "active" (fournit un centre de masse Y fiable).
+  gradient: # Filtre anti-perspective. Rejette les boxes dont la densité décroît/croît monotonement (ombre, reflet, bord d'UI en biais).
+    n_zones: 4 # Nb de zones verticales pour découper la box en tranches d'égale largeur.
     min_drop_ratio: 0.50
-    min_zone_width: 8
+    min_zone_width: 8 # Largeur min (px) d'une zone. Si w/n_zones < 8 → box trop étroite pour test fiable, gardée par défaut.

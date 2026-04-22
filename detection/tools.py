@@ -28,5 +28,5 @@ def write_circles(image, circles, color, thickness=2):
 
 # ── get_color ──
 def get_color(name: str, default: tuple = (0, 0, 0)) -> tuple:
-    value = cfg.get(f"debug.colors_ttl.{name}")
+    value = cfg.get(f"debug.colors.{name}")
     return tuple(value) if value is not None else default

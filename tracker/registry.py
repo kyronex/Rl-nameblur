@@ -6,11 +6,9 @@ from tracker.models import TrackerConfig
 
 class MaskRegistry:
     def __init__(self, config: TrackerConfig):
-        self.cfg = config
         self._masks: Dict[int, Mask] = {}
         self._next_uid: int = 0
-        self.max_masks = config.max_masks
-        self.ttl_default = config.ttl_default
+        self.cfg = config
 
     # ── accès ─────────────────────────────────────────────
     @property
@@ -30,13 +28,12 @@ class MaskRegistry:
     def add(self, mask: Mask) -> Mask:
         if mask.uid in self._masks:
             raise ValueError(f"uid {mask.uid} déjà présent")
-        if len(self._masks) >= self.max_masks:
+        if len(self._masks) >= self.cfg.max_masks:
             self._evict_one()
         self._masks[mask.uid] = mask
         return mask
 
-    def create(self, rect: tuple, ts: float, source: str = "slow",
-               confidence: float = 0.0, **kwargs) -> Mask:
+    def create(self, rect: tuple, ts: float, source: str = "slow",confidence: float = 0.0, **kwargs) -> Mask:
         uid = self._next_uid
         self._next_uid += 1
         mask = Mask(
@@ -45,10 +42,10 @@ class MaskRegistry:
             last_detected_rect=rect,
             last_detected_ts=ts,
             last_source=source,
-            ttl=self.ttl_default,
+            ttl=self.cfg.ttl_default,
             confidence=confidence,
-            CONFIRM_AFTER=self.cfg.confirm_hits,
-            LOST_AFTER=self.cfg.lost_after,
+            confirm_after=self.cfg.confirm_after,
+            lost_after=self.cfg.lost_after,
             **kwargs,
         )
         return self.add(mask)
@@ -61,7 +58,7 @@ class MaskRegistry:
         mask = self._masks.get(uid)
         if mask:
             mask.transition("matched")
-            mask.ttl = self.ttl_default
+            mask.ttl = self.cfg.ttl_default
 
     # ── expiration ────────────────────────────────────────
     def tick_and_expire(self, matched_uids: set = None) -> List[Mask]:

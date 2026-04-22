@@ -17,7 +17,7 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
     nx, ny, nw, nh = new_rect
     ox, oy, ow, oh = mask.rect
 
-    dead_zone = config.motion_dead_zone
+    dead_zone = config.dead_zone
 
     # ── Dead zone : pas de mouvement significatif ──
     if (abs(nx - ox) < dead_zone and abs(ny - oy) < dead_zone
@@ -39,20 +39,14 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
             delta_y = ny - ly
             dist = (delta_x ** 2 + delta_y ** 2) ** 0.5
 
-            if dt > config.motion_dt_slow_max:
-                log.debug(
-                    f"uid={mask.uid} reset velocity "
-                    f"dt={dt * 1000:.0f}ms > max={config.motion_dt_slow_max * 1000:.0f}ms"
-                )
+            if dt > config.dt_slow_max:
+                log.debug(f"uid={mask.uid} reset velocity "f"dt={dt * 1000:.0f}ms > max={config.dt_slow_max * 1000:.0f}ms")
                 mask.vx = 0.0
                 mask.vy = 0.0
                 mask.vw = 0.0
                 mask.vh = 0.0
-            elif dist > config.motion_teleport_thresh:
-                log.debug(
-                    f"uid={mask.uid} teleport reset "
-                    f"dist={dist:.0f}px > thresh={config.motion_teleport_thresh}px"
-                )
+            elif dist > config.teleport_thresh:
+                log.debug(f"uid={mask.uid} teleport reset "f"dist={dist:.0f}px > thresh={config.teleport_thresh}px")
                 mask.vx = 0.0
                 mask.vy = 0.0
                 mask.vw = 0.0
@@ -64,22 +58,24 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
                 raw_vh = (nh - lh) / dt
 
                 # Dead zone vélocité position
-                if abs(raw_vx) < config.motion_velocity_dead_zone:
+                velocity_dead_zone = config.velocity_dead_zone
+
+                if abs(raw_vx) < velocity_dead_zone:
                     raw_vx = 0.0
-                if abs(raw_vy) < config.motion_velocity_dead_zone:
+                if abs(raw_vy) < velocity_dead_zone:
                     raw_vy = 0.0
                 # Dead zone vélocité taille (même seuil)
-                if abs(raw_vw) < config.motion_velocity_dead_zone:
+                if abs(raw_vw) < velocity_dead_zone:
                     raw_vw = 0.0
-                if abs(raw_vh) < config.motion_velocity_dead_zone:
+                if abs(raw_vh) < velocity_dead_zone:
                     raw_vh = 0.0
 
                 # Clamp position
-                raw_vx = max(-config.motion_vx_max, min(raw_vx, config.motion_vx_max))
-                raw_vy = max(-config.motion_vy_max, min(raw_vy, config.motion_vy_max))
+                raw_vx = max(-config.vx_max, min(raw_vx, config.vx_max))
+                raw_vy = max(-config.vy_max, min(raw_vy, config.vy_max))
                 # Clamp taille
-                raw_vw = max(-config.motion_vw_max, min(raw_vw, config.motion_vw_max))
-                raw_vh = max(-config.motion_vh_max, min(raw_vh, config.motion_vh_max))
+                raw_vw = max(-config.vw_max, min(raw_vw, config.vw_max))
+                raw_vh = max(-config.vh_max, min(raw_vh, config.vh_max))
 
                 mask.vx = raw_vx
                 mask.vy = raw_vy
@@ -87,7 +83,7 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
                 mask.vh = raw_vh
 
     # ── EMA smoothing ──
-    alpha = config.motion_smooth_alpha
+    alpha = config.smooth_alpha
     sx = ox + alpha * (nx - ox)
     sy = oy + alpha * (ny - oy)
     sw = ow + alpha * (nw - ow)
@@ -109,8 +105,8 @@ def predict_position(mask, now, screen_w, screen_h, config):
     Prédit aussi w/h via vw/vh.
     """
     dt = now - mask.last_detected_ts
-    dt_capped = min(dt, config.predict_dt_cap)
-    damping = max(0.0, 1.0 - dt * config.predict_damping_rate)
+    dt_capped = min(dt, config.dt_cap)
+    damping = max(0.0, 1.0 - dt * config.damping_rate)
 
     lx, ly, lw, lh = mask.last_detected_rect
 

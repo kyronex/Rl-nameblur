@@ -22,15 +22,15 @@ _agg_enabled = False
 _mask_enabled = False
 
 def csv_open():
-    """Ouvre 0, 1 ou 2 fichiers CSV selon la config."""
+    """Ouvre 0, 1, 2 ou 3 fichiers CSV selon la config."""
     global _frame_file, _frame_writer, _frame_headers_written
     global _agg_file, _agg_writer, _agg_headers_written
     global _mask_file, _mask_writer, _mask_headers_written
     global _frame_enabled, _agg_enabled,_mask_enabled
 
-    _frame_enabled = cfg.get("debug.csv_per_frame", False)
-    _agg_enabled = cfg.get("debug.csv_aggregated", False)
-    _mask_enabled = cfg.get("debug.csv_mask", False)
+    _frame_enabled = cfg.get("debug.csv.per_frame", False)
+    _agg_enabled = cfg.get("debug.csv.aggregated", False)
+    _mask_enabled = cfg.get("debug.csv.mask", False)
 
     if not _frame_enabled and not _agg_enabled and not _mask_enabled:
         return
@@ -97,7 +97,7 @@ def csv_write_mask(row: dict):
     _mask_writer.writerow(cleaned)
 
 def csv_flush():
-    """Flush les deux fichiers si ouverts."""
+    """Flush les trois fichiers si ouverts."""
     if _frame_file is not None:
         _frame_file.flush()
     if _agg_file is not None:

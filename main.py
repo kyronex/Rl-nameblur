@@ -51,8 +51,7 @@ if fast_enabled:
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     print(f"✅ Caméra virtuelle prête → {vcam.device}")
-    debug_draw = cfg.get("debug.draw")
-    predict    = cfg.get("predict.active", True)
+    debug_draw = cfg.get("debug.draw", False)
 
     if fast_enabled:
         print("⚡ FAST TRACKING ACTIVÉ")
@@ -65,8 +64,12 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     frame_count = 0
     csv_open()
 
-    csv_agg_interval = cfg.get("debug.csv_agg_interval", 2.0)
+    csv_agg_interval = cfg.get("debug.csv.agg_interval", 2.0)
     last_agg_time    = time.perf_counter()
+
+    # ── DEBUG state (delta minimal) ──
+    _dbg_prev_all = 0
+    _dbg_prev_confirmed = 0
 
     try:
         active_masks       = []
@@ -76,6 +79,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         last_csv_frame      = -1
 
         while True:
+            tracker.maybe_reload(cfg)
             t_loop_start = time.perf_counter()
             now = time.perf_counter()
 
@@ -114,6 +118,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)
                                       if detected_frame_ts else 0.0)
 
+                    print(f"[SLOW] v={current_version} plates={len(new_plates) if new_plates else 0}")
+
             with bench.timer("match"):
                 if slow_updated and new_plates:
                     dets = [Detection(
@@ -124,6 +130,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         scores=box.scores,
                     ) for box in new_plates]
                     updated_uids |= tracker.apply_detections(frame, dets, detect_ts, "slow")
+
+                    print(f"  └─ apply slow: dets={len(dets)} updated={len(updated_uids)} "f"all={len(tracker.all_masks())}")
 
             # ── 3b. Fast track ──
             with bench.timer("fast_poll"):
@@ -140,10 +148,19 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         if dets:
                             updated_uids |= tracker.apply_detections(frame, dets, fast_ts, "fast")
 
+                            print(f"[FAST] v={fast_version} dets={len(dets)} " f"updated={len(updated_uids)} all={len(tracker.all_masks())}")
+
             # ── 4. Tick (predict + TTL + purge) ──
             with bench.timer("predict"):
                 confirmed = tracker.tick(now, updated_uids)
                 row_predicted = 1 if (len(tracker.all_masks()) - len(updated_uids)) > 0 else 0
+
+            _all_n = len(tracker.all_masks())
+            _conf_n = len(confirmed)
+            if _all_n != _dbg_prev_all or _conf_n != _dbg_prev_confirmed:
+                print(f"[TICK] all {_dbg_prev_all}→{_all_n} | confirmed {_dbg_prev_confirmed}→{_conf_n}")
+                _dbg_prev_all = _all_n
+                _dbg_prev_confirmed = _conf_n
 
             active_masks = confirmed  # pour fast_tracker.give_frame_and_masks
 
