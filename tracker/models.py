@@ -43,6 +43,27 @@ class TrackerConfig:
     # tracker — Hash history
     hash_history_max: int = field(default_factory=lambda: cfg.get("masks.hash_history_max"))
 
+    def __post_init__(self):
+        # YAML parse [a, b] en list → on force en tuple (immutable, conforme à l'annotation)
+        self.weights_static = tuple(self.weights_static)
+        self.weights_medium = tuple(self.weights_medium)
+        self.weights_fast = tuple(self.weights_fast)
+
+        if len(self.weights_static) != 2 or len(self.weights_medium) != 2 or len(self.weights_fast) != 2:
+            raise ValueError("TrackerConfig: weights_* doivent contenir exactement 2 valeurs (w_iou, w_hash)")
+
+        if self.ttl_default < self.lost_after:
+            raise ValueError(
+                f"TrackerConfig: ttl_default ({self.ttl_default}) < lost_after ({self.lost_after}) — "
+                "un mask peut expirer par TTL avant d'être marqué LOST. "
+                "Augmente ttl_default ou diminue lost_after dans config.yaml."
+            )
+        if self.confirm_after >= self.lost_after:
+            raise ValueError(
+                f"TrackerConfig: confirm_after ({self.confirm_after}) >= lost_after ({self.lost_after}) — "
+                "un mask ne pourra jamais être confirmé avant d'être perdu."
+            )
+
 @dataclass
 class Detection:
     rect: tuple

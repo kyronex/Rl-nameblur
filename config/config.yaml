@@ -151,7 +151,7 @@ debug:
       gris: [222, 222, 222]
       noir: [0, 0, 0]
   bench:
-    enabled: true
+    enabled: false
   csv:
     per_frame: true # 1 ligne / frame capturée
     aggregated: true # 1 ligne / agg_interval
