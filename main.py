@@ -79,7 +79,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         last_csv_frame      = -1
 
         while True:
-            tracker.maybe_reload(cfg)
+            tracker.maybe_reload()
             t_loop_start = time.perf_counter()
             now = time.perf_counter()
 

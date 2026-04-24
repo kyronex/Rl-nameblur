@@ -27,12 +27,16 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
         mask.last_source = source
         if source == "slow":
             mask.last_detected_rect = new_rect
+            mask.last_slow_ts = detect_ts
         return
 
     # ── Vélocité : uniquement sur détections slow ──
     if source == "slow":
         lx, ly, lw, lh = mask.last_detected_rect
-        dt = detect_ts - mask.last_detected_ts
+        if mask.last_slow_ts <= 0.0:
+            dt = 0.0
+        else:
+            dt = detect_ts - mask.last_slow_ts
 
         if dt > 0.001:
             delta_x = nx - lx
@@ -96,6 +100,7 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
 
     if source == "slow":
         mask.last_detected_rect = new_rect
+        mask.last_slow_ts = detect_ts
 
 
 def predict_position(mask, now, screen_w, screen_h, config):

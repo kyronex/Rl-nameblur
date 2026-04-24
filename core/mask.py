@@ -1,8 +1,9 @@
 # core/mask.py — Dataclass Mask (étape 2)
 from __future__ import annotations
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List
+from typing import Optional, List , Deque
 import numpy as np
 from core.box import Box
 
@@ -14,9 +15,10 @@ class MaskState(Enum):
 @dataclass
 class Mask:
     uid:                int
-    rect:               tuple                          # (x, y, w, h)
-    last_detected_rect: tuple                          # (x, y, w, h)
+    rect:               tuple   # (x, y, w, h)
+    last_detected_rect: tuple
     last_detected_ts:   float
+    last_slow_ts:       float          = 0.0
     last_source:        str            = "new"
     ttl:                int            = 0
     vx:                 float          = 0.0
@@ -30,12 +32,17 @@ class Mask:
     scores:             List[float]    = field(default_factory=list)
 
     state:              MaskState      = MaskState.PENDING
-    hash_history:       List[int]      = field(default_factory=list)
     frames_matched:     int            = 0
     frames_missing:     int            = 0
 
     confirm_after:      int            = field(default=3, repr=False)
     lost_after:         int            = field(default=5, repr=False)
+    hash_history_max:   int            = field(default=5, repr=False)
+
+    hash_history:       Deque[int]     = field(init=False)
+
+    def __post_init__(self):
+        self.hash_history = deque(maxlen=self.hash_history_max)
 
     def transition(self, event: str) -> MaskState:
         if event == "matched":
@@ -51,11 +58,6 @@ class Mask:
                 if self.frames_missing >= self.lost_after:
                     self.state = MaskState.LOST
         return self.state
-
-    def add_hash(self, h: int, max_history: int = 5) -> None:
-        self.hash_history.append(h)
-        if len(self.hash_history) > max_history:
-            self.hash_history = self.hash_history[-max_history:]
 
     def to_dict(self) -> dict:
         return {

@@ -41,11 +41,13 @@ class MaskRegistry:
             rect=rect,
             last_detected_rect=rect,
             last_detected_ts=ts,
+            last_slow_ts=ts if source == "slow" else 0.0,
             last_source=source,
             ttl=self.cfg.ttl_default,
             confidence=confidence,
             confirm_after=self.cfg.confirm_after,
             lost_after=self.cfg.lost_after,
+            hash_history_max=self.cfg.hash_history_max,
             **kwargs,
         )
         return self.add(mask)

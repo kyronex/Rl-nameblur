@@ -6,6 +6,7 @@ Orchestrateur principal du tracking.
 import time
 import logging
 import numpy as np
+from config import cfg as _global_cfg
 from tracker.models import TrackerConfig, Detection
 from tracker.registry import MaskRegistry
 from tracker.associator import Associator
@@ -15,14 +16,13 @@ from core.mask import MaskState
 
 log = logging.getLogger("tracker")
 
-
 class Tracker:
 
     def __init__(self, config: TrackerConfig = None):
         self.cfg = config or TrackerConfig()
         self.registry = MaskRegistry(self.cfg)
         self.associator = Associator(self.cfg)
-        self._cfg_version = -1
+        self._cfg_version = _global_cfg.version
 
     # ───────────────────────────────────────────────
     #  API PUBLIQUE
@@ -34,14 +34,13 @@ class Tracker:
         Returns: set[uid] des masks mis à jour.
         """
         if ts is None:
-            ts = time.time()
+            ts = time.perf_counter()
+        H, W = frame.shape[:2]
 
         # ── 1. Detection objects + phash ──
         det_objects = []
         for d in detections:
-            x, y, w, h = d.rect
-
-            x, y, w, h = int(x), int(y), int(w), int(h)
+            x, y, w, h = (int(v) for v in d.rect)
 
             # 3. Clamp aux bornes du frame (sécurité anti-crash)
             H, W = frame.shape[:2]
@@ -50,10 +49,12 @@ class Tracker:
             w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
             h = max(1, min(h, H - y))
 
+            clamped_rect = (x, y, w, h)
             crop = frame[y:y+h, x:x+w]
             phash = compute_phash(crop)
+
             det_objects.append(Detection(
-                rect=d.rect,
+                rect=clamped_rect,
                 phash=phash,
                 source=d.source or source,
                 confidence=d.confidence,
@@ -74,8 +75,6 @@ class Tracker:
             apply_detection(mask, det.rect, ts, det.source, self.cfg)
             if det.phash is not None:
                 mask.hash_history.append(det.phash)
-                if len(mask.hash_history) > self.cfg.hash_history_max:
-                    mask.hash_history.pop(0)
             mask.confidence = det.confidence
             if det.template is not None:
                 mask.template = det.template
@@ -104,7 +103,7 @@ class Tracker:
         Returns: list[Mask] CONFIRMED.
         """
         if ts is None:
-            ts = time.time()
+            ts = time.perf_counter()
         updated_uids = updated_uids or set()
 
         # predict pour les non-matchés cette frame
@@ -148,21 +147,21 @@ class Tracker:
         self.associator.cfg = new_config
         log.info("[Tracker] Config rechargée")
 
-    def maybe_reload(self, cfg) -> bool:
+    def maybe_reload(self) -> bool:
         """
-        Vérifie la version de `cfg` (objet YAML live) et recharge si changée.
+        Vérifie la version du singleton `cfg` global et recharge si changée.
         À appeler en début de chaque frame — coût steady-state : 1 comparaison int.
         Returns: True si reload effectué, False sinon.
         """
-        current = cfg.version
+        current = _global_cfg.version
         if current == self._cfg_version:
             return False
+        old_version = self._cfg_version
         try:
             self.reload_config(TrackerConfig())
-            log.info(f"[Tracker] Hot-reload v{self._cfg_version}→v{current}")
-            return True
         except Exception as e:
-            log.error(f"[Tracker] Échec reload: {e}")
+            log.error(f"[Tracker] Échec reload v{old_version}→v{current}: {e}")
             return False
-        finally:
-            self._cfg_version = current
+        self._cfg_version = current
+        log.info(f"[Tracker] Hot-reload v{old_version}→v{current}")
+        return True
