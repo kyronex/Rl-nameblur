@@ -52,11 +52,14 @@ class Mask:
                 self.state = MaskState.CONFIRMED
             elif self.state == MaskState.LOST:
                 self.state = MaskState.CONFIRMED
+                self.frames_matched = 1
         elif event == "missing":
             self.frames_missing += 1
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
                 if self.frames_missing >= self.lost_after:
                     self.state = MaskState.LOST
+                    self.frames_matched = 0  # ← reset à l'entrée dans LOST
+                    self.frames_missing = 0
         return self.state
 
     def to_dict(self) -> dict:

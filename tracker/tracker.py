@@ -104,7 +104,8 @@ class Tracker:
         """
         if ts is None:
             ts = time.perf_counter()
-        updated_uids = updated_uids or set()
+        if updated_uids is None:
+            updated_uids = set()
 
         # predict pour les non-matchés cette frame
         for mask in self.registry.masks:
@@ -113,8 +114,7 @@ class Tracker:
 
         self.registry.tick_and_expire(updated_uids)
 
-        return [m for m in self.registry.masks
-                if m.state == MaskState.CONFIRMED]
+        return [m for m in self.registry.masks if m.state == MaskState.CONFIRMED]
 
     # ───────────────────────────────────────────────
     #  ACCESSEURS DEBUG

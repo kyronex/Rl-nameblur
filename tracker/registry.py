@@ -1,8 +1,11 @@
 # tracker/registry.py
 from __future__ import annotations
+import logging
 from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 from tracker.models import TrackerConfig
+
+log = logging.getLogger("registry")
 
 class MaskRegistry:
     def __init__(self, config: TrackerConfig):
@@ -48,6 +51,9 @@ class MaskRegistry:
             confirm_after=self.cfg.confirm_after,
             lost_after=self.cfg.lost_after,
             hash_history_max=self.cfg.hash_history_max,
+            state=MaskState.PENDING,
+            frames_matched=1,   # ← la détection qui crée le mask COMPTE comme 1er match
+            frames_missing=0,
             **kwargs,
         )
         return self.add(mask)
@@ -63,12 +69,21 @@ class MaskRegistry:
             mask.ttl = self.cfg.ttl_default
 
     # ── expiration ────────────────────────────────────────
-    def tick_and_expire(self, matched_uids: set = None) -> List[Mask]:
-        if matched_uids is None:
-            matched_uids = set()
+    def tick_and_expire(self, updated_uids: set = None) -> List[Mask]:
+        """
+        Invariant cycle de vie :
+        - mask matched   : ttl reset + transition("matched") via mark_matched()
+        - mask non matched : ttl-- + transition("missing")
+        - Suppression ssi (ttl <= 0 AND state == LOST)
+
+        Grâce à ttl_default >= lost_after (validé au chargement config),
+        un mask atteint toujours LOST avant d'être supprimé.
+        """
+        if updated_uids is None:
+            updated_uids = set()
         expired = []
         for mask in list(self._masks.values()):
-            if mask.uid in matched_uids:
+            if mask.uid in updated_uids:
                 continue
             mask.ttl -= 1
             mask.transition("missing")
@@ -88,5 +103,10 @@ class MaskRegistry:
                 1 if m.state == MaskState.PENDING else 2,
                 m.ttl,
             ),
+        )
+        log.warning(
+            "registry: capacity full (%d/%d), evicting uid=%d state=%s ttl=%d",
+            len(self._masks), self.cfg.max_masks,
+            worst.uid, worst.state.name, worst.ttl,
         )
         del self._masks[worst.uid]
