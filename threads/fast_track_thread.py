@@ -2,7 +2,9 @@
 import cv2
 import threading
 import math
+from typing import List
 from config import cfg
+from core.mask import FastMaskView
 from detection.detect import ncc_match
 from core.optical_flow import of_track
 
@@ -22,7 +24,7 @@ class FastTrackThread:
 
         self._latest_frame = None
         self._latest_frame_ts = 0.0
-        self._latest_masks = []
+        self._latest_views = []
         self._frame_lock = threading.Lock()
 
         self._new_frame_event = threading.Event()
@@ -59,12 +61,12 @@ class FastTrackThread:
 
     # ──────────── Interface ────────────
 
-    def give_frame_and_masks(self,frame, masks, frame_ts):
+    def give_frame_and_views(self, frame, views: List[FastMaskView], frame_ts: float):
         with self._frame_lock:
             #self._latest_frame = frame
             self._latest_frame = frame.copy()
             self._latest_frame_ts = frame_ts
-            self._latest_masks = list(masks)
+            self._latest_views = list(views)
         self._new_frame_event.set()
 
     def get_results(self):
@@ -87,7 +89,7 @@ class FastTrackThread:
         margin = base + speed * dt * factor
         return int(max(m_min, min(margin, m_max)))
 
-    def _ncc_on_roi(self, gray, rect, template,margin=None):
+    def _ncc_on_roi(self, gray, rect, template, margin=None):
         x, y, w, h = rect
         if margin is None:
             margin = self._roi_margin
@@ -123,13 +125,13 @@ class FastTrackThread:
             if not triggered:
                 continue
 
-            # ── 1. Récupérer frame + masques ──
+            # ── 1. Récupérer frame + view ──
             with self._frame_lock:
                 frame = self._latest_frame
                 frame_ts = self._latest_frame_ts
-                masks = self._latest_masks
+                views = self._latest_views
 
-            if frame is None or not masks:
+            if frame is None or not views:
                 self._prev_gray = None
                 continue
 
@@ -144,26 +146,26 @@ class FastTrackThread:
             if self._prev_gray is None:
                 self._prev_gray = curr_gray
                 results = []
-                for m in masks:
-                    self._last_known[m.uid] = {"rect": m.rect, "stale": 0}
-                    results.append((m.uid, m.rect, 1.0))
+                for v in views:
+                    self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
+                    results.append((v.uid, v.rect, 1.0))
                 with self._results_lock:
                     self._results = results
                     self._results_ts = frame_ts
                     self._result_version += 1
                 continue
 
-            # ── 4. Tracking par masque ──
+            # ── 4. Tracking par view ──
             results = []
             active_ids = set()
 
-            for m in masks:
-                active_ids.add(m.uid)
+            for v in views:
+                active_ids.add(v.uid)
                 # Initialiser last_known si nouveau masque
-                if m.uid not in self._last_known:
-                    self._last_known[m.uid] = {"rect": m.rect, "stale": 0}
+                if v.uid not in self._last_known:
+                    self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
 
-                last_state = self._last_known[m.uid]
+                last_state = self._last_known[v.uid]
 
                 # ── 4a. OF ──
                 candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
@@ -172,22 +174,22 @@ class FastTrackThread:
                     candidate_rect = last_state["rect"]
 
                 # ── 4b. NCC confirme ──
-                if m.template is not None:
-                    margin = self._adaptive_margin(m, frame_ts)
-                    ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, m.template, margin=margin)
+                if v.template is not None:
+                    margin = self._adaptive_margin(v, frame_ts)
+                    ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, v.template, margin=margin)
                 else:
                     ncc_rect, score = None, 0.0
 
                 if ncc_rect is not None:
                     last_state["rect"] = ncc_rect
                     last_state["stale"] = 0
-                    results.append((m.uid, ncc_rect, score))
+                    results.append((v.uid, ncc_rect, score))
                 else:
                     last_state["stale"] += 1
                     if last_state["stale"] <= max_stale:
-                        results.append((m.uid, last_state["rect"], score))
+                        results.append((v.uid, last_state["rect"], score))
                     else:
-                        results.append((m.uid, None, score))
+                        results.append((v.uid, None, score))
 
             # ── 5. Purger masques disparus ──
             for old_id in list(self._last_known.keys()):

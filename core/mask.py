@@ -12,6 +12,37 @@ class MaskState(Enum):
     CONFIRMED = auto()   # vu assez de fois → on blur
     LOST      = auto()   # plus détecté, en sursis (TTL)
 
+@dataclass(frozen=True, slots=True)
+class FastMaskView:
+    """Snapshot immuable d'un Mask, frontière thread slow→fast.
+
+    Le thread fast tracker reçoit uniquement ces champs et ne peut
+    pas les muter (frozen=True). Cela élimine la race condition B3 :
+    le slow peut continuer à muter le Mask source sans impacter la
+    vue détenue par le fast.
+
+    Convention template (zero-copy) :
+        Le slow réassigne toujours `mask.template = new_array`,
+        jamais de mutation in-place (`template[:] = ...`).
+        Cette View partage donc la référence numpy sans copie.
+        Vérifié dans tracker.py::apply_detections.
+
+    Évolution du contrat fast :
+        Tout nouveau champ requis par le fast tracker doit être
+        ajouté explicitement ici. Cela force la revue du contrat
+        slow→fast à chaque évolution (résout B21).
+    """
+    uid:              int
+    rect:             tuple
+    template:         Optional[np.ndarray]
+    last_detected_ts: float
+    vx:               float
+    vy:               float
+    vw:               float
+    vh:               float
+    state:            MaskState
+    confidence:       float
+
 @dataclass
 class Mask:
     uid:                int
@@ -61,6 +92,30 @@ class Mask:
                     self.frames_matched = 0  # ← reset à l'entrée dans LOST
                     self.frames_missing = 0
         return self.state
+
+    def to_fast_view(self) -> FastMaskView:
+        """Émet un snapshot immuable pour le thread fast tracker.
+
+        Appelé depuis le thread main (orchestrateur) au handoff
+        vers FastTrackThread, typiquement après chaque
+        apply_detections("slow"). Capture atomique des champs
+        requis par le fast à l'instant T.
+
+        Le thread fast détient ensuite une référence à cette View ;
+        le slow peut continuer à muter `self` sans risque de race.
+        """
+        return FastMaskView(
+            uid=self.uid,
+            rect=self.rect,
+            template=self.template,
+            last_detected_ts=self.last_detected_ts,
+            vx=self.vx,
+            vy=self.vy,
+            vw=self.vw,
+            vh=self.vh,
+            state=self.state,
+            confidence=self.confidence,
+        )
 
     def to_dict(self) -> dict:
         return {

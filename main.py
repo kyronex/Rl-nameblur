@@ -95,7 +95,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 last_frame_id = frame_id
                 detector.give_frame(frame, frame_ts)
                 if fast_enabled and active_masks:
-                    fast_tracker.give_frame_and_masks(frame, active_masks, frame_ts)
+                    views = [m.to_fast_view() for m in active_masks]
+                    fast_tracker.give_frame_and_views(frame, views, frame_ts)
 
             updated_uids = set()
             row_slow_updated = row_fast_updated = row_predicted = 0
