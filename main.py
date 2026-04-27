@@ -46,7 +46,7 @@ tracker = Tracker(TrackerConfig())
 
 fast_enabled = cfg.get("detect.fast.enabled", True)
 if fast_enabled:
-    fast_tracker = FastTrackThread(SCREEN_WIDTH, SCREEN_HEIGHT)
+    fast_tracker = FastTrackThread()
     fast_tracker.start()
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
@@ -80,6 +80,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
         while True:
             tracker.maybe_reload()
+            if fast_tracker is not None:
+                fast_tracker.maybe_reload()
             now = time.perf_counter()
 
             # ── 1. Capture (NON BLOQUANT) ──
