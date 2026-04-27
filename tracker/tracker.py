@@ -43,7 +43,6 @@ class Tracker:
             x, y, w, h = (int(v) for v in d.rect)
 
             # 3. Clamp aux bornes du frame (sécurité anti-crash)
-            H, W = frame.shape[:2]
             x = max(0, min(x, W - 1))    # x dans [0, W-1]
             y = max(0, min(y, H - 1))    # y dans [0, H-1]
             w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
@@ -65,7 +64,7 @@ class Tracker:
         active = self.registry.masks
 
         # ── 2. Association ──
-        matches, unmatched_dets, unmatched_masks = self.associator.associate(det_objects, active)
+        matches, unmatched_dets, unmatched_masks = self.associator.associate(det_objects, active, ts)
 
         # ── 3. Matchés : maj motion + phash + champs métier ──
         matched_uids = set()

@@ -80,13 +80,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
         while True:
             tracker.maybe_reload()
-            t_loop_start = time.perf_counter()
             now = time.perf_counter()
-
-            """
-            # ── snapshot masques avant pour jitter ──
-            rects_before = {m.uid: m.rect for m in active_masks}
-            """
 
             # ── 1. Capture (NON BLOQUANT) ──
             with bench.timer("capture_wait"):
@@ -129,7 +123,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         template=box.template,
                         scores=box.scores,
                     ) for box in new_plates]
-                    updated_uids |= tracker.apply_detections(frame, dets, detect_ts, "slow")
+                    updated_uids |= tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
 
                     print(f"  └─ apply slow: dets={len(dets)} updated={len(updated_uids)} "f"all={len(tracker.all_masks())}")
 
@@ -183,14 +177,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             with bench.timer("send"):
                 sender.publish()
 
-            # ── 8. Jitter + ages ──
-            #jitter_center_avg, jitter_corners_avg, masks_created, masks_killed = compute_jitter(active_masks, rects_before)
+            # ── 8.  ages ──
             mask_age_avg = compute_mask_age(active_masks, now)
 
             bench.count("frames")
             bench.count("masks_total", len(active_masks))
 
-            loop_ms = round((time.perf_counter() - t_loop_start) * 1000, 3)
+            loop_ms = round((time.perf_counter() - now) * 1000, 3)
             # ── CSV ──
             if frame_id != last_csv_frame:
                 last_csv_frame = frame_id

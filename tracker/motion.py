@@ -102,23 +102,29 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
         mask.last_detected_rect = new_rect
         mask.last_slow_ts = detect_ts
 
+def compute_predicted_rect(mask, ts, config):
+    """
+    Version PURE de la prédiction : retourne le rect prédit à `ts`
+    sans muter le mask. Utilisée par l'associator pour l'IoU.
+    Ancrage = last_detected_rect (pas de dérive cumulative).
+    """
+    dt = ts - mask.last_detected_ts
+    if dt <= 0:
+        return mask.rect
+    dt_capped = min(dt, config.dt_cap)
+    damping = max(0.0, 1.0 - dt * config.damping_rate)
+    lx, ly, lw, lh = mask.last_detected_rect
+    return (lx + mask.vx * dt_capped * damping,
+            ly + mask.vy * dt_capped * damping,
+            lw + mask.vw * dt_capped * damping,
+            lh + mask.vh * dt_capped * damping)
 
 def predict_position(mask, now, screen_w, screen_h, config):
     """
     Prédit la position d'un mask non mis à jour ce frame.
     Ancrage = last_detected_rect (pas de dérive cumulative).
-    Prédit aussi w/h via vw/vh.
     """
-    dt = now - mask.last_detected_ts
-    dt_capped = min(dt, config.dt_cap)
-    damping = max(0.0, 1.0 - dt * config.damping_rate)
-
-    lx, ly, lw, lh = mask.last_detected_rect
-
-    x = lx + mask.vx * dt_capped * damping
-    y = ly + mask.vy * dt_capped * damping
-    w = lw + mask.vw * dt_capped * damping
-    h = lh + mask.vh * dt_capped * damping
+    x, y, w, h = compute_predicted_rect(mask, now, config)
 
     # Taille minimum
     min_size = config.min_mask_size
