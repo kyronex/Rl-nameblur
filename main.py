@@ -45,6 +45,7 @@ detector.start()
 tracker = Tracker(TrackerConfig())
 
 fast_enabled = cfg.get("detect.fast.enabled", True)
+fast_tracker = None
 if fast_enabled:
     fast_tracker = FastTrackThread()
     fast_tracker.start()

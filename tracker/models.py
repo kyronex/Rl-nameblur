@@ -26,7 +26,8 @@ class TrackerConfig:
 
     # motion — apply_detection
     smooth_alpha: float = field(default_factory=lambda: cfg.get("masks.motion.smooth_alpha"))
-    dead_zone: float = field(default_factory=lambda: cfg.get("masks.motion.dead_zone"))
+    dead_zone_min_px: float = field(default_factory=lambda: cfg.get("masks.motion.dead_zone_min_px"))
+    dead_zone_rel: float = field(default_factory=lambda: cfg.get("masks.motion.dead_zone_rel"))
     velocity_dead_zone: float = field(default_factory=lambda: cfg.get("masks.motion.velocity_dead_zone"))
     dt_slow_max: float = field(default_factory=lambda: cfg.get("masks.motion.dt_slow_max"))
     teleport_thresh: float = field(default_factory=lambda: cfg.get("masks.motion.teleport_thresh"))
@@ -63,6 +64,15 @@ class TrackerConfig:
                 f"TrackerConfig: confirm_after ({self.confirm_after}) >= lost_after ({self.lost_after}) — "
                 "un mask ne pourra jamais être confirmé avant d'être perdu."
             )
+        EPS = 1e-6
+        for name, w in (("weights_static", self.weights_static),("weights_medium", self.weights_medium),("weights_fast",   self.weights_fast)):
+            s = sum(w)
+            if abs(s - 1.0) > EPS:
+                raise ValueError(
+                    f"TrackerConfig: {name}={w} doit sommer à 1.0 (actuel: {s:.4f}). "
+                    "Les poids (w_iou, w_hash) sont une pondération convexe : "
+                    "ajuste config.yaml pour que w_iou + w_hash == 1.0."
+                )
 
 @dataclass
 class Detection:

@@ -17,7 +17,8 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
     nx, ny, nw, nh = new_rect
     ox, oy, ow, oh = mask.rect
 
-    dead_zone = config.dead_zone
+    size_ref = min(ow, oh)
+    dead_zone = max(config.dead_zone_min_px, config.dead_zone_rel * size_ref)
 
     # ── Dead zone : pas de mouvement significatif ──
     if (abs(nx - ox) < dead_zone and abs(ny - oy) < dead_zone

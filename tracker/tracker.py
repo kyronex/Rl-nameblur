@@ -38,6 +38,8 @@ class Tracker:
         H, W = frame.shape[:2]
 
         # ── 1. Detection objects + phash ──
+        skip_phash = (source == "fast")
+
         det_objects = []
         for d in detections:
             x, y, w, h = (int(v) for v in d.rect)
@@ -49,8 +51,11 @@ class Tracker:
             h = max(1, min(h, H - y))
 
             clamped_rect = (x, y, w, h)
-            crop = frame[y:y+h, x:x+w]
-            phash = compute_phash(crop)
+            if skip_phash:
+                phash = None
+            else:
+                crop = frame[y:y+h, x:x+w]
+                phash = compute_phash(crop)
 
             det_objects.append(Detection(
                 rect=clamped_rect,

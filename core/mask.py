@@ -15,17 +15,8 @@ class MaskState(Enum):
 @dataclass(frozen=True, slots=True)
 class FastMaskView:
     """Snapshot immuable d'un Mask, frontière thread slow→fast.
-
     Le thread fast tracker reçoit uniquement ces champs et ne peut
-    pas les muter (frozen=True). Cela élimine la race condition B3 :
-    le slow peut continuer à muter le Mask source sans impacter la
-    vue détenue par le fast.
-
-    Convention template (zero-copy) :
-        Le slow réassigne toujours `mask.template = new_array`,
-        jamais de mutation in-place (`template[:] = ...`).
-        Cette View partage donc la référence numpy sans copie.
-        Vérifié dans tracker.py::apply_detections.
+    pas les muter (frozen=True).
 
     Évolution du contrat fast :
         Tout nouveau champ requis par le fast tracker doit être
@@ -94,15 +85,8 @@ class Mask:
         return self.state
 
     def to_fast_view(self) -> FastMaskView:
-        """Émet un snapshot immuable pour le thread fast tracker.
-
-        Appelé depuis le thread main (orchestrateur) au handoff
-        vers FastTrackThread, typiquement après chaque
-        apply_detections("slow"). Capture atomique des champs
-        requis par le fast à l'instant T.
-
-        Le thread fast détient ensuite une référence à cette View ;
-        le slow peut continuer à muter `self` sans risque de race.
+        """
+        Émet un snapshot immuable pour le thread fast tracker.
         """
         return FastMaskView(
             uid=self.uid,

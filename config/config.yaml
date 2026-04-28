@@ -101,7 +101,8 @@ masks:
     score_threshold: 0.3 # Score minimum (IoU+hash pondéré) pour valider un match détection↔mask — (associator.py › associate)
   motion:
     smooth_alpha: 1.0 # Facteur EMA pour le lissage position/taille lors d'un match (0.0 = pas de mouvement, 1.0 = snap instantané)
-    dead_zone: 3.0 # Déplacement minimum (px) en x/y/w/h pour considérer qu'un mask a bougé — (motion.py › apply_detection)
+    dead_zone_min_px: 1.0 # Plancher en px du seuil anti-jitter — empêche un seuil sous-pixel sur très petits masks (motion.py › apply_detection)
+    dead_zone_rel: 0.02 # Seuil anti-jitter relatif à min(w,h) du mask — déplacement < 3% de la taille = ignoré
     velocity_dead_zone: 10.0 # Vitesse minimale (px/s) en x/y/w/h pour activer la prédiction de vélocité — en dessous, vx/vy/vw/vh restent à 0
     dt_slow_max: 0.5 # Délai max (secondes) entre deux détections "slow" avant de considérer le tracking comme périmé
     teleport_thresh: 300.0 # Distance (pixels) au-delà de laquelle un déplacement est considéré comme un téléport — reset de la vélocité

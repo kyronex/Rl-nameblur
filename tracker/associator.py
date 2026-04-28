@@ -23,9 +23,8 @@ class Associator:
             return self.cfg.weights_fast
 
     # ── score composite ───────────────────────────────────
-    def compute_score(self, det: Detection, mask: Mask , ts) -> float:
+    def compute_score(self, det: Detection, mask: Mask, predicted: tuple) -> float:
         w_iou, w_hash = self._get_weights(mask)
-        predicted = compute_predicted_rect(mask, ts, self.cfg)
         iou = compute_iou(det.rect, predicted)
         if not mask.hash_history or det.phash is None:
             return iou
@@ -33,13 +32,16 @@ class Associator:
         return w_iou * iou + w_hash * hsim
 
     # ── matrice de coûts ──────────────────────────────────
-    def build_cost_matrix(self, detections: List[Detection],masks: List[Mask], ts) -> np.ndarray:
+    def build_cost_matrix(self, detections: List[Detection], masks: List[Mask], ts: float) -> np.ndarray:
         n_det = len(detections)
         n_mask = len(masks)
         cost = np.ones((n_det, n_mask), dtype=np.float64)
+
+        predicted_rects = [compute_predicted_rect(m, ts, self.cfg) for m in masks]
+
         for i, det in enumerate(detections):
             for j, mask in enumerate(masks):
-                cost[i, j] = 1.0 - self.compute_score(det, mask, ts)
+                cost[i, j] = 1.0 - self.compute_score(det, mask, predicted_rects[j])
         return cost
 
     # ── assignation hongroise ─────────────────────────────
