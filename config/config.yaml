@@ -103,6 +103,8 @@ masks:
     geo_gate_base_radius_px: 40.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle
     geo_gate_velocity_k: 1.5 # Facteur multiplicatif appliqué à |v|·dt pour élargir le gate selon la vitesse du mask
     geo_gate_dt_ref: 0.10 # dt de référence (s) pour calculer la composante vitesse du gate — borne le rayon prédictif
+    continuity_bonus_max: 0.10 # +10% max sur total (modeste, préserve ranking brut)
+    continuity_tau_s: 0.5 # à dt=0.5s, bonus tombe à 37% du max
   motion:
     smooth_alpha: 1.0 # Facteur EMA pour le lissage position/taille lors d'un match (0.0 = pas de mouvement, 1.0 = snap instantané)
     dead_zone_min_px: 1.0 # Plancher en px du seuil anti-jitter — empêche un seuil sous-pixel sur très petits masks (motion.py › apply_detection)

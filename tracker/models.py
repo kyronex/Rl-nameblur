@@ -26,6 +26,8 @@ class TrackerConfig:
     geo_gate_base_radius_px: float = field(default_factory=lambda: cfg.get("masks.associator.geo_gate_base_radius_px"))
     geo_gate_velocity_k: float = field(default_factory=lambda: cfg.get("masks.associator.geo_gate_velocity_k"))
     geo_gate_dt_ref: float = field(default_factory=lambda: cfg.get("masks.associator.geo_gate_dt_ref"))
+    continuity_bonus_max: float = field(default_factory=lambda: cfg.get("masks.associator.continuity_bonus_max"))
+    continuity_tau_s:     float = field(default_factory=lambda: cfg.get("masks.associator.continuity_tau_s"))
 
     # motion — apply_detection
     smooth_alpha: float = field(default_factory=lambda: cfg.get("masks.motion.smooth_alpha"))
@@ -78,6 +80,11 @@ class TrackerConfig:
                     "ajuste config.yaml pour que w_iou + w_hash == 1.0."
                 )
 
+        if self.continuity_bonus_max < 0.0:
+            raise ValueError(f"continuity_bonus_max ({self.continuity_bonus_max}) doit être ≥ 0")
+        if self.continuity_tau_s <= 0.0:
+            raise ValueError(f"continuity_tau_s ({self.continuity_tau_s}) doit être > 0")
+
 @dataclass(frozen=True, slots=True)
 class MatchScore:
     """
@@ -97,6 +104,7 @@ class MatchScore:
     total:  float
     gated:  bool
     reason: str
+    continuity: float = 0.0
 
     @classmethod
     def gated_score(cls) -> "MatchScore":
@@ -104,18 +112,20 @@ class MatchScore:
         return _GATED_SCORE
 
     @classmethod
-    def iou_only(cls, iou: float) -> "MatchScore":
+    def iou_only(cls, iou: float, continuity: float = 0.0, bonus_max: float = 0.0) -> "MatchScore":
         """Score basé uniquement sur l'IoU (pas d'historique hash exploitable)."""
-        return cls(iou=iou, hash=0.0, total=iou, gated=False, reason="iou_only")
+        total = min(1.0, iou * (1.0 + bonus_max * continuity))
+        return cls(iou=iou, hash=0.0, total=total, gated=False,reason="iou_only", continuity=continuity)
 
     @classmethod
-    def composite(cls, iou: float, hsim: float, w_iou: float, w_hash: float) -> "MatchScore":
+    def composite(cls, iou: float, hsim: float, w_iou: float, w_hash: float,continuity: float = 0.0, bonus_max: float = 0.0) -> "MatchScore":
         """Score pondéré IoU + hash perceptuel."""
-        total = w_iou * iou + w_hash * hsim
-        return cls(iou=iou, hash=hsim, total=total, gated=False, reason="ok")
+        raw = w_iou * iou + w_hash * hsim
+        total = min(1.0, raw * (1.0 + bonus_max * continuity))
+        return cls(iou=iou, hash=hsim, total=total, gated=False, reason="ok", continuity=continuity)
 
 # Singleton pour le cas gated (immuable grâce à frozen=True, safe à partager)
-_GATED_SCORE = MatchScore(iou=0.0, hash=0.0, total=0.0, gated=True, reason="geo_gate")
+_GATED_SCORE = MatchScore(iou=0.0, hash=0.0, total=0.0, gated=True,reason="geo_gate", continuity=0.0)
 
 @dataclass
 class Detection:

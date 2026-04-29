@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import List, Tuple, Optional
 import numpy as np
+import math
 from scipy.optimize import linear_sum_assignment
 from core.mask import Mask
 from tracker.hasher import best_hash_similarity
@@ -31,6 +32,11 @@ class Associator:
             return self.cfg.source_confidence_fast
         return self.cfg.source_confidence_slow
 
+    def _continuity_factor(self, mask: Mask, ts: float) -> float:
+        """exp(-dt/tau) ∈ (0, 1]. dt = âge depuis dernière détection."""
+        dt = max(0.0, ts - mask.last_detected_ts)
+        return math.exp(-dt / self.cfg.continuity_tau_s)
+
     # ── gating géométrique mask↔det ──────────────────────
     def _geo_gate_passes(self, det_rect: tuple, predicted: tuple, mask: Mask) -> bool:
         # Distance centre-à-centre
@@ -43,16 +49,17 @@ class Associator:
         return dist2 <= radius * radius
 
     # ── score composite (retourne MatchScore traçable) ───
-    def compute_score(self, det: Detection, mask: Mask, predicted: tuple) -> MatchScore:
-        """Score non-gaté. Le gating est géré en amont par build_cost_matrix."""
+    def _compute_score(self, det: Detection, mask: Mask, predicted: tuple, ts: float) -> MatchScore:
         iou = compute_iou(det.rect, predicted)
+        cont = self._continuity_factor(mask, ts)
+        bmax = self.cfg.continuity_bonus_max
 
         if not mask.hash_history or det.phash is None:
-            return MatchScore.iou_only(iou)
+            return MatchScore.iou_only(iou, continuity=cont, bonus_max=bmax)
 
         hsim = compute_hash_similarity(det.phash, mask, top_k=self.cfg.hash_top_k)
         w_iou, w_hash = self._get_weights(det)
-        return MatchScore.composite(iou, hsim, w_iou, w_hash)
+        return MatchScore.composite(iou, hsim, w_iou, w_hash,continuity=cont, bonus_max=bmax)
 
 
     # ── matrice de coûts ──────────────────────────────────
@@ -63,10 +70,13 @@ class Associator:
         predicted_rects = [compute_predicted_rect(m, ts, self.cfg) for m in masks]
 
         for i, det in enumerate(detections):
+            min_score = self._get_min_score(det)
             for j, mask in enumerate(masks):
                 if not self._geo_gate_passes(det.rect, predicted_rects[j], mask):
                     continue  # scores[i][j] reste GATED_SCORE, cost reste _GATED_COST
-                ms = self.compute_score(det, mask, predicted_rects[j])
+                ms = self._compute_score(det, mask, predicted_rects[j], ts)
+                if ms.total < min_score:
+                    continue
                 scores[i][j] = ms
                 cost[i, j] = 1.0 - ms.total
         return cost, scores
