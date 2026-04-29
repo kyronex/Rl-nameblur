@@ -5,47 +5,75 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from core.mask import Mask
 from tracker.hasher import best_hash_similarity
-from tracker.models import Detection, TrackerConfig
+from tracker.models import Detection, TrackerConfig, MatchScore
 from tracker.motion import compute_predicted_rect
+
+# Coût prohibitif mais fini — Hungarian gère mieux qu'un +inf
+_GATED_COST = 1e6
 
 class Associator:
     def __init__(self, config: Optional[TrackerConfig] = None):
         self.cfg = config or TrackerConfig()
 
-    # ── poids adaptatifs ──────────────────────────────────
-    def _get_weights(self, mask: Mask) -> Tuple[float, float]:
-        speed = (mask.vx ** 2 + mask.vy ** 2) ** 0.5
-        if speed <= self.cfg.speed_slow:
-            return self.cfg.weights_static
-        elif speed <= self.cfg.speed_medium:
-            return self.cfg.weights_medium
-        else:
-            return self.cfg.weights_fast
+    # ── poids & seuil indexés sur la source ──────────────
+    def _get_weights(self, det: Detection) -> Tuple[float, float]:
+        if det.source == "fast":
+            return self.cfg.weights_source_fast
+        return self.cfg.weights_source_slow
 
-    # ── score composite ───────────────────────────────────
-    def compute_score(self, det: Detection, mask: Mask, predicted: tuple) -> float:
-        w_iou, w_hash = self._get_weights(mask)
+    def _get_min_score(self, det: Detection) -> float:
+        if det.source == "fast":
+            return self.cfg.match_score_min_fast
+        return self.cfg.match_score_min_slow
+
+    def _get_source_confidence(self, det: Detection) -> float:
+        if det.source == "fast":
+            return self.cfg.source_confidence_fast
+        return self.cfg.source_confidence_slow
+
+    # ── gating géométrique mask↔det ──────────────────────
+    def _geo_gate_passes(self, det_rect: tuple, predicted: tuple, mask: Mask) -> bool:
+        # Distance centre-à-centre
+        dx = (det_rect[0] + det_rect[2] * 0.5) - (predicted[0] + predicted[2] * 0.5)
+        dy = (det_rect[1] + det_rect[3] * 0.5) - (predicted[1] + predicted[3] * 0.5)
+        dist2 = dx * dx + dy * dy
+        # Rayon = base + k * |v| * dt_ref
+        speed = (mask.vx * mask.vx + mask.vy * mask.vy) ** 0.5
+        radius = self.cfg.geo_gate_base_radius_px + self.cfg.geo_gate_velocity_k * speed * self.cfg.geo_gate_dt_ref
+        return dist2 <= radius * radius
+
+    # ── score composite (retourne MatchScore traçable) ───
+    def compute_score(self, det: Detection, mask: Mask, predicted: tuple) -> MatchScore:
+        """Score non-gaté. Le gating est géré en amont par build_cost_matrix."""
         iou = compute_iou(det.rect, predicted)
+
         if not mask.hash_history or det.phash is None:
-            return iou
-        hsim = compute_hash_similarity(det.phash, mask)
-        return w_iou * iou + w_hash * hsim
+            return MatchScore.iou_only(iou)
+
+        hsim = compute_hash_similarity(det.phash, mask, top_k=self.cfg.hash_top_k)
+        w_iou, w_hash = self._get_weights(det)
+        return MatchScore.composite(iou, hsim, w_iou, w_hash)
+
 
     # ── matrice de coûts ──────────────────────────────────
-    def build_cost_matrix(self, detections: List[Detection], masks: List[Mask], ts: float) -> np.ndarray:
-        n_det = len(detections)
-        n_mask = len(masks)
-        cost = np.ones((n_det, n_mask), dtype=np.float64)
-
+    def build_cost_matrix(self, detections, masks, ts):
+        n_det, n_mask = len(detections), len(masks)
+        cost = np.full((n_det, n_mask), _GATED_COST, dtype=np.float64)
+        scores: List[List[MatchScore]] = [[MatchScore.gated_score()] * n_mask for _ in range(n_det)]
         predicted_rects = [compute_predicted_rect(m, ts, self.cfg) for m in masks]
 
         for i, det in enumerate(detections):
             for j, mask in enumerate(masks):
-                cost[i, j] = 1.0 - self.compute_score(det, mask, predicted_rects[j])
-        return cost
+                if not self._geo_gate_passes(det.rect, predicted_rects[j], mask):
+                    continue  # scores[i][j] reste GATED_SCORE, cost reste _GATED_COST
+                ms = self.compute_score(det, mask, predicted_rects[j])
+                scores[i][j] = ms
+                cost[i, j] = 1.0 - ms.total
+        return cost, scores
+
 
     # ── assignation hongroise ─────────────────────────────
-    def associate(self, detections: List[Detection],masks: List[Mask], ts) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+    def associate(self,detections: List[Detection],masks: List[Mask],ts) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
         n_det = len(detections)
         n_mask = len(masks)
 
@@ -56,16 +84,21 @@ class Associator:
         if n_mask == 0:
             return [], list(range(n_det)), []
 
-        cost = self.build_cost_matrix(detections, masks, ts)
+        cost, scores = self.build_cost_matrix(detections, masks, ts)
         det_indices, mask_indices = linear_sum_assignment(cost)
 
-        matches = []
+        matches: List[Tuple[int, int]] = []
         unmatched_dets = set(range(n_det))
         unmatched_masks = set(range(n_mask))
 
         for di, mi in zip(det_indices, mask_indices):
-            score = 1.0 - cost[di, mi]
-            if score >= self.cfg.score_threshold:
+            ms = scores[di][mi]
+            if ms.gated:
+                continue
+            min_score = self._get_min_score(detections[di])
+            if ms.total >= min_score:
+                detections[di].scores["match"] = ms
+                detections[di].scores["source_confidence"] = self._get_source_confidence(detections[di])
                 matches.append((di, mi))
                 unmatched_dets.discard(di)
                 unmatched_masks.discard(mi)
@@ -86,9 +119,9 @@ def compute_iou(rect1: tuple, rect2: tuple) -> float:
     union = w1 * h1 + w2 * h2 - inter
     return inter / union if union > 0 else 0.0
 
-def compute_hash_similarity(det_hash: Optional[int], mask: Mask) -> float:
+def compute_hash_similarity(det_hash: Optional[int], mask: Mask, top_k: Optional[int] = None) -> float:
     if det_hash is None:
         return 0.0
     if len(mask.hash_history) == 0:
         return 0.0
-    return best_hash_similarity(det_hash, mask.hash_history)
+    return best_hash_similarity(det_hash, mask.hash_history, top_k=top_k)

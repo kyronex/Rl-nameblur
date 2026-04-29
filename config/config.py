@@ -17,9 +17,8 @@ _RESTART_REQUIRED_KEYS = {
 }
 
 _TUPLE_KEYS = {
-    "masks.associator.weights_static",
-    "masks.associator.weights_medium",
-    "masks.associator.weights_fast",
+    "masks.associator.weights_source_slow",
+    "masks.associator.weights_source_fast",
 }
 def _load_yaml(path: Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:

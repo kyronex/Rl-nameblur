@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List
 import cv2
 import numpy as np
+from typing import List, Optional
 
 
 def compute_phash(crop: np.ndarray, hash_size: int = 8) -> int | None:
@@ -29,7 +30,12 @@ def hash_similarity(h1: int, h2: int, hash_size: int = 8) -> float:
     return 1.0 - hamming_distance(h1, h2) / total_bits
 
 
-def best_hash_similarity(h: int, history: List[int], hash_size: int = 8) -> float:
+def best_hash_similarity(h: int, history: List[int], hash_size: int = 8, top_k: Optional[int] = None) -> float:
     if not history:
         return 0.0
-    return max(hash_similarity(h, prev, hash_size) for prev in history)
+    sims = [hash_similarity(h, prev, hash_size) for prev in history]
+    if top_k is None or top_k <= 0:
+        return max(sims)  # comportement legacy
+    k = min(top_k, len(sims))
+    sims.sort(reverse=True)
+    return sum(sims[:k]) / k
