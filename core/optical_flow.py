@@ -1,6 +1,7 @@
 # core/optical_flow.py
 import cv2
 import numpy as np
+from bench import bench
 
 # ── Paramètres Lucas-Kanade ──
 _LK_PARAMS = dict(
@@ -11,12 +12,7 @@ _LK_PARAMS = dict(
 
 _ROI_PAD = 40
 
-
 def _rect_to_points(rect):
-    """
-    Convertit (x, y, w, h) en 4 coins float32 pour Lucas-Kanade.
-    Retourne shape (4, 1, 2).
-    """
     x, y, w, h = rect
     pts = np.array([
         [x,     y    ],
@@ -26,27 +22,18 @@ def _rect_to_points(rect):
     ], dtype=np.float32).reshape(-1, 1, 2)
     return pts
 
-
 def of_track(prev_gray, curr_gray, rect):
     """
     Tente de suivre rect via Lucas-Kanade entre prev_gray et curr_gray.
     Travaille sur un crop local pour la performance.
 
-    Paramètres
-    ----------
-    prev_gray : np.ndarray  — frame précédente en niveaux de gris
-    curr_gray : np.ndarray  — frame courante  en niveaux de gris
-    rect      : tuple(x, y, w, h)
-
-    Retourne
-    --------
-    (new_rect, True)  — OF réussi, new_rect est la nouvelle position
-    (rect,     False) — OF échoué, rect inchangé (Option B)
+    Sondes bench :
+      - of_lk_call : durée du seul cv2.calcOpticalFlowPyrLK
+                     (isole le coût LK pur du crop/median).
     """
     x, y, w, h = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
     img_h, img_w = prev_gray.shape[:2]
 
-    # ── Crop local avec marge ──
     cx0 = max(x - _ROI_PAD, 0)
     cy0 = max(y - _ROI_PAD, 0)
     cx1 = min(x + w + _ROI_PAD, img_w)
@@ -58,12 +45,12 @@ def of_track(prev_gray, curr_gray, rect):
     if prev_crop.size == 0 or curr_crop.size == 0:
         return rect, False
 
-    # ── Points en coordonnées locales ──
     pts = _rect_to_points((x - cx0, y - cy0, w, h))
 
-    new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-        prev_crop, curr_crop, pts, None, **_LK_PARAMS
-    )
+    with bench.timer("of_lk_call"):
+        new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
+            prev_crop, curr_crop, pts, None, **_LK_PARAMS
+        )
 
     good = status.flatten() == 1
 

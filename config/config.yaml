@@ -164,3 +164,5 @@ debug:
     aggregated: true # 1 ligne / agg_interval
     mask: true # 1 ligne / masque confirmé / frame
     agg_interval: 2.0 # secondes entre 2 lignes agrégées
+    fast: true
+    fast_interval: 1.0 # période d'agrégation des sondes fast (s)

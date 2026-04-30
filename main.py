@@ -17,7 +17,7 @@ import pyvirtualcam
 
 from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
 from bench.bench             import bench
-from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask, csv_flush, csv_close
+from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
 from core.mask_manager       import draw_debug, pad_rect, compute_mask_age
 from core.blur               import apply_blur
 from tracker.tracker import Tracker
@@ -65,8 +65,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     frame_count = 0
     csv_open()
 
-    csv_agg_interval = cfg.get("debug.csv.agg_interval", 2.0)
-    last_agg_time    = time.perf_counter()
+    csv_agg_interval  = cfg.get("debug.csv.agg_interval", 2.0)
+    csv_fast_interval = cfg.get("debug.csv.fast_interval", 1.0)
+    last_agg_time     = time.perf_counter()
+    last_fast_time    = time.perf_counter()
 
     # ── DEBUG state (delta minimal) ──
     _dbg_prev_all = 0
@@ -145,7 +147,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         ) for _uid, new_rect, _score in fast_results if new_rect is not None]
                         if dets:
                             updated_uids |= tracker.apply_detections(frame, dets, fast_ts, "fast")
-
                             print(f"[FAST] v={fast_version} dets={len(dets)} " f"updated={len(updated_uids)} all={len(tracker.all_masks())}")
 
             # ── 4. Tick (predict + TTL + purge) ──
@@ -263,6 +264,34 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         "bg_score":            round(s.get("bg_score", 0.0), 4),
                     })
 
+            # ── CSV fast (fenêtre indépendante, reset partiel) ──
+            if fast_enabled and (now - last_fast_time >= csv_fast_interval):
+                row = bench.fast_row()
+
+                # ── ratios dérivés Phase 5 ──
+                ticks     = row.get("fast_tick_count_total", 0) or 0
+                processed = row.get("fast_mask_processed_total", 0) or 0
+                confirmed = row.get("fast_ncc_confirmed_total", 0) or 0
+                stale     = row.get("fast_stale_used_total", 0) or 0
+                lost      = row.get("fast_mask_lost_total", 0) or 0
+                of_failed = row.get("fast_of_failed_total", 0) or 0
+
+                of_avg_ms   = row.get("fast_of_total_avg", 0.0) or 0.0   # par tick
+                ncc_avg_ms  = row.get("fast_ncc_total_avg", 0.0) or 0.0  # par tick
+                nmasks_avg  = row.get("fast_n_masks_avg", 0.0) or 0.0    # masques/tick
+
+                row["fast_tick_rate"]       = round(ticks / csv_fast_interval, 2)
+                row["fast_ncc_hit_rate"]    = round(confirmed / processed, 4) if processed else None
+                row["fast_of_fail_rate"]    = round(of_failed / processed, 4) if processed else None
+                row["fast_stale_rate"]      = round(stale / processed, 4) if processed else None
+                row["fast_loss_rate"]       = round(lost / processed, 4) if processed else None
+                row["fast_of_per_mask_ms"]  = round(of_avg_ms / nmasks_avg, 3) if nmasks_avg else None
+                row["fast_ncc_per_mask_ms"] = round(ncc_avg_ms / nmasks_avg, 3) if nmasks_avg else None
+
+                csv_write_fast(row)
+                bench.reset(only_fast=True)
+                last_fast_time = now
+
             # ── 9. FPS print toutes les 2s ──
             frame_count += 1
             elapsed = time.perf_counter() - fps_timer
@@ -275,9 +304,9 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
                 if now - last_agg_time >= csv_agg_interval:
                     csv_write_agg(bench.flat_row())
+                    bench.reset(only_main=True)
                     last_agg_time = now
 
-                bench.reset()
                 frame_count = 0
                 fps_timer   = time.perf_counter()
                 csv_flush()

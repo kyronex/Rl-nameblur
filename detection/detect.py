@@ -169,9 +169,7 @@ def _run_pipeline(frame, scale):
     closed = refine_and_merge(combined, interior, kernels)
 
     # ── 6. Contours + filtre géométrique (ratio, area, fill) ──
-    log.debug("START")
     candidates = process_channel(closed,small, mask_white, h_small, params, kernels )
-    log.debug("END")
 
     if not candidates:
         return []
