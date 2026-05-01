@@ -18,7 +18,7 @@ detect:
   fast:
     enabled: true # Active le FastTracker (thread parallèle de suivi inter-frames ) — (main.py › bootstrap).
     max_stale_frames: 15 # Nbr de frames consécutives où le tracking NCC échoue avant d'émettre rect=None  — (fast_track_thread.py › _worker).
-    ncc_threshold: 0.6 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
+    ncc_threshold: 0.4 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
     roi_margin: 0.3 # ⚠ DEAD — fallback si adaptive_margin absent, mais _ncc_on_roi reçoit toujours margin=_adaptive_margin() depuis _worker.
     event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker)..
   hsv:
@@ -96,13 +96,13 @@ masks:
   associator:
     weights_source_slow: [0.5, 0.5] # (w_iou, w_hash) pour détection source="slow" — équilibré
     weights_source_fast: [0.8, 0.2] # (w_iou, w_hash) pour détection source="fast" — IoU dominant
-    match_score_min_slow: 0.35 # Score minimum (IoU+hash pondéré) pour valider un match d'une détection slow — strict, source fiable (associator.py › associate)
-    match_score_min_fast: 0.25 # Score minimum pour une détection fast — plus permissif, on tolère un IoU moyen pour préserver la continuité du suivi
+    match_score_min_slow: 0.25 # Score minimum (IoU+hash pondéré) pour valider un match d'une détection slow — strict, source fiable (associator.py › associate)
+    match_score_min_fast: 0.20 # Score minimum pour une détection fast — plus permissif, on tolère un IoU moyen pour préserver la continuité du suivi
     source_confidence_slow: 1.0 # Confiance a priori d'une détection slow (consommée par associator pour pondérer le coût final)
     source_confidence_fast: 0.7 # Confiance a priori d'une détection fast — inférieure (template tracking sujet au drift)
-    geo_gate_base_radius_px: 40.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle
-    geo_gate_velocity_k: 1.5 # Facteur multiplicatif appliqué à |v|·dt pour élargir le gate selon la vitesse du mask
-    geo_gate_dt_ref: 0.10 # dt de référence (s) pour calculer la composante vitesse du gate — borne le rayon prédictif
+    geo_gate_base_radius_px: 150.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle
+    geo_gate_velocity_k: 3 # Facteur multiplicatif appliqué à |v|·dt pour élargir le gate selon la vitesse du mask
+    geo_gate_dt_ref: 0.20 # dt de référence (s) pour calculer la composante vitesse du gate — borne le rayon prédictif
     continuity_bonus_max: 0.10 # +10% max sur total (modeste, préserve ranking brut)
     continuity_tau_s: 0.5 # à dt=0.5s, bonus tombe à 37% du max
   motion:

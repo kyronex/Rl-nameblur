@@ -2,6 +2,9 @@
 import threading
 import time
 import dxcam
+import logging
+
+log = logging.getLogger("capture_thread")
 
 class CaptureThread:
     """Capture en continu, la main loop prend la dernière frame sans bloquer."""
@@ -22,7 +25,7 @@ class CaptureThread:
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
-        print(f"[CaptureThread] Démarré @ {self._target_fps} fps cible")
+        log.info(f"[CaptureThread] Démarré @ {self._target_fps} fps cible")
 
     def stop(self):
         self._running = False
@@ -30,7 +33,7 @@ class CaptureThread:
             self._thread.join(timeout=2.0)
         if self._camera:
             self._camera.stop()
-        print("[CaptureThread] Arrêté")
+        log.info("[CaptureThread] Arrêté")
 
     def get_frame(self):
         """Récupère la dernière frame (non bloquant)."""

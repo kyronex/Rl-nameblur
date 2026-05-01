@@ -28,10 +28,10 @@ class Tracker:
     #  API PUBLIQUE
     # ───────────────────────────────────────────────
 
-    def apply_detections(self, frame: np.ndarray, detections: list, ts: float = None, source: str = "slow") -> set:
+    def apply_detections(self, frame: np.ndarray, detections: list, ts: float = None, source: str = "slow") -> tuple[set, set]:
         """
         Applique une vague de détections (slow OU fast).
-        Returns: set[uid] des masks mis à jour.
+        Returns: (matched_uids, created_uids)
         """
         if ts is None:
             ts = time.perf_counter()
@@ -88,6 +88,7 @@ class Tracker:
             matched_uids.add(mask.uid)
 
         # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
+        created_uids = set()
         if source == "slow":
             for det_idx in unmatched_dets:
                 det = det_objects[det_idx]
@@ -97,7 +98,41 @@ class Tracker:
                 mask.confidence = det.confidence
                 mask.template = det.template
                 mask.scores = det.scores
-                matched_uids.add(mask.uid)
+                created_uids.add(mask.uid)
+
+        return matched_uids, created_uids
+
+    def apply_fast_direct(self, frame: np.ndarray, uid_to_rect: dict, ts: float = None) -> set:
+        """
+        Commit direct des résultats du fast tracker : mapping uid → rect déjà résolu
+        en amont (le fast tracker garantit l'identité par UID via template matching).
+        Pas d'associator, pas de phash, pas de création.
+
+        Returns: set des uids effectivement mis à jour.
+        """
+        if ts is None:
+            ts = time.perf_counter()
+        H, W = frame.shape[:2]
+
+        matched_uids = set()
+        for uid, rect in uid_to_rect.items():
+            mask = self.registry.get(uid)
+            if mask is None:
+                continue  # mask purgé entre-temps côté slow
+
+            # Clamp identique à apply_detections
+            x, y, w, h = (int(v) for v in rect)
+            x = max(0, min(x, W - 1))
+            y = max(0, min(y, H - 1))
+            w = max(1, min(w, W - x))
+            h = max(1, min(h, H - y))
+            clamped_rect = (x, y, w, h)
+
+            # Pipeline de mutation strictement aligné sur la branche `matched`
+            # de apply_detections (source="fast" → skip phash, pas de template/scores)
+            apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
+            self.registry.mark_matched(mask.uid)
+            matched_uids.add(mask.uid)
 
         return matched_uids
 

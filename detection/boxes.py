@@ -832,22 +832,22 @@ def _filter_geometry(boxes, masked, params):
     plates = []
     for box in boxes:
         x, y, w, h = box.rect
-        #log.info(f"_filter_geometry: x={x} y={y} w={w} h={h}")
+        #log.debug(f"_filter_geometry: x={x} y={y} w={w} h={h}")
         if w < min_width or h < min_height:
-            #log.info(f"_filter_geometry: w={w} < min_width={min_width} or h={h} < min_height={min_height}")
+            #log.debug(f"_filter_geometry: w={w} < min_width={min_width} or h={h} < min_height={min_height}")
             continue
         area = w * h
         if area < min_area or area > max_area:
-            #log.info(f"_filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
+            #log.debug(f"_filter_geometry: min_area={min_area}  area={area} max_area={max_area}")
             continue
         ratio = w / h  # h >= min_height > 0, pas besoin de max(h,1)
 
         if ratio < min_ratio or ratio > max_ratio:
-            #log.info(f"_filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
+            #log.debug(f"_filter_geometry: min_ratio={min_ratio}   ratio={ratio}  max_ratio={max_ratio}")
             continue
         fill = cv2.countNonZero(masked[y:y+h, x:x+w]) / area
         if fill < min_fill or fill > max_fill:
-            #log.info(f"_filter_geometry: min_fill={min_fill} fill={fill}  max_fill={max_fill}")
+            #log.debug(f"_filter_geometry: min_fill={min_fill} fill={fill}  max_fill={max_fill}")
             continue
         plates.append(box)
     return plates

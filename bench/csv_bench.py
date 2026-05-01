@@ -2,7 +2,10 @@
 import os
 import time
 import csv
+import logging
 from config import cfg
+
+log = logging.getLogger("csv_bench")
 
 # ── état interne ──────────────────────────────────────────────
 _frame_file = None
@@ -49,28 +52,28 @@ def csv_open():
         _frame_file = open(path_f, "w", newline="")
         _frame_writer = None
         _frame_headers_written = False
-        print(f"📊 CSV per-frame  → {path_f}")
+        log.info(f"📊 CSV per-frame  → {path_f}")
 
     if _agg_enabled:
         path_a = f"logs/bench_agg_{ts}.csv"
         _agg_file = open(path_a, "w", newline="")
         _agg_writer = None
         _agg_headers_written = False
-        print(f"📊 CSV aggregated → {path_a}")
+        log.info(f"📊 CSV aggregated → {path_a}")
 
     if _mask_enabled:
         path_m = f"logs/bench_mask_{ts}.csv"
         _mask_file = open(path_m, "w", newline="")
         _mask_writer = None
         _mask_headers_written = False
-        print(f"📊 CSV mask      → {path_m}")
+        log.info(f"📊 CSV mask      → {path_m}")
 
     if _fast_enabled:
         path_ft = f"logs/bench_fast_{ts}.csv"
         _fast_file = open(path_ft, "w", newline="")
         _fast_writer = None
         _fast_headers_written = False
-        print(f"📊 CSV fast       → {path_ft}")
+        log.info(f"📊 CSV fast       → {path_ft}")
 
 def csv_write_frame(row: dict):
     """Écrit une ligne par frame (valeurs instantanées via bench.last())."""

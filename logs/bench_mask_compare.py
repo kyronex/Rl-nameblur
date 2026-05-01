@@ -268,7 +268,7 @@ def status_symbol(metric: str, baseline_val, current_val) -> str:
     return "✗"  # régression
 
 
-def print_report(baseline: Metrics, others: list[Metrics]) -> None:
+def _print_report(baseline: Metrics, others: list[Metrics]) -> None:
     b = asdict(baseline)
 
     print("\n" + "═" * 100)
@@ -368,7 +368,7 @@ def main():
 
     # Autres fichiers (hors baseline), ordre chronologique
     others = [m for m in all_metrics if m.file != baseline_metrics.file]
-    print_report(baseline_metrics, others)
+    _print_report(baseline_metrics, others)
 
     if args.export:
         export_csv(all_metrics, args.export)

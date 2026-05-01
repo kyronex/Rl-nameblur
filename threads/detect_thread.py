@@ -1,7 +1,10 @@
 # threads/detect_thread.py — v2
 import threading
 import time
+import logging
 from detection.detect import detect_plates
+
+log = logging.getLogger("detect_thread")
 
 class DetectThread:
     """Slow detect — full frame, scale lent."""
@@ -22,13 +25,13 @@ class DetectThread:
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
-        print("[DetectThread/Slow] Démarré")
+        log.info("[DetectThread/Slow] Démarré")
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
-        print("[DetectThread/Slow] Arrêté")
+        log.info("[DetectThread/Slow] Arrêté")
 
     def give_frame(self, frame, ts):
         with self._frame_lock:

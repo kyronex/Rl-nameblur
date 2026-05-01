@@ -51,12 +51,12 @@ if fast_enabled:
     fast_tracker.start()
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
-    print(f"✅ Caméra virtuelle prête → {vcam.device}")
+    log.info(f"✅ Caméra virtuelle prête → {vcam.device}")
     debug_draw = cfg.get("debug.overlay.enabled", False)
 
     if fast_enabled:
-        print("⚡ FAST TRACKING ACTIVÉ")
-    print("📸 En cours... (Ctrl+C pour arrêter)")
+        log.info("⚡ FAST TRACKING ACTIVÉ")
+    log.info("📸 En cours... (Ctrl+C pour arrêter)")
 
     sender = SendThread(vcam, SCREEN_WIDTH, SCREEN_HEIGHT)
     sender.start()
@@ -75,7 +75,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
     _dbg_prev_confirmed = 0
 
     try:
-        active_masks       = []
+        confirmed_masks       = []
         last_detect_version = 0
         last_fast_version   = 0
         last_frame_id       = 0
@@ -99,9 +99,11 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             if frame_id > last_frame_id:
                 last_frame_id = frame_id
                 detector.give_frame(frame, frame_ts)
-                if fast_enabled and active_masks:
-                    views = [m.to_fast_view() for m in active_masks]
-                    fast_tracker.give_frame_and_views(frame, views, frame_ts)
+                if fast_enabled :
+                    snapshot = tracker.all_masks()
+                    if snapshot:
+                        views = [m.to_fast_view() for m in snapshot]
+                        fast_tracker.give_frame_and_views(frame, views, frame_ts)
 
             updated_uids = set()
             row_slow_updated = row_fast_updated = row_predicted = 0
@@ -118,7 +120,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     row_detect_age = (max(0.0, (_read_ts - detected_frame_ts) * 1000)
                                       if detected_frame_ts else 0.0)
 
-                    print(f"[SLOW] v={current_version} plates={len(new_plates) if new_plates else 0}")
+                    log.info(f"[SLOW] v={current_version} plates={len(new_plates) if new_plates else 0}")
 
             with bench.timer("match"):
                 if slow_updated and new_plates:
@@ -129,9 +131,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         template=box.template,
                         scores=box.scores,
                     ) for box in new_plates]
-                    updated_uids |= tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
-
-                    print(f"  └─ apply slow: dets={len(dets)} updated={len(updated_uids)} "f"all={len(tracker.all_masks())}")
+                    matched, created = tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
+                    updated_uids |= matched | created
+                    log.info(f"  └─ apply slow: dets={len(dets)} matched={len(matched)} "
+                             f"created={len(created)} all={len(tracker.all_masks())}")
 
             # ── 3b. Fast track ──
             with bench.timer("fast_poll"):
@@ -141,33 +144,36 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         last_fast_version = fast_version
                         row_fast_updated = 1
                         row_fast_age = (now - fast_ts) * 1000 if fast_ts else 0.0
-                        dets = [Detection(
-                            rect=pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT),
-                            source="fast",
-                        ) for _uid, new_rect, _score in fast_results if new_rect is not None]
-                        if dets:
-                            updated_uids |= tracker.apply_detections(frame, dets, fast_ts, "fast")
-                            print(f"[FAST] v={fast_version} dets={len(dets)} " f"updated={len(updated_uids)} all={len(tracker.all_masks())}")
+                        uid_to_rect = {
+                            uid: pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                            for uid, new_rect, _score in fast_results
+                            if new_rect is not None
+                        }
+                        if uid_to_rect:
+                            matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts)
+                            updated_uids |= matched
+                            log.info(f"[FAST] v={fast_version} dets={len(uid_to_rect)} "
+                                    f"matched={len(matched)} all={len(tracker.all_masks())}")
+
+            n_before_tick = len(tracker.all_masks())
+            row_predicted = 1 if (n_before_tick - len(updated_uids)) > 0 else 0
 
             # ── 4. Tick (predict + TTL + purge) ──
             with bench.timer("predict"):
-                confirmed = tracker.tick(now, updated_uids)
-                row_predicted = 1 if (len(tracker.all_masks()) - len(updated_uids)) > 0 else 0
+                confirmed_masks = tracker.tick(now, updated_uids)
 
-            _all_n = len(tracker.all_masks())
-            _conf_n = len(confirmed)
+            all_masks_now = tracker.all_masks()
+            _all_n  = len(all_masks_now)
+            _conf_n = len(confirmed_masks)
             if _all_n != _dbg_prev_all or _conf_n != _dbg_prev_confirmed:
-                print(f"[TICK] all {_dbg_prev_all}→{_all_n} | confirmed {_dbg_prev_confirmed}→{_conf_n}")
+                log.info(f"[TICK] all {_dbg_prev_all}→{_all_n} | confirmed {_dbg_prev_confirmed}→{_conf_n}")
                 _dbg_prev_all = _all_n
                 _dbg_prev_confirmed = _conf_n
 
-            active_masks = confirmed  # pour fast_tracker.give_frame_and_masks
-
             # ── 6. Blur / debug draw ──
             blur_zones = [
-                (int(m.rect[0]), int(m.rect[1]),
-                 int(m.rect[2]), int(m.rect[3]))
-                for m in active_masks
+                (int(m.rect[0]), int(m.rect[1]), int(m.rect[2]), int(m.rect[3]))
+                for m in confirmed_masks
             ]
 
             buf = sender.borrow()
@@ -176,17 +182,16 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             with bench.timer("blur"):
                 apply_blur(buf, blur_zones)
                 if debug_draw:
-                    draw_debug(buf, active_masks)
+                    draw_debug(buf, confirmed_masks)
 
             # ── 7. Envoi ──
             with bench.timer("send"):
                 sender.publish()
 
             # ── 8.  ages ──
-            mask_age_avg = compute_mask_age(active_masks, now)
-
+            mask_age_avg = compute_mask_age(confirmed_masks, now)
             bench.count("frames")
-            bench.count("masks_total", len(active_masks))
+            bench.count("masks_total", len(confirmed_masks))
 
             loop_ms = round((time.perf_counter() - now) * 1000, 3)
             # ── CSV ──
@@ -213,11 +218,11 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     "slow_updated":      row_slow_updated,
                     "fast_updated":      row_fast_updated,
                     "predicted":         row_predicted,
-                    "mask_count":        len(active_masks),
+                    "mask_count":        len(confirmed_masks),
                     "loop_ms":           loop_ms,
                 })
 
-                for m in active_masks:
+                for m in confirmed_masks:
                     s = m.scores if isinstance(m.scores, dict) else {}
                     csv_write_mask({
                         "timestamp":       round(now, 6),
@@ -299,7 +304,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 fps      = frame_count / elapsed
                 mode     = "DEBUG" if debug_draw else "PROD"
                 fast_tag = "+FAST" if fast_enabled else ""
-                print(f"⚡ {fps:.1f} FPS | {len(active_masks)} masque(s) | {mode} {fast_tag}")
+                log.info(f"⚡ {fps:.1f} FPS | {len(confirmed_masks)} masque(s) | {mode} {fast_tag}")
                 bench.print_summary()
 
                 if now - last_agg_time >= csv_agg_interval:
@@ -312,7 +317,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 csv_flush()
 
     except KeyboardInterrupt:
-        print("\n🛑 Arrêt propre")
+        log.info("\n🛑 Arrêt propre")
 
     finally:
         csv_close()

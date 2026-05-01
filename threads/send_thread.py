@@ -1,7 +1,10 @@
 # threads/send_thread.py
+import logging
 import threading
 import time
 import numpy as np
+
+log = logging.getLogger("send_thread")
 
 class SendThread:
     """Envoie les frames à la vcam dans un thread séparé — double buffer zéro copie."""
@@ -26,13 +29,13 @@ class SendThread:
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
-        print("[SendThread] Démarré")
+        log.info("[SendThread] Démarré")
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
-        print("[SendThread] Arrêté")
+        log.info("[SendThread] Arrêté")
 
     # ──────────── Interface ────────────
 

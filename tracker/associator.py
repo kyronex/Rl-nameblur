@@ -1,5 +1,7 @@
 # tracker/associator.py
 from __future__ import annotations
+import logging
+
 from typing import List, Tuple, Optional
 import numpy as np
 import math
@@ -8,6 +10,8 @@ from core.mask import Mask
 from tracker.hasher import best_hash_similarity
 from tracker.models import Detection, TrackerConfig, MatchScore
 from tracker.motion import compute_predicted_rect
+
+log = logging.getLogger("associator")
 
 # Coût prohibitif mais fini — Hungarian gère mieux qu'un +inf
 _GATED_COST = 1e6
@@ -42,11 +46,13 @@ class Associator:
         # Distance centre-à-centre
         dx = (det_rect[0] + det_rect[2] * 0.5) - (predicted[0] + predicted[2] * 0.5)
         dy = (det_rect[1] + det_rect[3] * 0.5) - (predicted[1] + predicted[3] * 0.5)
-        dist2 = dx * dx + dy * dy
-        # Rayon = base + k * |v| * dt_ref
+        dist = (dx * dx + dy * dy) ** 0.5
         speed = (mask.vx * mask.vx + mask.vy * mask.vy) ** 0.5
         radius = self.cfg.geo_gate_base_radius_px + self.cfg.geo_gate_velocity_k * speed * self.cfg.geo_gate_dt_ref
-        return dist2 <= radius * radius
+        passes = dist <= radius
+        if not passes:
+            log.debug(f"  gate FAIL dist={dist:.0f}px radius={radius:.0f}px speed={speed:.1f}")
+        return passes
 
     # ── score composite (retourne MatchScore traçable) ───
     def _compute_score(self, det: Detection, mask: Mask, predicted: tuple, ts: float) -> MatchScore:
@@ -73,8 +79,10 @@ class Associator:
             min_score = self._get_min_score(det)
             for j, mask in enumerate(masks):
                 if not self._geo_gate_passes(det.rect, predicted_rects[j], mask):
+                    log.debug(f"GATED det{i} vs mask{j} | det={det.rect} pred={predicted_rects[j]}")
                     continue  # scores[i][j] reste GATED_SCORE, cost reste _GATED_COST
                 ms = self._compute_score(det, mask, predicted_rects[j], ts)
+                log.info(f"SCORE det{i} vs mask{j} = {ms.total:.3f} (min={self._get_min_score(det):.3f})")
                 if ms.total < min_score:
                     continue
                 scores[i][j] = ms

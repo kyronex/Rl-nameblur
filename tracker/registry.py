@@ -28,7 +28,7 @@ class MaskRegistry:
         return uid in self._masks
 
     # ── CRUD ──────────────────────────────────────────────
-    def add(self, mask: Mask) -> Mask:
+    def _add(self, mask: Mask) -> Mask:
         if mask.uid in self._masks:
             raise ValueError(f"uid {mask.uid} déjà présent")
         if len(self._masks) >= self.cfg.max_masks:
@@ -56,7 +56,7 @@ class MaskRegistry:
             frames_missing=0,
             **kwargs,
         )
-        return self.add(mask)
+        return self._add(mask)
 
     def remove(self, uid: int) -> Optional[Mask]:
         return self._masks.pop(uid, None)

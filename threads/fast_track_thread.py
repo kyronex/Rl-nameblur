@@ -106,7 +106,7 @@ class FastTrackThread:
         return int(max(snap.am_min, min(margin, snap.am_max)))
 
     def _ncc_on_roi(self, gray, rect, template, snap: FastTrackConfig, margin: Optional[int] = None):
-        x, y, w, h = rect
+        x, y, w, h = (int(v) for v in rect)
         if margin is None:
             margin = snap.roi_margin
         rx = max(x - margin, 0)
@@ -175,7 +175,7 @@ class FastTrackThread:
 
                     # ── 2. Convertir en gris ──
                     with bench.timer("fast_cvt"):
-                        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        curr_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
                     # ── 3. Pas de prev_gray → init ──
                     if self._prev_gray is None:

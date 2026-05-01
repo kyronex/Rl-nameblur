@@ -7,6 +7,8 @@ from detection.tools import write_circles , write_rects , get_color
 from detection.mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
 from detection.boxes import process_channel
 from core.box import Box
+from bench import bench
+
 
 log = logging.getLogger("detect")
 
@@ -175,10 +177,28 @@ def _run_pipeline(frame, scale):
         return []
 
     # ── 7. Remap vers résolution d'entrée ──
-    plates = [
-        Box(int(b.x * scale), int(b.y * scale), int(b.w * scale), int(b.h * scale), scores=dict(b.scores))
-        for b in candidates
-    ]
+    gray_full = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    H_full, W_full = gray_full.shape
+
+    plates = []
+    for b in candidates:
+        x = int(b.x * scale)
+        y = int(b.y * scale)
+        w = int(b.w * scale)
+        h = int(b.h * scale)
+
+        # Clamp aux bornes du frame
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(W_full, x + w)
+        y1 = min(H_full, y + h)
+
+        if x1 > x0 and y1 > y0:
+            template = gray_full[y0:y1, x0:x1].copy()
+        else:
+            template = None
+
+        plates.append(Box(x, y, w, h, scores=dict(b.scores), template=template))
 
     return plates
 
@@ -196,15 +216,15 @@ def detect_plates(frame):
 #  FAST TRACKING — léger, pour ROI connues
 # ═══════════════════════════════════════════════════════
 
-def ncc_match(roi_gray, template_gray, threshold=0.5):
+def ncc_match(roi_gray, template_gray, threshold):
     """
     Template matching NCC sur un crop ROI.
     Retourne (score, (dx, dy)) ou (0.0, None) si échec.
     """
     if roi_gray is None or template_gray is None:
         return 0.0, None
-    if (template_gray.shape[0] > roi_gray.shape[0] or
-        template_gray.shape[1] > roi_gray.shape[1]):
+    if (template_gray.shape[0] > roi_gray.shape[0] or template_gray.shape[1] > roi_gray.shape[1]):
+        bench.count("fast_ncc_roi_too_small")
         return 0.0, None
 
     result = cv2.matchTemplate(roi_gray, template_gray, cv2.TM_CCOEFF_NORMED)
