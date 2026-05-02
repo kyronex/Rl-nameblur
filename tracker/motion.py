@@ -109,11 +109,18 @@ def compute_predicted_rect(mask, ts, config):
     sans muter le mask. Utilisée par l'associator pour l'IoU.
     Ancrage = last_detected_rect (pas de dérive cumulative).
     """
-    dt = ts - mask.last_detected_ts
-    if dt <= 0:
+    if mask.last_slow_ts <= 0.0:
         return mask.rect
-    dt_capped = min(dt, config.dt_cap)
-    damping = max(0.0, 1.0 - dt * config.damping_rate)
+    # Ancrage cohérent : dt depuis le dernier slow (référentiel de last_detected_rect)
+    dt = ts - mask.last_slow_ts
+
+    # Clamp symétrique : autorise rétro-projection (ts < last_slow_ts)
+    # bornée par dt_cap pour éviter extrapolations délirantes
+    dt_capped = max(-config.dt_cap, min(dt, config.dt_cap))
+
+    # Damping basé sur |dt| : plus on s'éloigne du slow, moins on fait confiance à la vélocité
+    damping = max(0.0, 1.0 - abs(dt) * config.damping_rate)
+
     lx, ly, lw, lh = mask.last_detected_rect
     return (lx + mask.vx * dt_capped * damping,
             ly + mask.vy * dt_capped * damping,

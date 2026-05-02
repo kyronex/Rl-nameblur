@@ -51,7 +51,8 @@ class Associator:
         radius = self.cfg.geo_gate_base_radius_px + self.cfg.geo_gate_velocity_k * speed * self.cfg.geo_gate_dt_ref
         passes = dist <= radius
         if not passes:
-            log.debug(f"  gate FAIL dist={dist:.0f}px radius={radius:.0f}px speed={speed:.1f}")
+            log.info(f"  GATE FAIL mask{mask.uid} dist={dist:.0f} radius={radius:.0f} "
+                    f"speed={speed:.1f} pred={predicted} det={det_rect}")
         return passes
 
     # ── score composite (retourne MatchScore traçable) ───

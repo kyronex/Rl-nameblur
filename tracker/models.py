@@ -15,6 +15,7 @@ class TrackerConfig:
     ttl_default: int = field(default_factory=lambda: cfg.get("masks.ttl_default"))
     confirm_after: int = field(default_factory=lambda: cfg.get("masks.confirm_after"))
     lost_after: int = field(default_factory=lambda: cfg.get("masks.lost_after"))
+    fast_max_drift_s: float = field(default_factory=lambda: cfg.get("masks.fast_max_drift_s"))
 
     # associator
     weights_source_slow: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_slow"))

@@ -88,9 +88,10 @@ detect:
 # ═══════════════════════════════════════════════════════════════════
 masks:
   max_masks: 20 # Nombre maximum de masques simultanés dans le registry — (registry.py › add)
-  ttl_default: 500 # Durée de vie initiale d'un masque et à chaque match confirmé — réinitialisé par mark_matched() (registry.py)
+  ttl_default: 25 # Durée de vie initiale d'un masque et à chaque match confirmé — réinitialisé par mark_matched() (registry.py)
   confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
-  lost_after: 500 # Nbr de frames missing consécutives pour basculer PENDING/CONFIRMED → LOST — (mask.py › transition / registry.py › create)
+  lost_after: 15 # Nbr de frames missing consécutives pour basculer PENDING/CONFIRMED → LOST — (mask.py › transition / registry.py › create)
+  fast_max_drift_s: 1.5 # Duree max de drift de la detection fast (tracker.py › apply_fast_direct)
   hash_history_max: 5 # Taille max du buffer phash par mask — comparaison temporelle de stabilité (tracker.py › apply_detections)
   hash_top_k: 3 # Nbr de phash récents (parmi hash_history_max) comparés pour le scoring — limite l'influence des vieilles entrées (hasher.py › best_hash_similarity)
   associator:
@@ -100,7 +101,7 @@ masks:
     match_score_min_fast: 0.20 # Score minimum pour une détection fast — plus permissif, on tolère un IoU moyen pour préserver la continuité du suivi
     source_confidence_slow: 1.0 # Confiance a priori d'une détection slow (consommée par associator pour pondérer le coût final)
     source_confidence_fast: 0.7 # Confiance a priori d'une détection fast — inférieure (template tracking sujet au drift)
-    geo_gate_base_radius_px: 150.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle
+    geo_gate_base_radius_px: 450.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle
     geo_gate_velocity_k: 3 # Facteur multiplicatif appliqué à |v|·dt pour élargir le gate selon la vitesse du mask
     geo_gate_dt_ref: 0.20 # dt de référence (s) pour calculer la composante vitesse du gate — borne le rayon prédictif
     continuity_bonus_max: 0.10 # +10% max sur total (modeste, préserve ranking brut)

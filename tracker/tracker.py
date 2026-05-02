@@ -104,21 +104,31 @@ class Tracker:
 
     def apply_fast_direct(self, frame: np.ndarray, uid_to_rect: dict, ts: float = None) -> set:
         """
-        Commit direct des résultats du fast tracker : mapping uid → rect déjà résolu
-        en amont (le fast tracker garantit l'identité par UID via template matching).
-        Pas d'associator, pas de phash, pas de création.
-
-        Returns: set des uids effectivement mis à jour.
+        Commit direct des résultats du fast tracker
         """
         if ts is None:
             ts = time.perf_counter()
         H, W = frame.shape[:2]
 
         matched_uids = set()
+        drift_skipped = 0
+        drift_max_seen = 0.0
         for uid, rect in uid_to_rect.items():
             mask = self.registry.get(uid)
             if mask is None:
                 continue  # mask purgé entre-temps côté slow
+
+            # ── Garde-fou drift : fast ne peut prolonger qu'un mask
+            # confirmé récemment par le slow ──
+            drift = ts - mask.last_slow_ts if mask.last_slow_ts > 0 else float('inf')
+            if drift > self.cfg.fast_max_drift_s:
+                drift_skipped += 1
+                drift_max_seen = max(drift_max_seen, drift if drift != float('inf') else 0)
+                log.debug(
+                    f"[FAST-DRIFT] uid={mask.uid} drift={drift:.2f}s "
+                    f"> max={self.cfg.fast_max_drift_s}s → ignored"
+                )
+                continue
 
             # Clamp identique à apply_detections
             x, y, w, h = (int(v) for v in rect)
@@ -133,6 +143,14 @@ class Tracker:
             apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
             self.registry.mark_matched(mask.uid)
             matched_uids.add(mask.uid)
+
+        # Log agrégé une fois par tick fast
+        if uid_to_rect:
+            log.info(
+                f"[FAST-APPLY] received={len(uid_to_rect)} "
+                f"applied={len(matched_uids)} drift_skipped={drift_skipped}"
+                + (f" max_drift={drift_max_seen:.1f}s" if drift_skipped else "")
+            )
 
         return matched_uids
 
