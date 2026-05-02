@@ -9,14 +9,12 @@ class TrackerConfig:
     # Frame / écran
     screen_w: int = field(default_factory=lambda: cfg.get("screen.width"))
     screen_h: int = field(default_factory=lambda: cfg.get("screen.height"))
-
     # registry / lifecycle
     max_masks: int = field(default_factory=lambda: cfg.get("masks.max_masks"))
     ttl_default: int = field(default_factory=lambda: cfg.get("masks.ttl_default"))
     confirm_after: int = field(default_factory=lambda: cfg.get("masks.confirm_after"))
     lost_after: int = field(default_factory=lambda: cfg.get("masks.lost_after"))
     fast_max_drift_s: float = field(default_factory=lambda: cfg.get("masks.fast_max_drift_s"))
-
     # associator
     weights_source_slow: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_slow"))
     weights_source_fast: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_fast"))
@@ -29,7 +27,6 @@ class TrackerConfig:
     geo_gate_dt_ref: float = field(default_factory=lambda: cfg.get("masks.associator.geo_gate_dt_ref"))
     continuity_bonus_max: float = field(default_factory=lambda: cfg.get("masks.associator.continuity_bonus_max"))
     continuity_tau_s:     float = field(default_factory=lambda: cfg.get("masks.associator.continuity_tau_s"))
-
     # motion — apply_detection
     smooth_alpha: float = field(default_factory=lambda: cfg.get("masks.motion.smooth_alpha"))
     dead_zone_min_px: float = field(default_factory=lambda: cfg.get("masks.motion.dead_zone_min_px"))
@@ -41,12 +38,10 @@ class TrackerConfig:
     vy_max: float = field(default_factory=lambda: cfg.get("masks.motion.vy_max"))
     vw_max: float = field(default_factory=lambda: cfg.get("masks.motion.vw_max"))
     vh_max: float = field(default_factory=lambda: cfg.get("masks.motion.vh_max"))
-
     # motion — predict_position
     dt_cap:       float = field(default_factory=lambda: cfg.get("masks.motion.dt_cap"))
     damping_rate: float = field(default_factory=lambda: cfg.get("masks.motion.damping_rate"))
     min_mask_size:        float = field(default_factory=lambda: cfg.get("masks.motion.min_mask_size"))
-
     # tracker — Hash history
     hash_history_max: int = field(default_factory=lambda: cfg.get("masks.hash_history_max"))
     hash_top_k: int = field(default_factory=lambda: cfg.get("masks.hash_top_k"))
@@ -55,10 +50,8 @@ class TrackerConfig:
         # YAML parse [a, b] en list → on force en tuple (immutable, conforme à l'annotation)
         self.weights_source_slow = tuple(self.weights_source_slow)
         self.weights_source_fast = tuple(self.weights_source_fast)
-
         if len(self.weights_source_slow) != 2 or len(self.weights_source_fast) != 2:
             raise ValueError("TrackerConfig: weights_source_* doivent contenir exactement 2 valeurs (w_iou, w_hash)")
-
         if self.ttl_default < self.lost_after:
             raise ValueError(
                 f"TrackerConfig: ttl_default ({self.ttl_default}) < lost_after ({self.lost_after}) — "
@@ -80,7 +73,6 @@ class TrackerConfig:
                     "Les poids (w_iou, w_hash) sont une pondération convexe : "
                     "ajuste config.yaml pour que w_iou + w_hash == 1.0."
                 )
-
         if self.continuity_bonus_max < 0.0:
             raise ValueError(f"continuity_bonus_max ({self.continuity_bonus_max}) doit être ≥ 0")
         if self.continuity_tau_s <= 0.0:

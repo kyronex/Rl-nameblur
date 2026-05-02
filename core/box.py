@@ -1,10 +1,12 @@
 # core/box.py
-
 from dataclasses import dataclass, field
+from typing import Optional
 import numpy as np
 
 @dataclass
 class Box:
+    SCORE_KEY = "score"
+
     x: int
     y: int
     w: int
@@ -18,7 +20,7 @@ class Box:
 
     @property
     def confidence(self):
-      return self.scores.get("score", 0.0)
+        return float(self.scores.get(self.SCORE_KEY, 0.0))
 
     def copy_with(self, x=None, y=None, w=None, h=None):
         return Box(
@@ -35,9 +37,11 @@ class Box:
         return Box(x=rect[0], y=rect[1], w=rect[2], h=rect[3])
 
     @staticmethod
-    def merge_scores(*boxes):
-        merged = {}
+    def merge_scores(*boxes) -> dict:
+        merged: dict = {}
         for box in boxes:
             for k, v in box.scores.items():
-                merged[k] = max(merged.get(k, 0.0), v)
+                if not isinstance(v, (int, float)):
+                    continue
+                merged[k] = max(merged.get(k, 0.0), float(v))
         return merged

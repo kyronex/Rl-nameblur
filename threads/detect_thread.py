@@ -8,7 +8,6 @@ log = logging.getLogger("detect_thread")
 
 class DetectThread:
     """Slow detect — full frame, scale lent."""
-
     def __init__(self):
         self._latest_frame = None
         self._latest_frame_ts = 0.0
@@ -48,18 +47,14 @@ class DetectThread:
             with self._frame_lock:
                 frame = self._latest_frame
                 frame_ts = self._latest_frame_ts
-
             if frame is None:
                 time.sleep(0.001)
                 continue
-
             if last_processed_ts == frame_ts:
                 time.sleep(0.001)
                 continue
-
             last_processed_ts = frame_ts
             zones = detect_plates(frame)
-
             with self._zones_lock:
                 self._latest_zones = zones
                 self._latest_zones_ts = time.perf_counter()

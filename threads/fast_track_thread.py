@@ -25,7 +25,6 @@ class FastTrackThread:
         self.cfg = config or FastTrackConfig()
         self._cfg_lock = threading.Lock()
         self._cfg_version = _global_cfg.version
-
         # Frame courante (input)
         self._latest_frame = None
         self._latest_frame_ts = 0.0
@@ -39,12 +38,10 @@ class FastTrackThread:
         self._results_ts = 0.0
         self._result_version = 0
         self._results_lock = threading.Lock()
-
         # État interne worker
         self._prev_gray = None
         self._last_known = {}
         self._last_processed_ts = -1.0
-
         # Lifecycle
         self._running = False
         self._thread: Optional[threading.Thread] = None

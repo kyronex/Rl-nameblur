@@ -50,9 +50,6 @@ class Associator:
         speed = (mask.vx * mask.vx + mask.vy * mask.vy) ** 0.5
         radius = self.cfg.geo_gate_base_radius_px + self.cfg.geo_gate_velocity_k * speed * self.cfg.geo_gate_dt_ref
         passes = dist <= radius
-        if not passes:
-            log.info(f"  GATE FAIL mask{mask.uid} dist={dist:.0f} radius={radius:.0f} "
-                    f"speed={speed:.1f} pred={predicted} det={det_rect}")
         return passes
 
     # ── score composite (retourne MatchScore traçable) ───
@@ -70,7 +67,7 @@ class Associator:
 
 
     # ── matrice de coûts ──────────────────────────────────
-    def build_cost_matrix(self, detections, masks, ts):
+    def _build_cost_matrix(self, detections, masks, ts):
         n_det, n_mask = len(detections), len(masks)
         cost = np.full((n_det, n_mask), _GATED_COST, dtype=np.float64)
         scores: List[List[MatchScore]] = [[MatchScore.gated_score()] * n_mask for _ in range(n_det)]
@@ -80,10 +77,8 @@ class Associator:
             min_score = self._get_min_score(det)
             for j, mask in enumerate(masks):
                 if not self._geo_gate_passes(det.rect, predicted_rects[j], mask):
-                    log.debug(f"GATED det{i} vs mask{j} | det={det.rect} pred={predicted_rects[j]}")
                     continue  # scores[i][j] reste GATED_SCORE, cost reste _GATED_COST
                 ms = self._compute_score(det, mask, predicted_rects[j], ts)
-                log.info(f"SCORE det{i} vs mask{j} = {ms.total:.3f} (min={self._get_min_score(det):.3f})")
                 if ms.total < min_score:
                     continue
                 scores[i][j] = ms
@@ -95,21 +90,17 @@ class Associator:
     def associate(self,detections: List[Detection],masks: List[Mask],ts) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
         n_det = len(detections)
         n_mask = len(masks)
-
         if n_det == 0 and n_mask == 0:
             return [], [], []
         if n_det == 0:
             return [], [], list(range(n_mask))
         if n_mask == 0:
             return [], list(range(n_det)), []
-
-        cost, scores = self.build_cost_matrix(detections, masks, ts)
+        cost, scores = self._build_cost_matrix(detections, masks, ts)
         det_indices, mask_indices = linear_sum_assignment(cost)
-
         matches: List[Tuple[int, int]] = []
         unmatched_dets = set(range(n_det))
         unmatched_masks = set(range(n_mask))
-
         for di, mi in zip(det_indices, mask_indices):
             ms = scores[di][mi]
             if ms.gated:
@@ -121,7 +112,6 @@ class Associator:
                 matches.append((di, mi))
                 unmatched_dets.discard(di)
                 unmatched_masks.discard(mi)
-
         return matches, sorted(unmatched_dets), sorted(unmatched_masks)
 
 

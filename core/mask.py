@@ -12,6 +12,18 @@ class MaskState(Enum):
     CONFIRMED = auto()   # vu assez de fois → on blur
     LOST      = auto()   # plus détecté, en sursis (TTL)
 
+def _serialize_scores(scores: dict) -> dict:
+    """Sérialise le dict scores (hétérogène) pour export/log."""
+    out = {}
+    for k, v in scores.items():
+        if isinstance(v, (int, float)):
+            out[k] = round(float(v), 4)
+        elif hasattr(v, "to_dict"):
+            out[k] = v.to_dict()
+        else:
+            out[k] = repr(v)
+    return out
+
 @dataclass(frozen=True, slots=True)
 class FastMaskView:
     """Snapshot immuable d'un Mask, frontière thread slow→fast.
@@ -51,7 +63,7 @@ class Mask:
     template:           Optional[np.ndarray] = None
     fast_miss_count:    int            = 0
     box:                Optional[Box]  = None
-    scores:             List[float]    = field(default_factory=list)
+    scores:             dict           = field(default_factory=dict)
 
     state:              MaskState      = MaskState.PENDING
     frames_matched:     int            = 0
@@ -121,6 +133,7 @@ class Mask:
             "vh":                round(self.vh, 2),
             "confidence":        round(self.confidence, 4),
             "fast_miss_count":   self.fast_miss_count,
+            "scores":            _serialize_scores(self.scores),
             "state":             self.state.name,
             "frames_matched":    self.frames_matched,
             "frames_missing":    self.frames_missing,

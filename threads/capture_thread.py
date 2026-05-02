@@ -48,13 +48,10 @@ class CaptureThread:
     def _worker(self):
         while self._running:
             frame = self._camera.get_latest_frame()
-
             if frame is None:
                 continue
-
             frame = frame.copy()
             ts = time.perf_counter()
-
             with self._frame_lock:
                 self._latest_frame = frame
                 self._latest_ts = ts

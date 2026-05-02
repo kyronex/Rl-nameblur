@@ -18,9 +18,6 @@ def write_rects(image, rects, color , thickness=2):
     cv2.waitKey(0)
     """
 
-    #lab = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
-    #hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-
 # ── write_circles ──
 def write_circles(image, circles, color, thickness=2):
     for (cx, cy, r) in circles:

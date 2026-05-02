@@ -9,7 +9,6 @@ from detection.boxes import process_channel
 from core.box import Box
 from bench import bench
 
-
 log = logging.getLogger("detect")
 
 # ── Cache kernels par scale ──
@@ -17,21 +16,17 @@ _cache_by_scale = {}
 
 def _build_params(scale):
     """Lit cfg à chaque appel — hot-reload natif."""
-
     # ── Couleurs ──
     wc_low      = tuple(cfg.get("detect.hsv.white_core.lower", [0, 0, 200]))
     wc_high     = tuple(cfg.get("detect.hsv.white_core.upper", [230, 30, 255]))
     we_low      = tuple(cfg.get("detect.hsv.white_ext.lower",  [0, 0, 200]))
     we_high     = tuple(cfg.get("detect.hsv.white_ext.upper",  [230, 30, 255]))
-
     # ── Morpho ──
     letter_connect_w     = max(round(cfg.get("detect.morpho.white_dilate.width", 20) / scale), 5)
     letter_connect_h     = max(round(cfg.get("detect.morpho.white_dilate.height", 10) / scale), 3)
     letter_connect_iter  = cfg.get("detect.morpho.white_dilate.iterations", 1)
-
     gap_fill_w     = max(round(cfg.get("detect.morpho.close.width", 30) / scale), 3)
     gap_fill_h     = max(round(cfg.get("detect.morpho.close.height", 2) / scale), 1)
-
     # Tailles hardcodées (à mettre en config si besoin de tuner)
     noise_filter_w, noise_filter_h        = 20, 4
     line_split_w, line_split_h            = 5, 6
@@ -53,7 +48,6 @@ def _build_params(scale):
         final_split_w, final_split_h,
         roi_connected_w, roi_connected_h,
     )
-
     # ── Création uniquement si config changée ──
     cached = _cache_by_scale.get(scale)
     if cached is None or cached["key"] != kernel_key:
@@ -80,7 +74,6 @@ def _build_params(scale):
                 "roi_connected":   cv2.getStructuringElement(cv2.MORPH_RECT, (roi_connected_w, roi_connected_h)),
             },
         }
-
     kernels = _cache_by_scale[scale]["kernels"]
     params = {
          # ── Morpho ──
@@ -130,7 +123,6 @@ def _build_params(scale):
         "min_drop_ratio":   cfg.get("detect.gradient.min_drop_ratio",  0.20),
         "min_zone_width":   cfg.get("detect.gradient.min_zone_width",   8),
     }
-
     # ── Arrays numpy couleur ──
     colors = {
         "wc_low":      np.array(wc_low),
@@ -138,75 +130,56 @@ def _build_params(scale):
         "we_low":      np.array(we_low),
         "we_high":     np.array(we_high),
     }
-
     return colors, kernels, params, letter_connect_iter
 
 def _run_pipeline(frame, scale):
     colors, kernels, params, letter_connect_iter = _build_params(scale)
-
     # ══════════════════════════════════════════════════
     #  ÉTAPE 1 — Préparation de l'image
     # ══════════════════════════════════════════════════
-
     # ── 1. Resize ──
     h_orig, w_orig = frame.shape[:2]
     small = cv2.resize(frame,(int(w_orig / scale), int(h_orig / scale)),interpolation=cv2.INTER_LINEAR)
     h_small, w_small = small.shape[:2]
-
     # ── Grayscale ──
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
-
     sat_mask = saturation_variance_mask(small, scale)
-
     # ── 2. Masque blanc → nettoyage ──
     mask_white, white_clean = compute_white_mask(gray, kernels, letter_connect_iter)
-
     # ── 3. Combinaison : blanc ET dans une zone à forte variance de saturation ──
     combined = cv2.bitwise_and(white_clean, sat_mask)
-
     # ── 4. Sobel interiors ──
     interior = compute_sobel_interior_unified(gray, combined, kernels)
-
     # ── 5. Refine and merge ──
     closed = refine_and_merge(combined, interior, kernels)
-
     # ── 6. Contours + filtre géométrique (ratio, area, fill) ──
     candidates = process_channel(closed,small, mask_white, h_small, params, kernels )
-
     if not candidates:
         return []
-
     # ── 7. Remap vers résolution d'entrée ──
     gray_full = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     H_full, W_full = gray_full.shape
-
     plates = []
     for b in candidates:
         x = int(b.x * scale)
         y = int(b.y * scale)
         w = int(b.w * scale)
         h = int(b.h * scale)
-
         # Clamp aux bornes du frame
         x0 = max(0, x)
         y0 = max(0, y)
         x1 = min(W_full, x + w)
         y1 = min(H_full, y + h)
-
         if x1 > x0 and y1 > y0:
             template = gray_full[y0:y1, x0:x1].copy()
         else:
             template = None
-
         plates.append(Box(x, y, w, h, scores=dict(b.scores), template=template))
-
     return plates
-
 
 # ═══════════════════════════════════════════════════════
 #  API PUBLIQUE
 # ═══════════════════════════════════════════════════════
-
 def detect_plates(frame):
     """Slow detect — full frame."""
     scale = cfg.get("detect.slow.scale", 2.0)
@@ -215,7 +188,6 @@ def detect_plates(frame):
 # ═══════════════════════════════════════════════════════
 #  FAST TRACKING — léger, pour ROI connues
 # ═══════════════════════════════════════════════════════
-
 def ncc_match(roi_gray, template_gray, threshold):
     """
     Template matching NCC sur un crop ROI.
@@ -226,11 +198,8 @@ def ncc_match(roi_gray, template_gray, threshold):
     if (template_gray.shape[0] > roi_gray.shape[0] or template_gray.shape[1] > roi_gray.shape[1]):
         bench.count("fast_ncc_roi_too_small")
         return 0.0, None
-
     result = cv2.matchTemplate(roi_gray, template_gray, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
-
     if max_val < threshold:
         return round(max_val, 3), None
-
     return round(max_val, 3), max_loc

@@ -1,7 +1,6 @@
 # core/optical_flow.py
 import cv2
 import numpy as np
-from bench import bench
 
 # ── Paramètres Lucas-Kanade ──
 _LK_PARAMS = dict(
@@ -26,10 +25,6 @@ def of_track(prev_gray, curr_gray, rect):
     """
     Tente de suivre rect via Lucas-Kanade entre prev_gray et curr_gray.
     Travaille sur un crop local pour la performance.
-
-    Sondes bench :
-      - of_lk_call : durée du seul cv2.calcOpticalFlowPyrLK
-                     (isole le coût LK pur du crop/median).
     """
     x, y, w, h = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
     img_h, img_w = prev_gray.shape[:2]
@@ -46,17 +41,10 @@ def of_track(prev_gray, curr_gray, rect):
         return rect, False
 
     pts = _rect_to_points((x - cx0, y - cy0, w, h))
-
-    with bench.timer("of_lk_call"):
-        new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-            prev_crop, curr_crop, pts, None, **_LK_PARAMS
-        )
-
+    new_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_crop, curr_crop, pts, None, **_LK_PARAMS)
     good = status.flatten() == 1
-
     if good.sum() < 2:
         return rect, False
-
     delta = np.median(new_pts[good] - pts[good], axis=0).flatten()
     dx, dy = float(delta[0]), float(delta[1])
 

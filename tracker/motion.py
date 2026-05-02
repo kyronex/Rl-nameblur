@@ -8,7 +8,6 @@ import logging
 
 log = logging.getLogger("motion")
 
-
 def apply_detection(mask, new_rect, detect_ts, source, config):
     """
     Met à jour un mask avec une nouvelle détection.
@@ -16,10 +15,8 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
     """
     nx, ny, nw, nh = new_rect
     ox, oy, ow, oh = mask.rect
-
     size_ref = min(ow, oh)
     dead_zone = max(config.dead_zone_min_px, config.dead_zone_rel * size_ref)
-
     # ── Dead zone : pas de mouvement significatif ──
     if (abs(nx - ox) < dead_zone and abs(ny - oy) < dead_zone
             and abs(nw - ow) < dead_zone and abs(nh - oh) < dead_zone):
@@ -30,7 +27,6 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
             mask.last_detected_rect = new_rect
             mask.last_slow_ts = detect_ts
         return
-
     # ── Vélocité : uniquement sur détections slow ──
     if source == "slow":
         lx, ly, lw, lh = mask.last_detected_rect
@@ -38,20 +34,16 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
             dt = 0.0
         else:
             dt = detect_ts - mask.last_slow_ts
-
         if dt > 0.001:
             delta_x = nx - lx
             delta_y = ny - ly
             dist = (delta_x ** 2 + delta_y ** 2) ** 0.5
-
             if dt > config.dt_slow_max:
-                log.debug(f"uid={mask.uid} reset velocity "f"dt={dt * 1000:.0f}ms > max={config.dt_slow_max * 1000:.0f}ms")
                 mask.vx = 0.0
                 mask.vy = 0.0
                 mask.vw = 0.0
                 mask.vh = 0.0
             elif dist > config.teleport_thresh:
-                log.debug(f"uid={mask.uid} teleport reset "f"dist={dist:.0f}px > thresh={config.teleport_thresh}px")
                 mask.vx = 0.0
                 mask.vy = 0.0
                 mask.vw = 0.0
@@ -61,10 +53,8 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
                 raw_vy = delta_y / dt
                 raw_vw = (nw - lw) / dt
                 raw_vh = (nh - lh) / dt
-
                 # Dead zone vélocité position
                 velocity_dead_zone = config.velocity_dead_zone
-
                 if abs(raw_vx) < velocity_dead_zone:
                     raw_vx = 0.0
                 if abs(raw_vy) < velocity_dead_zone:
@@ -74,31 +64,26 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
                     raw_vw = 0.0
                 if abs(raw_vh) < velocity_dead_zone:
                     raw_vh = 0.0
-
                 # Clamp position
                 raw_vx = max(-config.vx_max, min(raw_vx, config.vx_max))
                 raw_vy = max(-config.vy_max, min(raw_vy, config.vy_max))
                 # Clamp taille
                 raw_vw = max(-config.vw_max, min(raw_vw, config.vw_max))
                 raw_vh = max(-config.vh_max, min(raw_vh, config.vh_max))
-
                 mask.vx = raw_vx
                 mask.vy = raw_vy
                 mask.vw = raw_vw
                 mask.vh = raw_vh
-
     # ── EMA smoothing ──
     alpha = config.smooth_alpha
     sx = ox + alpha * (nx - ox)
     sy = oy + alpha * (ny - oy)
     sw = ow + alpha * (nw - ow)
     sh = oh + alpha * (nh - oh)
-
     mask.rect = (sx, sy, sw, sh)
     mask.fast_miss_count = 0
     mask.last_detected_ts = detect_ts
     mask.last_source = source
-
     if source == "slow":
         mask.last_detected_rect = new_rect
         mask.last_slow_ts = detect_ts
@@ -113,14 +98,11 @@ def compute_predicted_rect(mask, ts, config):
         return mask.rect
     # Ancrage cohérent : dt depuis le dernier slow (référentiel de last_detected_rect)
     dt = ts - mask.last_slow_ts
-
     # Clamp symétrique : autorise rétro-projection (ts < last_slow_ts)
     # bornée par dt_cap pour éviter extrapolations délirantes
     dt_capped = max(-config.dt_cap, min(dt, config.dt_cap))
-
     # Damping basé sur |dt| : plus on s'éloigne du slow, moins on fait confiance à la vélocité
     damping = max(0.0, 1.0 - abs(dt) * config.damping_rate)
-
     lx, ly, lw, lh = mask.last_detected_rect
     return (lx + mask.vx * dt_capped * damping,
             ly + mask.vy * dt_capped * damping,
@@ -133,14 +115,11 @@ def predict_position(mask, now, screen_w, screen_h, config):
     Ancrage = last_detected_rect (pas de dérive cumulative).
     """
     x, y, w, h = compute_predicted_rect(mask, now, config)
-
     # Taille minimum
     min_size = config.min_mask_size
     w = max(min_size, w)
     h = max(min_size, h)
-
     # Clamp aux bornes écran
     x = max(0.0, min(x, screen_w - w))
     y = max(0.0, min(y, screen_h - h))
-
     mask.rect = (x, y, w, h)
