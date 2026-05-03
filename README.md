@@ -12,271 +12,115 @@ le flux vers OBS via une caméra virtuelle.
 DXCam (120fps)
     │
     ▼
-CaptureThread ──→ frame RGB
+CaptureThread (worker daemon)
+    ├─ _latest_frame (RGB, copy)
+    ├─ _latest_ts   (perf_counter)
+    └─ _frame_id    (monotone, sert au cache FastTrack)
     │
-    ├──→ DetectThread (Slow — , full frame)
-    │        └──→ zones [(x, y, w, h), ...]
+    ▼ get_frame() / get_frame_id() — non bloquant, lock court
     │
-    ├──→ FastTrackThread (Fast — ROI redetect autour des masques connus)
-    │        └──→ zones mises à jour [(x, y, w, h), ...]
+    ├──→ DetectThread (Slow — full frame)
+    │        ├─ give_frame(frame, ts) ← push depuis main loop
+    │        └─ get_result() → (zones, zones_ts, count, frame_ts_detected)
     │
-    ├──→ Main Loop (TTL + matching distance/IoU + smooth + prédiction vélocité)
-    │        └──→ active_masks → blur_zones
+    ├──→ FastTrackThread (Fast — Event-driven, OF→NCC→stale fallback)
+    │        ├─ give_frame_and_views(frame, views, ts) ← push depuis main loop
+    │        └─ get_results() → (version, [(uid, rect, score)], ts)
     │
-    ├──→ blur.py (pixelate / box / gaussian / fill — in-place)
+    ├──→ Main Loop ──→ Tracker (TrackerConfig)
+    │        ├─ tick(detections, ts)
+    │        │     ├─ Associator — gating + coût IoU+pHash + Hungarian
+    │        │     │     └─ matches / unmatched_dets / unmatched_masks
+    │        │     ├─ MaskRegistry — CRUD + TTL + éviction
+    │        │     │     └─ create / update / expire masks
+    │        │     └─ → confirmed_masks (MaskState)
+    │        └─ get_confirmed_masks()
     │
-    └──→ SendThread ──→ OBS Virtual Camera (pyvirtualcam)
+    ├──→ core/blur.py (apply_blur — pixelate / box / gaussian / fill — in-place)
+    │
+    └──→ SendThread (double buffer zéro-copie, swap pointeurs)
+             ├─ borrow() → write buffer (main écrit in-place)
+             ├─ publish() → swap write/send buffers
+             └─ worker → vcam.send(send_buf) (OBS Virtual Camera)
 ```
 
 ---
 
 ## Fichiers
 
-| Fichier                 | Rôle                                                                         |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `main.py`               | Orchestration pipeline v10, TTL, matching, dual detect, CSV benchmark, debug |
-| `config.py`             | Singleton config — charge config.yaml + hot-reload (watcher)                 |
-| `config.yaml`           | Paramètres centralisés (zéro magic number)                                   |
-| `capture_thread.py`     | Thread de capture DXCam non-bloquant                                         |
-| `detect_thread.py`      | Thread de détection lente (slow — full frame, scale lent)                    |
-| `fast_track_thread.py`  | Thread de tracking rapide (fast — ROI autour des masques)                    |
-| `detect.py`             | Pipeline HSV dual-pass ( white masking)                                      |
-| `detect_tools.py`       | Utilitaires dessin (write_circles, write_rects, get_color)                   |
-| `detect_tools_mask.py`  | Masques image (saturation, white mask, sobel, refine/merge)                  |
-| `detect_tools_boxes.py` | Boîtes englobantes (extract, split, validate, merge, process_channel)        |
-| `detect_stats.py`       | Compteurs de performance thread-safe (timings + rejections)                  |
-| `blur.py`               | Floutage multi-mode (pixelate, box, gaussian, fill)                          |
-| `send_thread.py`        | Thread d'envoi vers la caméra virtuelle OBS                                  |
-| `bench_pipeline.py`     | Benchmark pas-à-pas du pipeline detect sur une image                         |
+### Entrée / Orchestration
+
+| Fichier   | Rôle                                                                               |
+| --------- | ---------------------------------------------------------------------------------- |
+| `main.py` | Orchestration pipeline v13 — TTL, matching, dual detect, Tracker, MaskState, debug |
+
+### Configuration
+
+| Fichier       | Rôle                                                         |
+| ------------- | ------------------------------------------------------------ |
+| `config.py`   | Singleton config — charge config.yaml + hot-reload (watcher) |
+| `config.yaml` | Paramètres centralisés (zéro magic number)                   |
+
+#### Paramètres clés à tuner
+
+> Le fichier `config.yaml` est intégralement commenté et constitue la référence principale.
+> Les paramètres ci-dessous sont ceux qui impactent le plus le comportement du pipeline.
+
+| Clé YAML                       | Défaut     | Description                                                 |
+| ------------------------------ | ---------- | ----------------------------------------------------------- |
+| `screen.capture_fps`           | `120`      | FPS cible de capture DXCam                                  |
+| `screen.vcam_fps`              | `120`      | FPS cible de sortie vers OBS Virtual Camera                 |
+| `detect.slow.scale`            | `2.0`      | Facteur de downscale pour la détection HSV (coût CPU)       |
+| `detect.fast.enabled`          | `true`     | Active le FastTracker inter-frames (OF → NCC → stale)       |
+| `detect.fast.ncc_threshold`    | `0.4`      | Seuil NCC pour valider un match template → ROI (∈ [0, 1])   |
+| `detect.fast.max_stale_frames` | `15`       | Frames consécutives sans match NCC avant perte du masque    |
+| `blur.mode`                    | `pixelate` | Mode de floutage : `pixelate` / `box` / `gaussian` / `fill` |
+| `blur.pixel_size`              | `15`       | Taille d'un bloc (px) en mode `pixelate`                    |
+| `debug.overlay.enabled`        | `false`    | Affiche les rectangles et UIDs sur le flux OBS              |
+| `debug.bench.enabled`          | `true`     | Active la collecte des métriques de performance             |
 
 ---
 
-## Paramètres principaux (`config.yaml`)
+## Métriques bench
 
-| Clé YAML                 | Valeur par défaut | Description                                                  |
-| ------------------------ | ----------------- | ------------------------------------------------------------ |
-| `screen.width`           | 1920              | Résolution capture                                           |
-| `screen.height`          | 1080              | Résolution capture                                           |
-| `screen.capture_fps`     | 120               | FPS cible DXCam                                              |
-| `screen.vcam_fps`        | 120               | FPS déclaré à OBS                                            |
-| `masks.ttl_max`          | 4                 | Persistance d'un masque (en frames)                          |
-| `masks.max_masks`        | 8                 | Nombre max de masques actifs simultanément                   |
-| `masks.smooth_alpha`     | 1.0               | Lissage exponentiel des rects (0=fixe, 1=immédiat)           |
-| `matching.mode`          | `"distance"`      | Algo de matching : `"distance"` ou `"iou"`                   |
-| `matching.dist_thresh`   | 60                | Seuil distance (px) pour matcher un masque                   |
-| `matching.iou_thresh`    | 0.15              | Seuil IoU pour matcher un masque                             |
-| `blur.mode`              | `"fill"`          | Mode de flou : `"pixelate"`, `"box"`, `"gaussian"`, `"fill"` |
-| `blur.pixel_size`        | 13                | Taille bloc pixelate                                         |
-| `blur.strength`          | 27                | Force du flou gaussien / box                                 |
-| `blur.fill_color`        | `[80, 80, 80]`    | Couleur de remplissage (mode fill)                           |
-| `blur.margin`            | 0                 | Marge (px) autour de chaque zone floutée                     |
-| `detect.slow.scale`      | 2.0               | Facteur de réduction (slow detect)                           |
-| `detect.fast.scale`      | 3.0               | Facteur de réduction (fast ROI tracking)                     |
-| `detect.fast.roi_margin` | 0.6               | Marge ROI autour des masques existants (+%)                  |
-| `detect.fast.enabled`    | true              | Active/désactive le fast tracking                            |
-| `debug.log_level`        | `"WARNING"`       | Niveau de log : DEBUG, INFO, WARNING, ERROR                  |
-| `debug.draw`             | false             | Affiche les rectangles colorés TTL dans OBS                  |
-| `debug.colors.fresh`     | `[0, 255, 0]`     | Couleur masque TTL élevé (vert)                              |
-| `debug.colors.persist`   | `[0, 255, 255]`   | Couleur masque TTL moyen (jaune)                             |
-| `debug.colors.dying`     | `[0, 0, 255]`     | Couleur masque TTL bas (rouge)                               |
-
----
-
-## Features livrées
-
-```text
-══════════════════════════════════════════════════════════════════════════
- #  │ Feature                          │ Version │ Impact
-════╪══════════════════════════════════╪═════════╪════════════════════════
-                    CAPTURE
-────┼──────────────────────────────────┼─────────┼────────────────────────
- 1  │ Capture écran DXCam              │ v1.0    │ 120fps cible Windows
- 2  │ CaptureThread (non-bloquant)     │ v5.0    │ Capture découplée
-────┼──────────────────────────────────┼─────────┼────────────────────────
-                    DÉTECTION
-────┼──────────────────────────────────┼─────────┼────────────────────────
- 3  │ Détection HSV (orange + bleu)    │ v1.0    │ Repère les cartouches
- 4  │ Dual-pass HSV (v2)               │ v3.0    │ 2 passes séparées
- 5  │ White masking (core + ext)       │ v8.0    │ Filtre texte blanc
- 6  │ Morphologie (open + close)       │ v2.0    │ Nettoyage contours
- 7  │ Filtres de forme (ratio, area)   │ v2.0    │ Élimine gros blocs
- 8  │ DetectThread slow (non-bloquant) │ v5.0    │ Detect découplé
- 9  │ Resize avant detect (SCALE)      │ v5.0    │ Accélère le HSV
-10  │ FastTrackThread (ROI redetect)   │ v8.0    │ Tracking rapide ROI
-────┼──────────────────────────────────┼─────────┼────────────────────────
-                    SUIVI / MASQUES
-────┼──────────────────────────────────┼─────────┼────────────────────────
-11  │ Système TTL (persistance)        │ v4.0    │ Masque survit N frames
-12  │ Matching par distance            │ v4.0    │ Réidentifie un masque
-13  │ Matching par IoU                 │ v4.0    │ Alternative au distance
-14  │ MAX_MASKS (cap masques actifs)   │ v4.0    │ Limite les faux positifs
-15  │ Smooth exponentiel (rects)       │ v5.0    │ Réduit les sauts
-16  │ Prédiction par vélocité          │ v8.0    │ Anticipe le déplacement
-────┼──────────────────────────────────┼─────────┼────────────────────────
-                    FLOUTAGE
-────┼──────────────────────────────────┼─────────┼────────────────────────
-17  │ Pixelate in-place                │ v3.0    │ Flou rapide et discret
-18  │ Multi-mode blur                  │ v8.0    │ pixelate/box/gaussian/fill
-19  │ Marge configurable               │ v5.0    │ Couvre débordements
-────┼──────────────────────────────────┼─────────┼────────────────────────
-                    SORTIE
-────┼──────────────────────────────────┼─────────┼────────────────────────
-20  │ SendThread (pyvirtualcam)        │ v5.0    │ Envoi OBS non-bloquant
-21  │ Buffer zéro-copie (borrow/pub)   │ v5.1    │ Évite allocations
-────┼──────────────────────────────────┼─────────┼────────────────────────
-                    CONFIG / INFRA
-────┼──────────────────────────────────┼─────────┼────────────────────────
-22  │ config.yaml centralisé           │ v6.1    │ Zéro magic number
-23  │ config.py singleton              │ v6.1    │ Import unique partout
-24  │ Hot-reload config (watcher)      │ v8.0    │ Modif YAML à chaud
-25  │ DEBUG_DRAW (rects colorés TTL)   │ v5.0    │ Visualise les masques
-26  │ Benchmark intégré (tous modules) │ v5.0    │ Stats à la sortie
-27  │ detect_stats thread-safe         │ v8.0    │ Compteurs par pipeline
-════╪══════════════════════════════════╪═════════╪════════════════════════
-
-```
-
----
-
-## Performances mesurées (v6.1 — i7-12700K)
-
-| Étape           | Temps moyen |
-| --------------- | ----------- |
-| Capture DXCam   | ~28 ms      |
-| Détection HSV   | ~102 ms     |
-| Blur + CVT      | ~3 ms       |
-| Envoi vcam      | ~13 ms      |
-| Loop principale | ~20 ms      |
-| **FPS observé** | **~49 FPS** |
-
-### Corrélation masques / FPS
-
-| Masques actifs | FPS observé |
-| -------------- | ----------- |
-| 0              | ~57 FPS     |
-| 3–4            | ~50 FPS     |
-| 6–8            | ~44 FPS     |
-
-> Chaque masque coûte environ **~2 FPS**. Réduire les faux positifs = gain direct.
-
----
-
-## Plan de développement
-
-```txt
-══════════════════════════════════════════════════════════════════════════════════════════
- #  │ Feature                               │ Statut     │ Notes
-════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
-                    PHASE 4 — QUALITÉ DÉTECTION
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-28  │ Score de confiance par masque         │ ⬚ À FAIRE │ Prioriser les masques fiables
-29  │ Intelligent MAX_MASKS                 │ ⬚ À FAIRE │ Éjecter les moins confiants
-════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
-                    PHASE 5 — STABILITÉ VISUELLE
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-30  │ Réduire clignotement                  │ ⬚ À FAIRE │ Combinaison smooth + prédiction
-    │                                       │            │ + moins de faux positifs
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-31  │ Transition douce blur                 │ ⬚ À FAIRE │ Fade-in/out basé sur TTL
-════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
-                    PHASE 6 — STREAM LIVE
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-32  │ Test stabilité longue durée           │ ⬚ À FAIRE │ 30min+, RAM, FPS, CPU
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-33  │ Gestion transitions de jeu            │ ⬚ À FAIRE │ Replay, goal, menu, scoreboard
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-34  │ Premier stream live réel              │ ⬚ À FAIRE │ 🎯 Objectif final
-════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
-                    PHASE 7 — GPU (SI NÉCESSAIRE)
-────┼───────────────────────────────────────┼────────────┼──────────────────────────────────
-35  │ Pipeline GPU (CUDA / OpenCL)          │ ⬚ À FAIRE │ Si CPU insuffisant en live
-════╪═══════════════════════════════════════╪════════════╪══════════════════════════════════
-
-```
-
----
-
-## Planning par sessions
-
-```txt
-══════════════════════════════════════════════════════════════════════════════════════════
-                              PLANNING PAR SESSIONS
-══════════════════════════════════════════════════════════════════════════════════════════
-
-SESSION 1 — Config globale YAML (#22-23)               ✅ TERMINÉE (~30 min)
-──────────────────────────────────────────────────────────────────────────────
-  ✅ Créé config.yaml avec TOUS les paramètres
-  ✅ Créé config.py singleton (from config import cfg)
-  ✅ Migré main.py, detect.py, blur.py, capture/detect/send_thread.py
-  ✅ Validé en PROD : ~49 FPS, zéro magic number
-
-  Résultat : zéro constante hardcodée dans le code ✅
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 2 — Dual Detect + Fast Tracking (#10, 24, 27)  ✅ TERMINÉE
-──────────────────────────────────────────────────────────────────────────────
-  ✅ FastTrackThread : ROI redetect autour des masques connus
-  ✅ Orchestration dual-thread (slow full + fast ROI)
-  ✅ Hot-reload config (watcher thread)
-  ✅ detect_stats thread-safe
-  ✅ White masking (core + ext + dilate)
-  ✅ Prédiction par vélocité
-  ✅ Multi-mode blur (pixelate, box, gaussian, fill)
-
-  Résultat : pipeline v8 opérationnel ✅
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 3 — Qualité détection (#28-29)                 ⬚ À PLANIFIER
-──────────────────────────────────────────────────────────────────────────────
-  • Score de confiance par masque
-  • Éjection intelligente des masques les moins fiables
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 4 — Stabilité visuelle (#30-31)                ⬚ À PLANIFIER
-──────────────────────────────────────────────────────────────────────────────
-  • Réduction du clignotement
-  • Transition douce blur (fade-in/out)
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 5 — Stream live (#32-34)                       ⬚ À PLANIFIER
-──────────────────────────────────────────────────────────────────────────────
-  • Test longue durée (30min+)
-  • Gestion transitions (replay, goal, menu)
-  • Premier stream live réel 🎯
-
-──────────────────────────────────────────────────────────────────────────────
-SESSION 6 — GPU (si nécessaire) (#35)                  ⬚ CONDITIONNEL
-──────────────────────────────────────────────────────────────────────────────
-  • Pipeline GPU uniquement si CPU insuffisant en live
-
-══════════════════════════════════════════════════════════════════════════════════════════
-
-CHEMIN CRITIQUE :
-
-  S1 ✅ ──→ S2 ✅ ──→ S3 ──→ S4 ──→ S5 ──→ [S6 si besoin]
-                      45min  1h    2h     2h
-
-  Total restant chemin critique : ~5h45
-  Total avec GPU                : ~7h45
-
-══════════════════════════════════════════════════════════════════════════════════════════
-```
+| Sonde                | Type  | Description                               |
+| -------------------- | ----- | ----------------------------------------- |
+| `capture_wait`       | timer | Attente frame capturée                    |
+| `slow_poll`          | timer | Poll résultat DetectThread                |
+| `match`              | timer | Matching détections → tracker             |
+| `fast_poll`          | timer | Poll résultat FastTrackThread             |
+| `predict`            | timer | Tick tracker (predict + TTL + purge)      |
+| `blur`               | timer | Application blur + debug overlay          |
+| `frames`             | count | Nombre total de frames traitées           |
+| `masks_total`        | count | Nombre total de masques confirmés         |
+| `fast_wakeup_lag`    | probe | Délai dépôt frame → début traitement (ms) |
+| `fast_tick`          | timer | Tick complet FastTrack                    |
+| `fast_of_total`      | timer | Phase OF toutes views                     |
+| `fast_ncc_total`     | timer | Phase NCC + stale toutes views            |
+| `fast_ncc_confirmed` | count | Masques confirmés par NCC                 |
+| `fast_stale_used`    | count | Masques servis depuis état stale          |
+| `fast_mask_lost`     | count | Masques dépassant `max_stale_frames`      |
+| `send`               | timer | Publish frame vers SendThread             |
 
 ---
 
 ## Dépendances
 
 ```bash
-pip install opencv-python numpy pyvirtualcam dxcam pyyaml scipy
+pip install opencv-python numpy pyvirtualcam dxcam pyyaml scipy pandas screeninfo
 ```
 
-| Lib             | Usage                            |
-| --------------- | -------------------------------- |
-| `opencv-python` | Traitement image (HSV, blur)     |
-| `numpy`         | Buffers, opérations vectorielles |
-| `pyvirtualcam`  | Envoi vers OBS Virtual Camera    |
-| `dxcam`         | Capture écran DirectX (Windows)  |
-| `pyyaml`        | Chargement config.yaml           |
+| Lib             | Version   | Usage                                           |
+| --------------- | --------- | ----------------------------------------------- |
+| `opencv-python` | 4.13.0.92 | Traitement image (HSV, blur, OF, NCC)           |
+| `numpy`         | 2.4.2     | Buffers, opérations vectorielles                |
+| `pyvirtualcam`  | 0.15.0    | Envoi vers OBS Virtual Camera                   |
+| `dxcam`         | 0.0.5     | Capture écran DirectX (Windows)                 |
+| `pyyaml`        | 6.0.3     | Chargement config.yaml                          |
+| `scipy`         | 1.17.1    | Assignation hongroise (`linear_sum_assignment`) |
+| `pandas`        | 3.0.2     | Export CSV métriques bench                      |
+| `screeninfo`    | 0.8.1     | Détection résolution moniteur                   |
+| `comtypes`      | 1.4.15    | Dépendance interne dxcam / pyvirtualcam         |
 
 ---
 

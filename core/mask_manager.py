@@ -1,4 +1,4 @@
-# core/mask_manager.py — v2 (migration Mask dataclass)
+# core/mask_manager.py
 import logging
 import cv2
 from config import cfg

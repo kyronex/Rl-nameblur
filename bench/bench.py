@@ -1,4 +1,4 @@
-# bench.py
+# bench/bench.py
 import time
 import threading
 from collections import defaultdict

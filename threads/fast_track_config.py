@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from config import cfg
 
 
-@dataclass
+@dataclass(frozen=True)
 class FastTrackConfig:
     """
     Snapshot immuable de la configuration du FastTrackThread.
