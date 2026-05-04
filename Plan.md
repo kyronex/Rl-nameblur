@@ -129,7 +129,8 @@
   - `ncc_threshold` : `0.40` → `0.65`
   - `geo_gate_base_radius_px` : `450` → `150`
   - `geo_gate_velocity_k` : `3.0` → `1.5`
-  - `fast_max_drift_s` : `0.5` confirmé (B-01, maintenu)
+  - `fast_max_drift_s` : `0.5` — **valeur définitive validée session 18s**
+    (max_drift observé ≤ 0.9s, aucun zombie pathologique, drift_skipped actif et utile).
 
   _Code — Fast_ :
   - **S1** : gate géographique activé avant NCC.
@@ -145,17 +146,21 @@
   - ✅ `fast_stale_skipped` remplace `fast_stale_used`.
   - ✅ Nombre de masks affichés baisse sur fond statique.
   - ✅ Hot-reload propre.
-  - ⚠️ `fast_max_drift_s` remontable à `1.0-1.5 s` : **à valider sur session prolongée** avant recalibration.
+  - ✅ **Validation empirique session 18s** (`drift=0.5`) :
+    - `unknown=0` sur 100% des EXPIRE (aucune régression d'attribution match).
+    - Lifetime médian ≈ 1.5 s, p95 ≈ 2.1 s.
+    - Outlier unique `lifetime=7.23s` jugé légitime (132 matches, ratio slow/fast 1:3 sain, `last_match=slow 0.83s_ago`).
+    - `max_drift` plafonne à 0.9 s → **monter à 1.0+ s n'apporterait aucun gain mesurable**
 
 - **Dette résorbée** : cause racine B-01 traitée côté fast ET slow.
 
 - **Dette créée** :
   - Cap adaptatif stale sur scène statique → **B-03**.
-  - Instrumentation `[B01]` maintenue jusqu'à validation session prolongée → retrait libère **B-04**.
-  - Commentaire `# QUICK-FIX B-01` à retirer après recalibration `fast_max_drift_s`.
-
+  - Instrumentation `[B01]` retirable immédiatement (validation faite) → débloque **B-04**.
+  - Dégradation FPS observée 84→44 sur session 18s (probablement overhead logs INFO + accumulation masks)
+    → à investiguer hors-scope B-02, **suspect : à scoper en B-03b ou ticket dédié**.
 - **Statut** : ✅ **livré dans son scope**.
-- **Bloque** : retrait `[B01]`, recalibration `fast_max_drift_s`, **B-03**, **B-04**.
+- **Bloque** : retrait `[B01]`, **B-03**, **B-04**.
 
 ---
 
@@ -166,17 +171,23 @@
   **B-03a — Cap adaptatif stale (dette B-02)** :
   - Sur fond statique prolongé, `max_stale_frames` permet encore N cycles avant `fast_mask_lost`.
   - Piste : NCC threshold relevé à `0.70+` quand `velocity == 0` depuis > 1 s.
-  - **Prérequis** : validation session prolongée B-02 d'abord.
+  - **Prérequis levé** : B-02 validé session 18s, instrumentation `[B01]` maintenue jusqu'à B-04.
 
   **B-03b — Dérive `dt` motion** :
   - Symptôme historique : `motion.dt` dérive (750 ms → 2 300 ms), `capped_pct` saturé.
   - **Action préalable** : observer `motion.dt` et `capped_pct` après B-02 livré. Si stables → fermer sans développement.
   - Hypothèse principale à réévaluer : zombies non purgés étaient peut-être la cause — B-02 peut avoir résolu en cascade.
 
+  **B-03c — Dégradation FPS session longue (nouveau, issu obs B-02)** :
+  - Session 18s : 84 FPS → 44 FPS, dégradation continue et monotone.
+  - Hypothèses : overhead logs INFO `[B01]` + `[FAST-APPLY]`, accumulation masks LOST non purgés, ou autre fuite.
+  - **Action préalable** : profiler une session avec logs `[B01]` passés en DEBUG pour isoler la contribution logging vs réelle.
+  - Possiblement résolu en cascade par B-04 (purge temporelle propre).
+
 - 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, module motion, sites de calcul `dt`.
 
 - **Effort** : 0 (si fermé par observation) à 2-4 h.
-- **Critère de succès** : `avg dt` stable, `capped_pct < 10 %`.
+- **Critère de succès** : `avg dt` stable, `capped_pct < 10 %`, FPS stable sur session > 30 s.
 - **Bloque** : F-08.
 
 ---
@@ -197,8 +208,12 @@
       expire_after_lost_s: 1.5
   # supprimer : équivalents en frames côté tracker
   # NE PAS TOUCHER : detect.fast.max_stale_frames
-  # RECALIBRER : masks.fast_max_drift_s (valeur définitive fixée par B-02)
+  # NE PAS TOUCHER : masks.fast_max_drift_s = 0.5 (valeur définitive fixée par B-02)
   ```
+
+  **Calibration de référence (issue B-02 session 18s)** :
+  - Lifetime médian observé ≈ 1.5 s, p95 ≈ 2.1 s → cohérent avec `lost_after_s=1.0` + `expire_after_lost_s=1.5` (total 2.5 s).
+  - Valeurs ci-dessus à conserver tant que la distribution lifetime ne change pas.
 
 - **Changements code** :
   - `MaskState` : ajout `last_seen_ts`, `lost_since_ts`, suppression TTL en ticks.
@@ -213,8 +228,10 @@
   - Purge identique à 3 Hz et 30 Hz.
   - `motion.dt` stable post-déploiement.
   - `capped_pct < 10 %`.
-  - Instrumentation `[B01]` retirée.
+  - Instrumentation `[B01]` retirée (registry + tracker).
+  - Sondes `[FAST-APPLY]` conservées ou passées en DEBUG (à trancher en revue).
   - Commentaire `# QUICK-FIX B-01` retiré.
+  - **Vérifier en cascade** : FPS stable session > 30 s (cf. B-03c).
 
 - **Bloque** : F-08.
 
