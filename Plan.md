@@ -1,4 +1,4 @@
-# 📘 Plan v4 — Tracker / Plan consolidé
+# 📘 Plan v4.1 — Tracker / Plan consolidé
 
 > **Document autoportant.** Aucune référence implicite aux plans antérieurs. En cas de doute sur le périmètre exact d'un item, un **audit de code base** est explicitement requis avant démarrage.
 
@@ -23,9 +23,10 @@
 
 ```text
 🚨 P0 — Bugs bloquants (séquentiel strict)
-   ├── B-01  Quick-fix purge masques zombies
-   ├── B-02  Investigation dérive dt motion
-   └── B-03  TTL temporel (cycle de vie en secondes côté Tracker)
+   ├── B-01  Quick-fix zombies via plafonnement fast_max_drift_s
+   ├── B-02  Correction association fast tracker (cause racine)
+   ├── B-03  Investigation dérive dt motion
+   └── B-04  TTL temporel (cycle de vie en secondes côté Tracker)
          │
          ▼
 🟦 Phase 0 — Clôture stabilisation noyau
@@ -59,48 +60,147 @@
 
 ---
 
-## 🚨 P0 — Bugs bloquants
+## 🚨 P0 — Bugs bloquants (versions révisées)
 
-### 🔴 B-01 — Quick-fix purge masques zombies
+### 🟢 B-01 — Quick-fix zombies via plafonnement du drift fast `[LIVRÉ — partiel acté]`
 
-- **Symptôme** : masques zombies persistent dans le workflow, polluent logs, affichage et stats motion
-- **Objectif** : mitigation immédiate pour débloquer le développement courant — **pas une correction de fond**
-- **Approche** :
-  - Réduction agressive temporaire des seuils de purge dans `config.yaml` (TTL `MaskRegistry`).
-  - Logging explicite à chaque purge avec raison
-  - Marquage `# QUICK-FIX B-01, à retirer après B-03` sur les valeurs touchées
-- 🔍 **Audit code base requis** :
-  - Confirmer le namespace YAML du TTL `MaskRegistry` consommé par `TrackerConfig`.
-  - Confirmer le nom interne de la méthode de purge invoquée par `Tracker.tick()` (le contrat public reste `tick()`).
-- **Effort** : 30 min
-- **Critère de succès** : zombies disparaissent en < 3 s en conditions nominales de dev
-- **Dette créée** : valeurs config fragiles si la cadence de la main loop change → résorbée par B-03
+- **Symptôme initial** (mesuré via instrumentation `[B01]`) :
+  - Masks confirmés vivent **5 à 9 s** au lieu de ~0.4 s post-disparition.
+  - Cas type initial : `uid=4 age=8.63s state=CONFIRMED ttl=24 matches=177 (slow=22 fast=155) last_match=fast 0.01s_ago`.
+  - Mécanisme de purge **fonctionnel** (masks jamais matchés expirent en 0.2-0.6 s comme prévu).
 
-### 🔴 B-02 — Investigation dérive `dt` motion
+- **Cause racine identifiée** : le **fast tracker ré-associe à tort** ses détections sur des UIDs qui ne correspondent plus à un objet réel. Chaque match fast réinitialise `ttl=25` via `mark_matched`, ce qui empêche la transition vers `LOST` et donc la purge.
+  → **Bug d'association amont, pas bug de TTL.** Traité en profondeur par B-02.
 
-- **Symptôme** : `motion.dt` dérive (mesures historiques : 750 ms → 2300 ms), `capped_pct` saturé
+- **Décision de scope B-01** : on **ne touche pas** au fast tracker. On applique un **garde-fou côté tracker** déjà existant mais mal calibré : `fast_max_drift_s`.
+
+- **Approche appliquée** :
+  1. `masks.fast_max_drift_s` ramené de `1.5` → **`0.5`** dans `config.yaml`, commenté `# QUICK-FIX B-01, à recalibrer après B-02`.
+  2. **Aucun changement de code** — garde-fou existant dans `apply_fast_direct` :
+
+     ```python
+     if drift > self.cfg.fast_max_drift_s:
+         drift_skipped += 1
+         continue
+     ```
+
+  3. Instrumentation `[B01]` de `registry.py` **maintenue active jusqu'à validation B-02**.
+
+- 🔍 **Audit code base** : ✅ effectué pré-livraison.
+
+- **Effort réel** : 5 min (édition config) + session de validation.
+
+- **Résultats observés sur session de validation** :
+  - ✅ Garde-fou opérationnel : compteur `drift_skipped` non nul corrélé aux disparitions réelles (ex. `received=4 applied=0 drift_skipped=4 max_drift=1.0s`).
+  - ✅ Disparition du pic catastrophique (plus de cas `age=8s+` **sans aucun filtrage**, comme `uid=4` initial).
+  - ✅ Purge des masks jamais matchés intacte (`lifetime ≈ 0.24s`).
+  - ✅ Pas de régression visuelle observée.
+  - ⚠️ **Critère initial "< 1.5 s" non atteint** : zombies résiduels observés à `lifetime` 3.79 s → 8.38 s, alimentés par des matches `last_match=fast 0.00s_ago` qui passent le seuil drift.
+  - ⚠️ Observation collatérale : le **slow associator** ré-attribue lui aussi des détections sur des UIDs morts (ex. `uid=23 last_match=slow 0.11s_ago` sur zombie 3.59 s) → **B-02 doit auditer slow + fast**, pas uniquement fast.
+
+- **Critères de succès — version actée** :
+  - ✅ Compteur `drift_skipped` opérationnel et corrélé aux disparitions.
+  - ✅ Suppression du régime catastrophique (zombies sans aucun filtrage).
+  - ✅ Pas de régression visuelle.
+  - ⚠️ **Critère "lifetime < 1.5 s" reporté à B-02** — atteignable uniquement en traitant la cause racine (sur-association slow + fast).
+
+- **Dette créée — confirmée** :
+  - Cause racine intacte : sur-association sur UIDs morts continue de produire des matches `0.00s_ago`. → résorbée par **B-02 (périmètre élargi)**.
+  - `fast_max_drift_s = 0.5` reste en place comme **filet permanent jusqu'à B-02**, à recalibrer ensuite.
+
+- **Statut** : ✅ **livré dans son scope**. Cause racine renvoyée à B-02 avec périmètre élargi (slow + fast).
+
+- **Bloque** : rien.
+
+---
+
+### 🔴 B-02 — Correction d'association (slow + fast) `[PÉRIMÈTRE ÉLARGI]`
+
+- **Symptôme résiduel après B-01** :
+  - Zombies persistent à `lifetime` 3-8 s avec `last_match=fast 0.00s_ago` et/ou `last_match=slow 0.1s_ago`.
+  - Ratio `match_count_fast / match_count_slow` reste anormalement haut sur masks vivants.
+  - Cas types observés en validation B-01 :
+    - `uid=19 age=7.56s state=CONFIRMED ttl=25 matches=122 (slow=22 fast=100) last_match=fast 0.00s_ago` ← fast match instantané sur zombie 7,5 s
+    - `uid=23 age=3.59s state=CONFIRMED ttl=20 matches=59 (slow=17 fast=42) last_match=slow 0.11s_ago` ← **slow** ré-associe sur zombie
+
+- **Cause racine** : **deux** producteurs d'association ré-attribuent des détections à des UIDs morts au lieu d'en créer de nouveaux :
+  1. **`Associator` (slow)** — gating IoU/distance/hash trop laxiste : un nouvel objet entrant dans la zone d'un zombie hérite de son UID.
+  2. **`FastTrackThread` (fast)** — pipeline LK+NCC produit des `uid_to_rect` sur des cibles fantômes que `fast_max_drift_s` filtre **partiellement** seulement.
+
+- **Objectif** : supprimer la sur-association à la **source**, des deux côtés. Un mask sans objet réel ne doit plus jamais être ré-associé, même dans la fenêtre de drift.
+
+- 🔍 **Audit code base requis (préalable bloquant — double)** :
+  - **Slow** : module `Associator`, caractériser les seuils de gating (IoU min, distance max, hash) et la logique de création vs ré-association.
+  - **Fast** : module `FastTrackThread`, identifier l'algorithme produisant `uid_to_rect`, caractériser les seuils, vérifier si NCC/phash participe à la décision d'association.
+
+- **Pistes** (à arbitrer après audit, applicable aux deux côtés) :
+  1. **Resserrer seuils IoU/distance** d'association.
+  2. **Ajouter/renforcer un score d'apparence** (NCC, phash) en condition d'association.
+  3. **Cap dur `match_count_fast_since_last_slow`** (refuser le match au-delà de N).
+  4. **Préférer la création** de nouveaux UIDs en cas d'ambiguïté (paramètre de "création-favorisée").
+  5. **Combinaison** des précédents.
+
+- **Effort estimé** : 4-8 h (audit double + correction sur deux modules + recalibration).
+
+- **Critères de succès** :
+  - Aucun mask `EXPIRE` avec `lifetime > 1.5 s` après disparition réelle (critère B-01 reporté, atteint ici).
+  - Plus aucun `ZOMBIE-SUSPECT` log avec `last_match=fast 0.00s_ago` ou `last_match=slow < 0.5s_ago` sur masks `age > 2 s`.
+  - Ratio `match_count_fast / match_count_slow` aligné sur `FPS_fast / FPS_slow ± 20 %`.
+  - `fast_max_drift_s` peut être remonté à **`1.0-1.5 s`** sans réapparition de zombies (test de validation : remettre `1.5` après B-02 livré).
+  - Sondes `fast_ncc_confirmed` et `fast_mask_lost` non dégradées vs baseline.
+
+- **Livrable** :
+  - Diagnostic écrit (algorithmes d'association slow ET fast caractérisés).
+  - Corrections ciblées dans `Associator` et/ou `FastTrackThread`.
+  - Recalibration `fast_max_drift_s` documentée.
+  - Retrait du commentaire `# QUICK-FIX B-01` sur `fast_max_drift_s`.
+  - Retrait de l'instrumentation `[B01]` dans `registry.py` (libère B-04).
+
+- **Dette résorbée** : B-01 (cause racine traitée des deux côtés).
+
+- **Bloque** : retrait définitif de l'instrumentation `[B01]` dans `registry.py` (à conserver jusqu'à validation B-02).
+
+---
+
+### 🔴 B-03 — Investigation dérive `dt` motion `[ex-B-02]`
+
+- **Symptôme** : `motion.dt` dérive (mesures historiques : 750 ms → 2300 ms), `capped_pct` saturé.
+
 - 🔍 **Audit code base requis (préalable)** :
   - Confirmer existence et noms canoniques des sondes `motion.dt` et `capped_pct` (non listées dans la table bench officielle du README, qui n'est pas exhaustive).
   - Localiser le module motion (non explicité dans la liste de fichiers du README).
-- **Hypothèses prioritaires** :
-  1. Masques zombies non purgés (lien direct avec B-01 — peut résoudre B-02 en cascade)
+
+- **Hypothèses prioritaires** (révisées post-B-01/B-02) :
+  1. **Masques zombies non purgés** : ⚠️ hypothèse à **réévaluer** post-B-01 et post-B-02. Si la dérive `dt` disparaît après livraison de B-02, B-03 devient sans objet (à clore par observation, pas par développement).
   2. `last_seen_ts` (ou équivalent dans `MaskState`) non mis à jour sur certains chemins (slow vs fast).
-- **Livrable** :
-  - Diagnostic écrit (cause racine identifiée)
-  - Correction ciblée
-  - Test de régression sur session de référence : `dt` stable avec variance < 5 %
+
+- **Action préalable obligatoire avant démarrage B-03** : observer `motion.dt` et `capped_pct` sur session de référence **après B-02 livré**. Si stables → fermer B-03 sans développement. Sinon → poursuivre selon le périmètre original.
+
+- **Livrable** (si B-03 reste pertinent) :
+  - Diagnostic écrit (cause racine identifiée).
+  - Correction ciblée.
+  - Test de régression sur session de référence : `dt` stable avec variance < 5 %.
+
 - **Fichiers concernés** :
   - 🔍 **Audit code base requis** : recenser tous les sites de calcul de `dt`, tous les sites de mise à jour du timestamp de match (ex. `last_seen_ts`), et tous les appels d'horloge dans le pipeline tracker.
-- **Effort** : 2-4 h selon cause racine
-- **Critère de succès** : `avg dt` stable dans le temps, `capped_pct < 10 %`
-- **Bloque** : F-08 (anti-pattern absolu = ne pas déployer EMA sur `dt` aberrants)
 
-### 🔴 B-03 — TTL temporel (cycle de vie en secondes)
+- **Effort** : 0 (si fermé par observation) à 2-4 h selon cause racine.
+
+- **Critère de succès** : `avg dt` stable dans le temps, `capped_pct < 10 %`.
+
+- **Bloque** : F-08 (anti-pattern absolu = ne pas déployer EMA sur `dt` aberrants).
+
+---
+
+### 🔴 B-04 — TTL temporel (cycle de vie en secondes) `[ex-B-03]`
 
 - **Périmètre strict** : **uniquement le cycle de vie côté `Tracker` / `MaskRegistry`**.
   ⚠️ **Ne pas toucher** `detect.fast.max_stale_frames` : cette clé est en frames **par design** (FastTrack event-driven, cadencé par dépôt de frame, pas par horloge wall).
+
 - **Cause racine** : le cycle de vie des `MaskState` est exprimé en nombre de ticks, donc dépendant de la cadence main loop.
+
 - **Objectif** : rendre le vieillissement indépendant de la fréquence d'appel de `Tracker.tick()`.
+
 - **Changements config (proposition, à valider par audit du namespace `TrackerConfig`)** :
 
   ```yaml
@@ -110,32 +210,39 @@
       expire_after_lost_s: 1.5 # secondes en LOST avant éviction
   # à supprimer : équivalents en frames côté tracker (ex. ttl_default, lost_after)
   # NE PAS TOUCHER : detect.fast.max_stale_frames (frames, FastTrack)
+  # À RECALIBRER (et non plus supprimer) : masks.fast_max_drift_s, valeur définitive fixée par B-02
   ```
 
 - **Changements code (sous réserve d'audit)** :
   - Sur `MaskState` : ajout `last_seen_ts: float`, `lost_since_ts: float | None`, suppression du compteur TTL en ticks.
   - Sur `MaskRegistry` : la phase TTL/éviction interne (invoquée depuis `Tracker.tick()`) calcule les transitions par delta temporel (`now - last_seen_ts`).
   - Sur le marquage de match (Associator → registry) : mise à jour de `last_seen_ts = ts` reçu par `tick()`.
+
 - 🔍 **Audit code base requis** :
   - Confirmer que la classe runtime correspond bien à `MaskState` (alignement README).
   - Confirmer le namespace YAML actuel consommé par `TrackerConfig`.
   - Confirmer le nom interne de la méthode TTL+éviction du `MaskRegistry`.
   - Confirmer le nom de la méthode de marquage de match (interne à `Associator` ou `MaskRegistry`).
+
 - **Effort** : 1 h dev + 30 min calibration.
+
 - **Critères de succès** :
   - Comportement de purge identique à 3 Hz et à 30 Hz (test sous charge variable).
   - `motion.dt` reste stable post-déploiement.
   - `capped_pct` stable < 10 %.
   - Pas de régression overlap rect moyen.
-  - Quick-fix B-01 retiré, valeurs config en `_s` propres.
-- **Bénéfice annexe** : si B-02 était causé par le cycle de vie en ticks, B-03 le résout en cascade.
+  - Instrumentation `[B01]` retirée (déjà fait à la livraison de B-02, à confirmer ici).
+  - Valeurs config en `_s` propres côté tracker.
+
+- **Bénéfice annexe** : si B-03 était causé par le cycle de vie en ticks, B-04 le résout en cascade.
+
 - **Anti-pattern documenté** : déployer F-08 sur un système dont les `dt` sont aberrants → l'EMA absorbe le bug et masque le diagnostic.
 
 ---
 
 ## 🟦 Phase 0 — Clôture stabilisation noyau
 
-**Trigger** : ✅ B-01, B-02, B-03 livrés.
+**Trigger** : ✅ B-01, B-02, B-03, B-04 livrés.
 
 ### 🟢 A-01 — Audit cohérence noyau tracker
 
@@ -149,7 +256,7 @@
 
 - **Objectif** : valider au chargement (et à chaque hot-reload) tous les invariants critiques de `config.yaml`.
 - **Invariants à vérifier (liste minimale, à compléter par audit)** :
-  - `tracker.lifecycle.expire_after_lost_s >= tracker.lifecycle.lost_after_s` (post B-03).
+  - `tracker.lifecycle.expire_after_lost_s >= tracker.lifecycle.lost_after_s` (post B-04).
   - **Étanchéité unités** : aucune clé en secondes dans `detect.fast.*` (qui doit rester en frames), aucune clé en frames dans `tracker.lifecycle.*`.
   - Plages de valeurs cohérentes pour `detect.fast.ncc_threshold ∈ [0,1]`.
   - Cohérence `screen.capture_fps` ≥ `screen.vcam_fps` (à confirmer par produit).
@@ -235,7 +342,7 @@
 
 - **Triggers cumulatifs (les deux requis)** :
   1. Signal métier / mesure prod sur variance d'horizon.
-  2. **B-02 résolu** (sinon anti-pattern documenté).
+  2. **B-03 résolu** (sinon anti-pattern documenté).
 - 🔍 **Audit code base requis** :
   - Confirmer existence et nom canonique de la clé config `dt_cap` (non listée dans le tableau « paramètres clés » du README — tableau explicitement non exhaustif).
   - Confirmer le module motion et son point d'injection.
@@ -257,7 +364,7 @@
 > ⚠️ **Recadrage important** : F-09 ne peut **pas** externaliser `Tracker.tick()` complet, car `tick()` orchestre aussi `Associator.match()` (gating + Hungarian) sur les détections fraîches consolidées par le main loop. Externaliser `tick()` casserait le contrat README.
 
 - **Périmètre exact** : externaliser **uniquement la phase TTL / éviction** du `MaskRegistry` dans un thread dédié cadencé à fréquence fixe (ex. 30 Hz), pour garantir la régularité de la purge indépendamment de la cadence main loop.
-- **Trigger** : jitters de purge mesurés au-delà d'un seuil acceptable **après B-03 livré** (la temporalisation seule ne suffit pas, il faut aussi régulariser l'appel).
+- **Trigger** : jitters de purge mesurés au-delà d'un seuil acceptable **après B-04 livré** (la temporalisation seule ne suffit pas, il faut aussi régulariser l'appel).
 - 🔍 **Audit code base requis** :
   - Identifier le point d'appel actuel de la phase éviction dans `Tracker.tick()`.
   - Caractériser la thread-safety du `MaskRegistry` (lock interne ? structures partagées avec main loop ?).
@@ -265,7 +372,7 @@
 - **Effort** : 2-3 h, +complexité thread-safety.
 - **Risque** : interaction avec LifecycleManager (F-01..F-07). **Ordre recommandé** : F-01..F-07 puis F-09 si les deux sont déclenchés.
 - **Anti-patterns documentés** :
-  - Déployer F-09 sans B-03 (revient à cadencer un compteur en ticks → aucun bénéfice).
+  - Déployer F-09 sans B-04 (revient à cadencer un compteur en ticks → aucun bénéfice).
   - Externaliser `Tracker.tick()` complet au lieu de la seule éviction (casse le contrat tracker).
 
 ### 🟡 F-10 — Affinements prédiction motion
@@ -300,8 +407,8 @@
 - `docs/session-de-reference.md` : protocole de bench canonique réutilisable pour B-02, F-08, Lot 3, F-10.
   - 🔍 **Audit requis** : la session de référence doit explicitement consommer :
     - **Sondes officielles README** : `capture_wait`, `slow_poll`, `match`, `fast_poll`, `predict`, `blur`, `frames`, `masks_total`, `fast_wakeup_lag`, `fast_tick`, `fast_of_total`, `fast_ncc_total`, `fast_ncc_confirmed`, `fast_stale_used`, `fast_mask_lost`, `send`.
-    - **Sondes motion à confirmer** : `motion.dt`, `capped_pct` (existence à valider lors de l'audit B-02).
-  - Définir le footage tagué et les scénarios standards avant le premier usage en B-02.
+    - **Sondes motion à confirmer** : `motion.dt`, `capped_pct` (existence à valider lors de l'audit B-03).
+  - Définir le footage tagué et les scénarios standards avant le premier usage en B-03.
 
 ---
 
@@ -312,7 +419,7 @@
 - **Sondes bench** : ✅ critères de succès Lot 3 et tests de régression adossés aux sondes officielles README.
 - **Séquentialité simple** : ✅ chaque bloc indépendant du suivant.
 - **Reportabilité** : ✅ toute feature peut être retirée vers un plan ultérieur sans casser la chaîne.
-- **Couverture bugs** : ✅ B-01, B-02, B-03 explicites en P0.
+- **Couverture bugs** : ✅ B-01, B-02, B-03, B-04 explicites en P0..
 - **Préservation R&D antérieure** : ✅ via F-10 + backlog gelé documenté.
 - **Triggers mesurables** : ✅ chaque item conditionnel a un signal explicite.
 - **Audits explicites** : ✅ chaque zone d'incertitude marquée 🔍, prérequis bloquant à la livraison.
