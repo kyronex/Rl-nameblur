@@ -76,7 +76,7 @@ class Tracker:
                 mask.template = det.template
             if det.scores:
                 mask.scores = det.scores
-            self.registry.mark_matched(mask.uid)
+            self.registry.mark_matched(mask.uid, ts=ts, source=source)
             matched_uids.add(mask.uid)
         # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
         created_uids = set()
@@ -123,7 +123,7 @@ class Tracker:
             # Pipeline de mutation strictement aligné sur la branche `matched`
             # de apply_detections (source="fast" → skip phash, pas de template/scores)
             apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
-            self.registry.mark_matched(mask.uid)
+            self.registry.mark_matched(mask.uid, ts=ts,source = "fast")
             matched_uids.add(mask.uid)
         # Log agrégé une fois par tick fast
         if uid_to_rect:

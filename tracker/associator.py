@@ -38,7 +38,8 @@ class Associator:
 
     def _continuity_factor(self, mask: Mask, ts: float) -> float:
         """exp(-dt/tau) ∈ (0, 1]. dt = âge depuis dernière détection."""
-        dt = max(0.0, ts - mask.last_detected_ts)
+        ref = mask.last_slow_ts if mask.last_slow_ts > 0.0 else mask.last_detected_ts
+        dt = max(0.0, ts - ref)
         return math.exp(-dt / self.cfg.continuity_tau_s)
 
     # ── gating géométrique mask↔det ──────────────────────
