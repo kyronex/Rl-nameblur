@@ -8,6 +8,20 @@ import logging
 
 log = logging.getLogger("motion")
 
+# ── Stats motion (option B : compteurs ad-hoc, thread-safe via GIL) ──
+_motion_stats = {"dt_sum_ms": 0.0, "dt_max_ms": 0.0, "n": 0, "capped": 0}
+
+def get_and_reset_stats() -> dict:
+    """
+    Retourne les stats motion accumulées depuis le dernier appel,
+    puis remet les compteurs à zéro.
+    Appelé depuis main.py dans la branche FPS (thread principal).
+    """
+    global _motion_stats
+    s = _motion_stats
+    _motion_stats = {"dt_sum_ms": 0.0, "dt_max_ms": 0.0, "n": 0, "capped": 0}
+    return s
+
 def apply_detection(mask, new_rect, detect_ts, source, config):
     """
     Met à jour un mask avec une nouvelle détection.
@@ -24,6 +38,10 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
         mask.last_detected_ts = detect_ts
         mask.last_source = source
         if source == "slow":
+            mask.vx = 0.0
+            mask.vy = 0.0
+            mask.vw = 0.0
+            mask.vh = 0.0
             mask.last_detected_rect = new_rect
             mask.last_slow_ts = detect_ts
         return
@@ -96,12 +114,18 @@ def compute_predicted_rect(mask, ts, config):
     """
     if mask.last_slow_ts <= 0.0:
         return mask.rect
-    # Ancrage cohérent : dt depuis le dernier slow (référentiel de last_detected_rect)
     dt = ts - mask.last_slow_ts
-    # Clamp symétrique : autorise rétro-projection (ts < last_slow_ts)
-    # bornée par dt_cap pour éviter extrapolations délirantes
+    dt_abs_ms = abs(dt) * 1000.0
+
+    # ── Sondes motion (option B) ──
+    _motion_stats["dt_sum_ms"] += dt_abs_ms
+    _motion_stats["n"] += 1
+    if dt_abs_ms > _motion_stats["dt_max_ms"]:
+        _motion_stats["dt_max_ms"] = dt_abs_ms
+    if abs(dt) > config.dt_cap:
+        _motion_stats["capped"] += 1
+
     dt_capped = max(-config.dt_cap, min(dt, config.dt_cap))
-    # Damping basé sur |dt| : plus on s'éloigne du slow, moins on fait confiance à la vélocité
     damping = max(0.0, 1.0 - abs(dt) * config.damping_rate)
     lx, ly, lw, lh = mask.last_detected_rect
     return (lx + mask.vx * dt_capped * damping,

@@ -25,8 +25,8 @@
 🚨 P0 — Bugs bloquants (séquentiel strict)
    ├── B-01  Quick-fix zombies via plafonnement fast_max_drift_s
    ├── B-02  Correction association fast tracker (cause racine)
-   ├── B-03  Investigation dérive dt motion
-   └── B-04  TTL temporel (cycle de vie en secondes côté Tracker)
+   ├── B-03  TTL temporel (cycle de vie en secondes côté Tracker)
+   └── B-04  Investigation dérive dt motion
          │
          ▼
 🟦 Phase 0 — Clôture stabilisation noyau
@@ -164,40 +164,16 @@
 
 ---
 
-### 🔴 B-03 — Cap adaptatif stale + investigation dérive `dt` motion `[ex-B-02 + ex-B-03 fusionnés]`
-
-- **Deux périmètres** :
-
-  **B-03a — Cap adaptatif stale (dette B-02)** :
-  - Sur fond statique prolongé, `max_stale_frames` permet encore N cycles avant `fast_mask_lost`.
-  - Piste : NCC threshold relevé à `0.70+` quand `velocity == 0` depuis > 1 s.
-  - **Prérequis levé** : B-02 validé session 18s, instrumentation `[B01]` maintenue jusqu'à B-04.
-
-  **B-03b — Dérive `dt` motion** :
-  - Symptôme historique : `motion.dt` dérive (750 ms → 2 300 ms), `capped_pct` saturé.
-  - **Action préalable** : observer `motion.dt` et `capped_pct` après B-02 livré. Si stables → fermer sans développement.
-  - Hypothèse principale à réévaluer : zombies non purgés étaient peut-être la cause — B-02 peut avoir résolu en cascade.
-
-  **B-03c — Dégradation FPS session longue (nouveau, issu obs B-02)** :
-  - Session 18s : 84 FPS → 44 FPS, dégradation continue et monotone.
-  - Hypothèses : overhead logs INFO `[B01]` + `[FAST-APPLY]`, accumulation masks LOST non purgés, ou autre fuite.
-  - **Action préalable** : profiler une session avec logs `[B01]` passés en DEBUG pour isoler la contribution logging vs réelle.
-  - Possiblement résolu en cascade par B-04 (purge temporelle propre).
-
-- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, module motion, sites de calcul `dt`.
-
-- **Effort** : 0 (si fermé par observation) à 2-4 h.
-- **Critère de succès** : `avg dt` stable, `capped_pct < 10 %`, FPS stable sur session > 30 s.
-- **Bloque** : F-08.
-
----
-
-### 🔴 B-04 — TTL temporel (cycle de vie en secondes) `[ex-B-03]`
+### 🔴 B-03 — TTL temporel (cycle de vie en secondes) `[ex-B-03]`
 
 - **Périmètre strict** : cycle de vie côté `Tracker` / `MaskRegistry` uniquement.
   ⚠️ Ne pas toucher `detect.fast.max_stale_frames` (frames par design, FastTrack event-driven).
 
 - **Cause racine** : vieillissement des `MaskState` en ticks → dépendant de la cadence main loop.
+
+- **Symptômes confirmés (logs post-B-02)** :
+  - Cycle CREATE/EXPIRE perpétuel d'UIDs orphelins (lifetime ≈ 0.13 s, matches=0) sur masks non re-matchés par le slow suivant.
+  - Mask uid=372 : EXPIRE 0.19 s après dernier match légitime → trop court pour couvrir une pause d'immobilité.
 
 - **Changements config** :
 
@@ -226,13 +202,41 @@
 
 - **Critères de succès** :
   - Purge identique à 3 Hz et 30 Hz.
-  - `motion.dt` stable post-déploiement.
-  - `capped_pct < 10 %`.
+  - Plus de cycle CREATE/EXPIRE perpétuel sur masks orphelins (Phase 1 des logs B-02).
   - Instrumentation `[B01]` retirée (registry + tracker).
   - Sondes `[FAST-APPLY]` conservées ou passées en DEBUG (à trancher en revue).
-  - Commentaire `# QUICK-FIX B-01` retiré.
-  - **Vérifier en cascade** : FPS stable session > 30 s (cf. B-03c).
+  - Commentaire `# QUICK-FIST B-01` retiré.
+  - **Vérifier en cascade** : FPS stable session > 30 s (cf. B-04c).
+  - ⚠️ `motion.dt` / `capped_pct` **non couverts ici** → traités en B-04b.
 
+- **Bloque** : F-08.
+
+---
+
+### 🔴 B-04 — Cap adaptatif stale + investigation dérive `dt` motion `[ex-B-02 + ex-B-03 fusionnés]`
+
+- **Trois périmètres** :
+
+  **B-04a — Cap adaptatif stale (dette B-02)** :
+  - Sur fond statique prolongé, `max_stale_frames` permet encore N cycles avant `fast_mask_lost`.
+  - Piste : NCC threshold relevé à `0.70+` quand `velocity == 0` depuis > 1 s.
+  - **Statut révisé post-logs B-02** : plus de zombies fast pathologiques observés. **Geler par défaut**, rouvrir uniquement si zombies fast résiduels post-B-03.
+
+  **B-04b — Dérive `dt` motion** :
+  - Symptôme historique : `motion.dt` dérive (750 ms → 2 300 ms), `capped_pct` saturé.
+  - **Symptôme confirmé logs récents** : `motion.dt avg=248 ms capped=100 %` à 198 FPS — anormal, attendu ≈ 5 ms.
+  - **Hypothèse réévaluée** : `predict_position` calcule `dt = now - last_detected_ts` sur masks en attente de re-match → cappé systématiquement. **Indépendant de B-03.**
+  - **Action** : audit `predict_position` + définition `last_detected_ts` (à harmoniser avec `last_seen_ts` introduit par B-03).
+
+  **B-04c — Dégradation FPS session longue** :
+  - Session 18s : 84 FPS → 44 FPS, dégradation continue et monotone.
+  - Hypothèses : overhead logs INFO `[B01]` + `[FAST-APPLY]`, cycle CREATE/EXPIRE perpétuel (résolu par B-03), accumulation masks LOST.
+  - **Action préalable** : observer post-B-03 + retrait logs `[B01]`. Si FPS stable → fermer. Sinon profilage.
+
+- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`.
+
+- **Effort** : 0 (si B-04a et B-04c fermés par observation) à 2-4 h (B-04b probablement requis).
+- **Critère de succès** : `motion.dt.avg < 2 × (1/FPS)`, `capped_pct < 10 %`, FPS stable sur session > 30 s.
 - **Bloque** : F-08.
 
 ---

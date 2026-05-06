@@ -20,9 +20,10 @@ from bench.bench             import bench
 from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
 from core.mask_manager       import draw_debug, pad_rect
 from core.blur               import apply_blur
-from core.mask import MaskState
-from tracker.tracker import Tracker
-from tracker.models import TrackerConfig , Detection
+from core.mask               import MaskState
+from tracker.tracker         import Tracker
+from tracker.models          import TrackerConfig , Detection
+from tracker.motion          import get_and_reset_stats as motion_get_and_reset_stats
 log = logging.getLogger("main")
 
 # ── PARAMÈTRES ──
@@ -156,13 +157,44 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             bench.count("frames")
             bench.count("masks_total", len(confirmed_masks))
 
-            # ── 9. FPS print toutes les 2s ──
+            # ── 8. FPS print toutes les 2s ──
             frame_count += 1
             elapsed = time.perf_counter() - fps_timer
             if elapsed >= 2.0:
                 fps      = frame_count / elapsed
                 mode     = "DEBUG" if debug_draw else "PROD"
                 fast_tag = "+FAST" if fast_enabled else ""
+
+                # Stats tracker (pending / confirmed / lost)
+                t_stats = tracker.stats()
+                n_confirmed = t_stats.get("confirmed", 0)
+                n_pending   = t_stats.get("pending",   0)
+                n_lost      = t_stats.get("lost",      0)
+
+                # Stats motion (dt inter-slow, capping)
+                m = motion_get_and_reset_stats()
+                if m["n"] > 0:
+                    dt_avg      = m["dt_sum_ms"] / m["n"]
+                    dt_max      = m["dt_max_ms"]
+                    capped_pct  = 100.0 * m["capped"] / m["n"]
+                    motion_tag  = (
+                        f"motion.dt avg={dt_avg:.1f}ms "
+                        f"max={dt_max:.1f}ms "
+                        f"capped={capped_pct:.1f}%"
+                    )
+                else:
+                    motion_tag = "motion.dt n/a"
+
+                log.info(
+                    f"⚡ {fps:.1f} FPS | "
+                    f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
+                    f"{motion_tag} | "
+                    f"{mode} {fast_tag}"
+                )
+
+                frame_count = 0
+                fps_timer   = time.perf_counter()
+
                 log.info(f"⚡ {fps:.1f} FPS | {len(confirmed_masks)} masque(s) | {mode} {fast_tag}")
                 #bench.print_summary()
 
