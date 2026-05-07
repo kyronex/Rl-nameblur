@@ -11,9 +11,10 @@ class TrackerConfig:
     screen_h: int = field(default_factory=lambda: cfg.get("screen.height"))
     # registry / lifecycle
     max_masks: int = field(default_factory=lambda: cfg.get("masks.max_masks"))
-    ttl_default: int = field(default_factory=lambda: cfg.get("masks.ttl_default"))
+    lost_after_s: float = field(default_factory=lambda: cfg.get("tracker.lifecycle.lost_after_s"))
+    expire_after_lost_s: float = field(default_factory=lambda: cfg.get("tracker.lifecycle.expire_after_lost_s"))
+
     confirm_after: int = field(default_factory=lambda: cfg.get("masks.confirm_after"))
-    lost_after: int = field(default_factory=lambda: cfg.get("masks.lost_after"))
     fast_max_drift_s: float = field(default_factory=lambda: cfg.get("masks.fast_max_drift_s"))
     # associator
     weights_source_slow: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_slow"))
@@ -52,17 +53,7 @@ class TrackerConfig:
         self.weights_source_fast = tuple(self.weights_source_fast)
         if len(self.weights_source_slow) != 2 or len(self.weights_source_fast) != 2:
             raise ValueError("TrackerConfig: weights_source_* doivent contenir exactement 2 valeurs (w_iou, w_hash)")
-        if self.ttl_default < self.lost_after:
-            raise ValueError(
-                f"TrackerConfig: ttl_default ({self.ttl_default}) < lost_after ({self.lost_after}) — "
-                "un mask peut expirer par TTL avant d'être marqué LOST. "
-                "Augmente ttl_default ou diminue lost_after dans config.yaml."
-            )
-        if self.confirm_after >= self.lost_after:
-            raise ValueError(
-                f"TrackerConfig: confirm_after ({self.confirm_after}) >= lost_after ({self.lost_after}) — "
-                "un mask ne pourra jamais être confirmé avant d'être perdu."
-            )
+
         EPS = 1e-6
         for name, w in (("weights_source_slow", self.weights_source_slow),
                         ("weights_source_fast", self.weights_source_fast)):

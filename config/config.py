@@ -93,7 +93,6 @@ class Config:
             return self._flat.get(key, default)
 
     def section(self, name: str) -> dict:
-        """cfg.section('masks') → {'ttl_default': 4, ...}"""
         with self._reload_lock:
             return dict(self._data.get(name, {}))
 

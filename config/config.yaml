@@ -86,11 +86,13 @@ detect:
 # ═══════════════════════════════════════════════════════════════════
 #  TRACKING DES MASQUES
 # ═══════════════════════════════════════════════════════════════════
+tracker:
+  lifecycle:
+    lost_after_s: 0.3 # CONFIRMED → LOST si pas de match depuis N secondes
+    expire_after_lost_s: 1.0 # LOST → purge si LOST depuis N secondes
 masks:
   max_masks: 20 # Nombre maximum de masques simultanés dans le registry — (registry.py › add)
-  ttl_default: 25 # Durée de vie initiale d'un masque et à chaque match confirmé — réinitialisé par mark_matched() (registry.py)
   confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
-  lost_after: 15 # Nbr de frames missing consécutives pour basculer PENDING/CONFIRMED → LOST — (mask.py › transition / registry.py › create)
   fast_max_drift_s: 0.5 # Duree max de drift de la detection fast (tracker.py › apply_fast_direct)
   hash_history_max: 5 # Taille max du buffer phash par mask — comparaison temporelle de stabilité (tracker.py › apply_detections)
   hash_top_k: 3 # Nbr de phash récents (parmi hash_history_max) comparés pour le scoring — limite l'influence des vieilles entrées (hasher.py › best_hash_similarity)

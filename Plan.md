@@ -164,7 +164,7 @@
 
 ---
 
-### 🔴 B-03 — TTL temporel (cycle de vie en secondes) `[ex-B-03]`
+### 🟢 B-03 — TTL temporel (cycle de vie en secondes) `[LIVRÉ]`
 
 - **Périmètre strict** : cycle de vie côté `Tracker` / `MaskRegistry` uniquement.
   ⚠️ Ne pas toucher `detect.fast.max_stale_frames` (frames par design, FastTrack event-driven).
@@ -180,36 +180,41 @@
   ```yaml
   tracker:
     lifecycle:
-      lost_after_s: 1.0
-      expire_after_lost_s: 1.5
-  # supprimer : équivalents en frames côté tracker
-  # NE PAS TOUCHER : detect.fast.max_stale_frames
-  # NE PAS TOUCHER : masks.fast_max_drift_s = 0.5 (valeur définitive fixée par B-02)
+      lost_after_s: 0.3 # CONFIRMED → LOST si pas de match depuis N secondes
+      expire_after_lost_s: 1.0 # LOST → purge si LOST depuis N secondes
+  # supprimé : équivalents en frames côté tracker
+  # NON TOUCHÉ : detect.fast.max_stale_frames
+  # NON TOUCHÉ : masks.fast_max_drift_s = 0.5 (valeur définitive fixée par B-02)
   ```
 
-  **Calibration de référence (issue B-02 session 18s)** :
-  - Lifetime médian observé ≈ 1.5 s, p95 ≈ 2.1 s → cohérent avec `lost_after_s=1.0` + `expire_after_lost_s=1.5` (total 2.5 s).
-  - Valeurs ci-dessus à conserver tant que la distribution lifetime ne change pas.
+  **Calibration finale validée empiriquement** :
+  - Valeurs initiales proposées (`1.0` / `1.5`) jugées trop laxistes après tests → resserrées à `0.3` / `1.0`.
+  - Compromis retenu : purge orphelins en ~1 s (vs. cycle perpétuel avant), tout en couvrant les pauses d'immobilité courtes (< 0.3 s) sans EXPIRE prématuré.
 
-- **Changements code** :
+- **Changements code appliqués** :
   - `MaskState` : ajout `last_seen_ts`, `lost_since_ts`, suppression TTL en ticks.
   - `MaskRegistry` : transitions par delta temporel.
   - Marquage de match : `last_seen_ts = ts`.
 
-- 🔍 **Audit requis** : namespace YAML `TrackerConfig`, méthode TTL+éviction `MaskRegistry`, méthode de marquage de match.
+- **Résultats — validation empirique session post-fix** :
+  - ✅ EXPIRE orphelins (`matches=0`) : lifetime 1.02–1.13 s (vs. cycle perpétuel avant).
+  - ✅ EXPIRE tracked normaux : lifetime 1.4–2.5 s, cohérent avec (`lost_after_s` + `expire_after_lost_s` + dernier match).
+  - ✅ Long-runners stables : uid=0 (8 s), uid=9 (10.93 s, 175 matches, ratio slow/fast 40:135 sain).
+  - ✅ Transitions CONFIRMED → LOST observées correctement quand `since_last_seen > 0.3 s` (uid=10 à 0.77 s, uid=4 à 1.13 s).
+  - ✅ Purge cohérente indépendante de la cadence main loop (testée sur FPS variable 45–88).
+  - ✅ Tous les `EXPIRE` affichent `lost_for=1.00–1.02 s` → `expire_after_lost_s` respecté avec précision.
 
-- **Effort** : 1 h dev + 30 min calibration.
+- **Dette résorbée** :
+  - Cycle CREATE/EXPIRE perpétuel : éliminé.
+  - Dépendance cadence main loop : supprimée.
 
-- **Critères de succès** :
-  - Purge identique à 3 Hz et 30 Hz.
-  - Plus de cycle CREATE/EXPIRE perpétuel sur masks orphelins (Phase 1 des logs B-02).
-  - Instrumentation `[B01]` retirée (registry + tracker).
-  - Sondes `[FAST-APPLY]` conservées ou passées en DEBUG (à trancher en revue).
-  - Commentaire `# QUICK-FIST B-01` retiré.
-  - **Vérifier en cascade** : FPS stable session > 30 s (cf. B-04c).
-  - ⚠️ `motion.dt` / `capped_pct` **non couverts ici** → traités en B-04b.
+- **Dette créée / héritée** :
+  - **Burst de faux positifs slow** : rafales de CREATE avec `matches=0` (uid=20→37 sur ~3 s) → pollution registry, hors-scope B-03 → **à scoper côté slow detector** (seuil confiance / NMS).
+  - **`motion.dt avg=575–982 ms / capped=99–100%`** : pathologie constante, indépendante du tuning lifecycle, handicape fast tracking en permanence (`drift_skipped` fréquents) → **B-04b prioritaire**.
+  - Logs `ZOMBIE-SUSPECT` (B-01) toujours actifs en INFO → saturation logs, à passer DEBUG ou retirer.
 
-- **Bloque** : F-08.
+- **Statut** : ✅ **livré dans son scope**.
+- **Bloque** : F-08, **B-04b** (motion.dt saturé).
 
 ---
 

@@ -48,13 +48,15 @@ class FastMaskView:
 
 @dataclass
 class Mask:
+    # --- Identité & géométrie ---
     uid:                int
     rect:               tuple   # (x, y, w, h)
     last_detected_rect: tuple
     last_detected_ts:   float
     last_slow_ts:       float          = 0.0
     last_source:        str            = "new"
-    ttl:                int            = 0
+
+    # --- Cinématique ---
     vx:                 float          = 0.0
     vy:                 float          = 0.0
     vw:                 float          = 0.0
@@ -65,35 +67,42 @@ class Mask:
     box:                Optional[Box]  = None
     scores:             dict           = field(default_factory=dict)
 
+    # --- Cycle de vie : état + compteurs ---
     state:              MaskState      = MaskState.PENDING
     frames_matched:     int            = 0
-    frames_missing:     int            = 0
+
+    # --- Cycle de vie : timestamps
+    last_seen_ts:       float          = 0.0
+    lost_since_ts:      Optional[float]= None
 
     confirm_after:      int            = field(default=3, repr=False)
-    lost_after:         int            = field(default=5, repr=False)
+    lost_after_s:       float          = field(default=1.0, repr=False)
     hash_history_max:   int            = field(default=5, repr=False)
 
     hash_history:       Deque[int]     = field(init=False)
 
     def __post_init__(self):
         self.hash_history = deque(maxlen=self.hash_history_max)
+        if self.last_seen_ts == 0.0:
+            self.last_seen_ts = self.last_detected_ts
 
-    def transition(self, event: str) -> MaskState:
+    def transition(self, event: str, ts: float) -> MaskState:
         if event == "matched":
             self.frames_matched += 1
-            self.frames_missing = 0
+            self.last_seen_ts = ts
+            self.lost_since_ts = None
+
             if self.state == MaskState.PENDING and self.frames_matched >= self.confirm_after:
                 self.state = MaskState.CONFIRMED
             elif self.state == MaskState.LOST:
                 self.state = MaskState.CONFIRMED
                 self.frames_matched = 1
         elif event == "missing":
-            self.frames_missing += 1
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
-                if self.frames_missing >= self.lost_after:
+                if (ts - self.last_seen_ts) >= self.lost_after_s:
                     self.state = MaskState.LOST
-                    self.frames_matched = 0  # ← reset à l'entrée dans LOST
-                    self.frames_missing = 0
+                    self.lost_since_ts = ts
+                    self.frames_matched = 0
         return self.state
 
     def to_fast_view(self) -> FastMaskView:
@@ -136,5 +145,6 @@ class Mask:
             "scores":            _serialize_scores(self.scores),
             "state":             self.state.name,
             "frames_matched":    self.frames_matched,
-            "frames_missing":    self.frames_missing,
+            "last_seen_ts":      round(self.last_seen_ts, 4),
+            "lost_since_ts":     round(self.lost_since_ts, 4) if self.lost_since_ts is not None else None,
         }

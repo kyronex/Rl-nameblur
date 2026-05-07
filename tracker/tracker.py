@@ -147,7 +147,7 @@ class Tracker:
         for mask in self.registry.masks:
             if mask.uid not in updated_uids:
                 predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
-        self.registry.tick_and_expire(updated_uids)
+        self.registry.tick_and_expire(ts,updated_uids)
         return [m for m in self.registry.masks if m.state == MaskState.CONFIRMED]
 
     # ───────────────────────────────────────────────
