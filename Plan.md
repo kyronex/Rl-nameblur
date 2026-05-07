@@ -218,37 +218,90 @@
 
 ---
 
-### 🔴 B-04 — Cap adaptatif stale + investigation dérive `dt` motion `[ex-B-02 + ex-B-03 fusionnés]`
+### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[ex-B-02 + ex-B-03 fusionnés, recadré post-B-03]`
 
 - **Trois périmètres** :
 
   **B-04a — Cap adaptatif stale (dette B-02)** :
   - Sur fond statique prolongé, `max_stale_frames` permet encore N cycles avant `fast_mask_lost`.
   - Piste : NCC threshold relevé à `0.70+` quand `velocity == 0` depuis > 1 s.
-  - **Statut révisé post-logs B-02** : plus de zombies fast pathologiques observés. **Geler par défaut**, rouvrir uniquement si zombies fast résiduels post-B-03.
+  - **Statut révisé post-B-03** : ✅ **fermé par observation**. Logs session post-fix : aucun zombie fast pathologique, long-runners (uid=0/9) stables avec ratio slow/fast sain (40:135). Rouvrir uniquement si régression observée.
 
-  **B-04b — Dérive `dt` motion** :
+  **B-04b — Dérive `dt` motion** `[PRIORITAIRE]` :
   - Symptôme historique : `motion.dt` dérive (750 ms → 2 300 ms), `capped_pct` saturé.
-  - **Symptôme confirmé logs récents** : `motion.dt avg=248 ms capped=100 %` à 198 FPS — anormal, attendu ≈ 5 ms.
-  - **Hypothèse réévaluée** : `predict_position` calcule `dt = now - last_detected_ts` sur masks en attente de re-match → cappé systématiquement. **Indépendant de B-03.**
-  - **Action** : audit `predict_position` + définition `last_detected_ts` (à harmoniser avec `last_seen_ts` introduit par B-03).
+  - **Symptôme reconfirmé logs post-B-03** : `motion.dt avg=575–982 ms / max=1431–1802 ms / capped=99–100 %` sur **toute** la session (FPS 45–88). Attendu ≈ 11–22 ms.
+  - **Impact opérationnel mesuré** : `drift_skipped` fréquents avec `max_drift=0.5–0.8 s` → fast tracker handicapé en permanence, applied/received ratio dégradé (parfois 0/1).
+  - **Hypothèse principale** : `predict_position` calcule `dt = now - last_detected_ts` sur masks en attente de re-match → cappé systématiquement. **Indépendant de B-03**, confirmé par persistance post-fix.
+  - **Hypothèse secondaire** : `last_detected_ts` non harmonisé avec `last_seen_ts` introduit par B-03 → possible double source de vérité.
+  - **Actions** :
+    1. Audit `predict_position` : tracer site exact de `dt`, identifier ref temporelle utilisée.
+    2. Harmoniser `last_detected_ts` ↔ `last_seen_ts` (B-03).
+    3. Vérifier que `dt` motion utilise un delta **inter-frames motion** et non `now - last_match`.
 
   **B-04c — Dégradation FPS session longue** :
-  - Session 18s : 84 FPS → 44 FPS, dégradation continue et monotone.
-  - Hypothèses : overhead logs INFO `[B01]` + `[FAST-APPLY]`, cycle CREATE/EXPIRE perpétuel (résolu par B-03), accumulation masks LOST.
-  - **Action préalable** : observer post-B-03 + retrait logs `[B01]`. Si FPS stable → fermer. Sinon profilage.
+  - Session 18s historique : 84 FPS → 44 FPS, dégradation continue et monotone.
+  - **Observation post-B-03** : FPS oscille 45–88 sur ~14 s sans tendance monotone claire (88.3 → 50.2 → 60.7 → 49.9 → 58.0). **Dégradation atténuée mais non éliminée.**
+  - **Hypothèses restantes** :
+    - Overhead logs INFO `[FAST-APPLY]` (haute fréquence) + `ZOMBIE-SUSPECT` toujours actifs.
+    - Couplage avec B-04b : `drift_skipped` à chaque frame motion = surcharge CPU.
+  - **Actions préalables** (avant profilage) :
+    1. Passer `[FAST-APPLY]` et `ZOMBIE-SUSPECT` en DEBUG (gain attendu : significatif).
+    2. Retirer commentaire `# QUICK-FIX B-01`.
+    3. Re-mesurer session > 30 s.
+  - **Si FPS toujours instable post-cleanup** : profilage requis (cProfile / py-spy).
 
-- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`.
+  **B-04d — Burst faux positifs slow detector** `[NOUVEAU, hérité B-03]` :
+  - Symptôme : rafales de CREATE avec `matches=0` (ex. uid=20→37 sur ~3 s) → pollution registry, EXPIRE en cascade.
+  - **Hors-scope motion/tracker** : pathologie côté slow detector (seuil confiance trop bas / NMS insuffisant / faux positifs YOLO sur transitions de scène).
+  - **Statut** : ⚠️ **à scoper en ticket dédié B-05** (slow detector tuning), pas de fix dans B-04.
 
-- **Effort** : 0 (si B-04a et B-04c fermés par observation) à 2-4 h (B-04b probablement requis).
-- **Critère de succès** : `motion.dt.avg < 2 × (1/FPS)`, `capped_pct < 10 %`, FPS stable sur session > 30 s.
+- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`, harmonisation `last_detected_ts` vs `last_seen_ts`.
+
+- **Effort estimé** :
+  - B-04a : 0 (fermé).
+  - B-04b : 2–4 h (audit + fix + validation).
+  - B-04c : 30 min cleanup + 15 min re-mesure ; +2 h si profilage requis.
+  - B-04d : déplacé en B-05.
+  - **Total B-04 : 3–6 h.**
+
+- **Critères de succès** :
+  - `motion.dt.avg < 2 × (1/FPS)` (ex. < 33 ms à 60 FPS).
+  - `capped_pct < 10 %`.
+  - `drift_skipped` rate < 5 % sur scène normale (vs. ~25 % actuel).
+  - FPS stable sur session > 30 s (variance < 15 %).
+  - Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG.
+
+- **Ordre d'exécution recommandé** :
+  1. B-04c cleanup logs (15 min, gain immédiat lisibilité + FPS).
+  2. B-04b audit + fix `predict_position` (cœur du problème).
+  3. Validation conjointe sur session > 30 s.
+  4. Si OK → fermer B-04, ouvrir B-05 (slow detector).
+
 - **Bloque** : F-08.
+
+---
+
+### 🔴 B-05 — Slow detector : faux positifs en burst `[NOUVEAU, hérité B-03]`
+
+- **Symptôme** : rafales de CREATE slow avec `matches=0` (uid orphelins purgés en ~1 s par B-03).
+- **Exemple logs B-03** : uid=18, 19, 24, 25, 26, 34, 35, 36, 37 — tous EXPIRE avec `matches=0 last_match=create`.
+- **Cause probable** : seuil confiance YOLO trop bas, NMS insuffisant, ou détections une-frame sur transitions visuelles (loading, transitions UI Rocket League).
+- **Impact** :
+  - Pollution registry (UIDs gaspillés).
+  - Cycle CREATE→EXPIRE inutile (CPU + logs).
+  - Risque masquage transitoire indésirable côté rendu.
+- **Actions à scoper** :
+  - Audit `detect.slow.confidence_threshold`.
+  - Vérifier NMS (IoU threshold, agnostic).
+  - Ajouter gate "confirmé après N détections consécutives" avant CREATE (équivalent slow de la confirmation fast).
+- **Effort** : 1–3 h.
+- **Bloque** : F-08 (qualité), pas critique B-04.
 
 ---
 
 ## 🟦 Phase 0 — Clôture stabilisation noyau
 
-**Trigger** : ✅ B-01, B-02, B-03, B-04 livrés.
+**Trigger** : ✅ B-01, B-02, B-03, B-04, B-05 livrés.
 
 ### 🟢 A-01 — Audit cohérence noyau tracker
 
