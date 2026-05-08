@@ -74,7 +74,7 @@ class MaskRegistry:
         )
         added = self._add(mask)
         # QUICK-FIX B-01
-        log.info(
+        log.debug(
             "[B01] CREATE uid=%d source=%s rect=%s last_seen_ts=%.3f state=%s",
             uid, source, rect, mask.last_seen_ts, mask.state.name,
         )
@@ -152,7 +152,7 @@ class MaskRegistry:
                     stats = self._b01_stats.get(mask.uid, {})
                     lifetime = now_wall - stats.get("created_ts", now_wall)
                     last_match_age = now_wall - stats.get("last_match_ts", now_wall)
-                    log.info(
+                    log.debug(
                         "[B01] EXPIRE uid=%d lifetime=%.2fs lost_for=%.2fs "
                         "matches=%d (slow=%d fast=%d unknown=%d) last_match=%s %.2fs_ago",
                         mask.uid, lifetime, ts - mask.lost_since_ts,
@@ -178,7 +178,7 @@ class MaskRegistry:
                 if age >= self._b01_zombie_threshold_s:
                     last_match_age = now_wall - stats["last_match_ts"]
                     age_since_seen = ts - mask.last_seen_ts
-                    log.info(
+                    log.debug(
                         "[B01] ZOMBIE-SUSPECT uid=%d age=%.2fs state=%s "
                         "since_last_seen=%.2fs matches=%d (slow=%d fast=%d unknown=%d) "
                         "last_match=%s %.2fs_ago",

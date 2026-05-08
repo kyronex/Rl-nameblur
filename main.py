@@ -195,7 +195,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 frame_count = 0
                 fps_timer   = time.perf_counter()
 
-                log.info(f"⚡ {fps:.1f} FPS | {len(confirmed_masks)} masque(s) | {mode} {fast_tag}")
                 #bench.print_summary()
 
     except KeyboardInterrupt:

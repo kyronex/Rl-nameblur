@@ -75,7 +75,7 @@ class Mask:
     last_seen_ts:       float          = 0.0
     lost_since_ts:      Optional[float]= None
 
-    confirm_after:      int            = field(default=3, repr=False)
+    confirm_after:      int            = field(default=2, repr=False)
     lost_after_s:       float          = field(default=1.0, repr=False)
     hash_history_max:   int            = field(default=5, repr=False)
 

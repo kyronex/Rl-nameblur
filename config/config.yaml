@@ -90,9 +90,10 @@ tracker:
   lifecycle:
     lost_after_s: 0.3 # CONFIRMED → LOST si pas de match depuis N secondes
     expire_after_lost_s: 1.0 # LOST → purge si LOST depuis N secondes
+    confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
+
 masks:
   max_masks: 20 # Nombre maximum de masques simultanés dans le registry — (registry.py › add)
-  confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
   fast_max_drift_s: 0.5 # Duree max de drift de la detection fast (tracker.py › apply_fast_direct)
   hash_history_max: 5 # Taille max du buffer phash par mask — comparaison temporelle de stabilité (tracker.py › apply_detections)
   hash_top_k: 3 # Nbr de phash récents (parmi hash_history_max) comparés pour le scoring — limite l'influence des vieilles entrées (hasher.py › best_hash_similarity)
@@ -100,7 +101,7 @@ masks:
     weights_source_slow: [0.5, 0.5] # (w_iou, w_hash) pour détection source="slow" — équilibré
     weights_source_fast: [0.8, 0.2] # (w_iou, w_hash) pour détection source="fast" — IoU dominant
     match_score_min_slow: 0.25 # Score minimum (IoU+hash pondéré) pour valider un match d'une détection slow — strict, source fiable (associator.py › associate)
-    match_score_min_fast: 0.20 # Score minimum pour une détection fast — plus permissif, on tolère un IoU moyen pour préserver la continuité du suivi
+    match_score_min_fast: 0.30 # Score minimum pour une détection fast — plus permissif, on tolère un IoU moyen pour préserver la continuité du suivi
     source_confidence_slow: 1.0 # Confiance a priori d'une détection slow (consommée par associator pour pondérer le coût final)
     source_confidence_fast: 0.7 # Confiance a priori d'une détection fast — inférieure (template tracking sujet au drift)
     geo_gate_base_radius_px: 150.0 # Rayon de base (px) du gating géométrique mask↔det — distance centre-à-centre max si vitesse nulle

@@ -127,11 +127,17 @@ class Tracker:
             matched_uids.add(mask.uid)
         # Log agrégé une fois par tick fast
         if uid_to_rect:
-            log.info(
+            log.debug(
                 f"[FAST-APPLY] received={len(uid_to_rect)} "
                 f"applied={len(matched_uids)} drift_skipped={drift_skipped}"
                 + (f" max_drift={drift_max_seen:.1f}s" if drift_skipped else "")
             )
+            # Warning agrégé si drift dégradé (signal B-04b)
+            if drift_skipped and drift_skipped >= len(uid_to_rect) // 2:
+                log.warning(
+                    f"[FAST-APPLY] drift dégradé : {drift_skipped}/{len(uid_to_rect)} "
+                    f"max_drift={drift_max_seen:.1f}s"
+                )
         return matched_uids
 
     def tick(self, ts: float = None, updated_uids: set = None) -> list:
@@ -145,8 +151,11 @@ class Tracker:
             updated_uids = set()
         # predict pour les non-matchés cette frame
         for mask in self.registry.masks:
-            if mask.uid not in updated_uids:
-                predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
+            if mask.uid in updated_uids:
+                continue
+            if mask.state == MaskState.LOST:
+                continue
+            predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
         self.registry.tick_and_expire(ts,updated_uids)
         return [m for m in self.registry.masks if m.state == MaskState.CONFIRMED]
 

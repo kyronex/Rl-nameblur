@@ -13,8 +13,8 @@ class TrackerConfig:
     max_masks: int = field(default_factory=lambda: cfg.get("masks.max_masks"))
     lost_after_s: float = field(default_factory=lambda: cfg.get("tracker.lifecycle.lost_after_s"))
     expire_after_lost_s: float = field(default_factory=lambda: cfg.get("tracker.lifecycle.expire_after_lost_s"))
+    confirm_after: int = field(default_factory=lambda: cfg.get("tracker.lifecycle.confirm_after"))
 
-    confirm_after: int = field(default_factory=lambda: cfg.get("masks.confirm_after"))
     fast_max_drift_s: float = field(default_factory=lambda: cfg.get("masks.fast_max_drift_s"))
     # associator
     weights_source_slow: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_slow"))
