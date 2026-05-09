@@ -102,10 +102,8 @@ class FastTrackThread:
         margin = snap.am_base + speed * dt * snap.am_factor
         return int(max(snap.am_min, min(margin, snap.am_max)))
 
-    def _ncc_on_roi(self, gray, rect, template, snap: FastTrackConfig, margin: Optional[int] = None):
+    def _ncc_on_roi(self, gray, rect, template, snap: FastTrackConfig, margin: int):
         x, y, w, h = (int(v) for v in rect)
-        if margin is None:
-            margin = snap.roi_margin
         rx = max(x - margin, 0)
         ry = max(y - margin, 0)
         rx2 = min(x + w + margin, snap.screen_w)

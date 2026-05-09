@@ -28,8 +28,11 @@
    ├── B-01  Quick-fix zombies via plafonnement fast_max_drift_s            ✅
    ├── B-02  Correction association fast tracker (cause racine)             ✅
    ├── B-03  TTL temporel (cycle de vie en secondes côté Tracker)           ✅
-   ├── B-00  Anomalies config préalables                                    🔴
-   ├── B-04  Investigation dérive dt motion + nettoyage post-B-03           🔴
+   ├── B-00  Anomalies config #2, #3, #4                                    ✅
+   ├── B-04  Investigation dérive dt + nettoyage post-B-03                  🔴
+   │    ├── livrable interne : correction compute_predicted_rect (#60)
+   │    └── déclencheur humain : footage tagué teleport (pendant B-04)
+   ├── B-00b Anomalie config #1 (teleport_thresh)                           🔴
    ├── B-05  Slow detector : faux positifs en burst                         🔴
    └── B-06  Auto-keepalive masks stationnaires (patch tactique)            🔴
          │
@@ -229,47 +232,54 @@
 
 ---
 
-## 🔴 B-00 — Anomalies config préalables `[NOUVEAU post-réorg]`
+## 🟢 B-00 — Anomalies config préalables `[LIVRÉ]`
 
 > **Justification d'insertion** : 4 anomalies détectées dans `config.yaml` lors de la revue v4.3, antérieures au plan. Doivent être traitées avant A-02 (pour ne pas polluer l'audit invariants) et avant B-05 (l'anomalie #1 peut générer des symptômes cohérents avec les bursts CREATE observés).
 >
 > **Réorganisation** : l'anomalie #1 est extraite en **B-00b** (préconditions non satisfaites à ce stade). B-00 traite uniquement #2, #3, #4.
 
-- **Préconditions dures** : aucune (peut démarrer immédiatement).
+- **Préconditions dures** : aucune.
 
-- **Anomalies à traiter** :
+- **Anomalies traitées** :
   1. ~~**🔴 `motion.teleport_thresh < vx_max × dt_cap`**~~ → **déplacé en B-00b** (dépend de stats motion fiables post-B-04 et de footage tagué).
 
-  2. **🔴 `motion.dt_slow_max > tracker.lifecycle.lost_after_s`** (0.5 > 0.3)
-     - Symptôme : incohérence sémantique sur la fenêtre de péremption — un mask peut être marqué périmé (`lost_after_s`) alors que `dt_slow_max` autorise encore une mise à jour motion.
-     - Action : aligner les deux valeurs ou documenter explicitement la sémantique distincte si volontaire.
+  2. **🟢 `motion.dt_slow_max` vs `tracker.lifecycle.lost_after_s` — RÉSOLU** (faux positif)
+     - Audit code (motion.py, registry.py, mask.py) : les deux clés sont strictement orthogonales.
+     - `lost_after_s` : TTL registry, basé sur last_seen_ts (rafraîchi par tout match slow+fast).
+     - `dt_slow_max` : garde anti-bruit sur calcul vélocité, basé sur last_slow_ts (slow uniquement).
+     - Aucun couplage code. La comparaison numérique 0.5 vs 0.3 n'a pas de sens sémantique.
+     - Action appliquée : commentaires YAML reformulés pour lever l'ambiguïté. Aucune valeur modifiée.
 
-  3. **🟡 `detect.fast.roi_margin: 0.3` — clé morte**
-     - Commentaire YAML : `⚠ DEAD — fallback si adaptive_margin absent, mais _ncc_on_roi reçoit toujours margin=_adaptive_margin()`.
-     - Action : soit retirer la clé du YAML, soit émettre un warning explicite au chargement si elle est présente. Pas de demi-mesure.
+  3. **🟢 `detect.fast.roi_margin` — clé morte** SUPPRIMÉE
+     - Audit fast_track_thread.py : seul appelant `_ncc_on_roi` passe toujours
+       `margin=_adaptive_margin(...)`, le fallback `snap.roi_margin` n'était jamais atteint.
+     - Action appliquée :
+       - Suppression de la clé dans `config.yaml`.
+       - Suppression du champ `roi_margin` et de sa validation dans `FastTrackConfig`.
+       - Resserrement de la signature `_ncc_on_roi(..., margin: int)` (paramètre obligatoire,plus d'`Optional`).
+     - Effet : zéro code mort, contrat explicite, impossibilité de retomber dans le piège.
 
-  4. **🟡 `masks.adaptive_margin.base == masks.adaptive_margin.min`** (10 == 10)
-     - Symptôme : une des deux clés est sémantiquement redondante.
-     - Action : clarifier en revue produit. Si volontaire, documenter ; sinon, retirer la redondance.
-
-- **Effort estimé** : 1 h (anomalies #2, #3, #4 uniquement).
+  4. **🟢 `masks.adaptive_margin.base == .min` — redondance volontaire ASSUMÉE**
+     - Audit fast_track_thread.py : formule `_adaptive_margin` monotone croissante
+       (speed≥0, dt≥0, factor≥0), donc le plancher `max(am_min, ...)` est inerte
+       sur le hot path tant que `am_min == am_base`.
+     - Décision produit retenue : **conserver am_min == am_base** comme garde-fou structurel
+       (filet contre une régression future de la formule, ex. introduction d'un terme décroissant).
+     - Action appliquée :
+       - Commentaires YAML explicites sur les trois clés `base` / `min` / `max`.
+       - Warning logging au chargement dans `FastTrackConfig.__post_init__` si `am_min == am_base`,
+         traçant la dette pour tout futur lecteur.
 
 - **Critères de succès** :
-  - Anomalie #2 résolue (valeurs cohérentes ou sémantique documentée).
-  - Anomalies #3 et #4 résolues (clés nettoyées ou warning au chargement).
-  - Aucune régression observée sur session de référence.
+  - ✅ Anomalie #2 résolue (sémantique documentée, faux positif tracé).
+  - ✅ Anomalies #3 et #4 résolues (clé supprimée + warning au chargement).
+  - ✅ Aucune régression observée sur session de référence post-patch.
+  - ✅ Hot-reload propre (warning ré-émis si condition `am_min == am_base` reste vraie).
 
-- **Bloque** : A-02 (audit invariants partirait sur base instable).
-  - B-05 reste bloqué sur **B-00b** (anomalie #1 non résolue ici).
+- **Dette résorbée** : 3 anomalies config (#2, #3, #4) sur les 4 identifiées en revue v4.3.
+- **Bloque** : ❌ plus rien .
 
-- **Effets de bord à anticiper** :
-  - Anomalie #2 : si `dt_slow_max` est aligné sur `lost_after_s`, impact sur le comportement motion en cas de slow lent. Valider sur session > 30 s avec masks en mouvement lent.
-
-- **Anti-patterns à éviter** :
-  - Embarquer ces anomalies dans A-02 → masquerait l'audit derrière du nettoyage.
-  - Embarquer dans B-05 → fausserait le diagnostic du slow detector.
-  - Corriger sans test de non-régression sur session de référence.
-  - Traiter l'anomalie #1 ici → stats motion non fiables avant B-04.
+- **Statut** : ✅ **livré dans son scope**.
 
 ---
 
@@ -619,7 +629,6 @@
 
   ```text
   tracker.lifecycle.expire_after_lost_s >= tracker.lifecycle.lost_after_s
-  motion.dt_slow_max <= tracker.lifecycle.lost_after_s
   detect.fast.max_stale_frames / screen.capture_fps < masks.fast_max_drift_s
   ```
 

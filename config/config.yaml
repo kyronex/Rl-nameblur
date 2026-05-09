@@ -19,7 +19,6 @@ detect:
     enabled: true # Active le FastTracker (thread parallèle de suivi inter-frames ) — (main.py › bootstrap).
     max_stale_frames: 15 # Nbr de frames consécutives où le tracking NCC échoue avant d'émettre rect=None  — (fast_track_thread.py › _worker).
     ncc_threshold: 0.4 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
-    roi_margin: 0.3 # ⚠ DEAD — fallback si adaptive_margin absent, mais _ncc_on_roi reçoit toujours margin=_adaptive_margin() depuis _worker.
     event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker)..
   hsv:
     white_core: # Seuils HSV du blanc "strict" (cœur du cartouche) — Zone haute luminance, saturation très basse.
@@ -88,7 +87,8 @@ detect:
 # ═══════════════════════════════════════════════════════════════════
 tracker:
   lifecycle:
-    lost_after_s: 0.3 # CONFIRMED → LOST si pas de match depuis N secondes
+    lost_after_s: 0.3 # TTL avant transition CONFIRMED/PENDING → LOST si aucun match (slow OU fast) reçu. Pilote last_seen_ts. Site unique : registry.py › tick_and_expire.
+2. Patch Plan.md
     expire_after_lost_s: 1.0 # LOST → purge si LOST depuis N secondes
     confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
 
@@ -114,7 +114,7 @@ masks:
     dead_zone_min_px: 1.0 # Plancher en px du seuil anti-jitter — empêche un seuil sous-pixel sur très petits masks (motion.py › apply_detection)
     dead_zone_rel: 0.02 # Seuil anti-jitter relatif à min(w,h) du mask — déplacement < 3% de la taille = ignoré
     velocity_dead_zone: 10.0 # Vitesse minimale (px/s) en x/y/w/h pour activer la prédiction de vélocité — en dessous, vx/vy/vw/vh restent à 0
-    dt_slow_max: 0.5 # Délai max (secondes) entre deux détections "slow" avant de considérer le tracking comme périmé
+    dt_slow_max: 0.5 # Garde anti-bruit vélocité .si écart entre 2 slow consécutives dépasse. Δ/dt est jugé peu fiable ,vélocité reset à 0 (le mask reste vivant, pas de transition d'état). motion.py › apply_detection.
     teleport_thresh: 300.0 # Distance (pixels) au-delà de laquelle un déplacement est considéré comme un téléport — reset de la vélocité
     vx_max: 4000.0 # Vitesse max (px/s) en x — au-delà, la vélocité est clampée
     vy_max: 2000.0 # Vitesse max (px/s) en y — au-delà, la vélocité est clampée
@@ -123,11 +123,11 @@ masks:
     dt_cap: 0.10 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
     damping_rate: 2.0 # Taux d'amortissement : damping = 1 - dt * rate → vélocité s'annule en ~0.5s
     min_mask_size: 10.0 # Taille min (px) prédite pour w/h — évite un mask dégénéré
-  adaptive_margin:
-    base: 10 # Marge minimale de base (px), masque immobile
-    factor: 1.5 # Multiplicateur appliqué à (vitesse × dt)
-    min: 10 # Borne inférieure après calcul (px)
-    max: 80 # Borne supérieure après calcul (px)
+  adaptive_margin: # Marge dynamique (px) appliquée autour du candidate_rect lors du NCC.margin = clamp(base + speed*dt*factor, min, max). cf. fast_track_thread._adaptive_margin
+    base: 10 # Marge initiale quand speed*dt = 0. Doit satisfaire am_min ≤ am_base ≤ am_max.
+    factor: 1.5 #  Coefficient sur (speed*dt) en px. Doit être ≥ 0.
+    min: 10 # Volontairement == base : . Conservé comme garde-fou structurel (filet contre une régression future de la formule).
+    max: 80 # Plafond effectif. Élément actif du clamp en régime de tracking rapide.
 
 # ═══════════════════════════════════════════════════════════════════
 #  RENDU / FLOUTAGE
