@@ -10,7 +10,7 @@ from core.box import Box
 class MaskState(Enum):
     PENDING   = auto()   # vient d'apparaître, pas encore confirmé
     CONFIRMED = auto()   # vu assez de fois → on blur
-    LOST      = auto()   # plus détecté, en sursis (TTL)
+    LOST      = auto()   # plus détecté, en sursis
 
 def _serialize_scores(scores: dict) -> dict:
     """Sérialise le dict scores (hétérogène) pour export/log."""
@@ -135,7 +135,6 @@ class Mask:
             "ldr_h":             self.last_detected_rect[3],
             "last_detected_ts":  round(self.last_detected_ts, 4),
             "last_source":       self.last_source,
-            "ttl":               self.ttl,
             "vx":                round(self.vx, 2),
             "vy":                round(self.vy, 2),
             "vw":                round(self.vw, 2),

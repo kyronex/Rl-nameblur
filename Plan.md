@@ -229,16 +229,16 @@
 
 ---
 
-## 🔴 B-00 — Anomalies config préalables `[NOUVEAU]`
+## 🔴 B-00 — Anomalies config préalables `[NOUVEAU post-réorg]`
 
 > **Justification d'insertion** : 4 anomalies détectées dans `config.yaml` lors de la revue v4.3, antérieures au plan. Doivent être traitées avant A-02 (pour ne pas polluer l'audit invariants) et avant B-05 (l'anomalie #1 peut générer des symptômes cohérents avec les bursts CREATE observés).
+>
+> **Réorganisation** : l'anomalie #1 est extraite en **B-00b** (préconditions non satisfaites à ce stade). B-00 traite uniquement #2, #3, #4.
 
 - **Préconditions dures** : aucune (peut démarrer immédiatement).
 
 - **Anomalies à traiter** :
-  1. **🔴 `motion.teleport_thresh < vx_max × dt_cap`** (300 < 4000 × 0.10 = 400)
-     - Symptôme potentiel : un déplacement nominal à vitesse max sur `dt_cap` déclenche un teleport faussement → CREATE parasite cohérent avec B-05.
-     - Action : audit produit pour trancher si `vx_max` est sur-dimensionné (valeur fictive) ou si `teleport_thresh` est sous-dimensionné. Réajuster.
+  1. ~~**🔴 `motion.teleport_thresh < vx_max × dt_cap`**~~ → **déplacé en B-00b** (dépend de stats motion fiables post-B-04 et de footage tagué).
 
   2. **🔴 `motion.dt_slow_max > tracker.lifecycle.lost_after_s`** (0.5 > 0.3)
      - Symptôme : incohérence sémantique sur la fenêtre de péremption — un mask peut être marqué périmé (`lost_after_s`) alors que `dt_slow_max` autorise encore une mise à jour motion.
@@ -252,32 +252,34 @@
      - Symptôme : une des deux clés est sémantiquement redondante.
      - Action : clarifier en revue produit. Si volontaire, documenter ; sinon, retirer la redondance.
 
-- **Effort estimé** : 1-2 h (audit + correctifs config + tests de non-régression).
+- **Effort estimé** : 1 h (anomalies #2, #3, #4 uniquement).
 
 - **Critères de succès** :
-  - Anomalies #1 et #2 résolues (valeurs cohérentes ou sémantique documentée).
+  - Anomalie #2 résolue (valeurs cohérentes ou sémantique documentée).
   - Anomalies #3 et #4 résolues (clés nettoyées ou warning au chargement).
   - Aucune régression observée sur session de référence.
 
-- **Bloque** : A-02 (audit invariants partirait sur base instable), B-05 (anomalie #1 peut interférer avec le diagnostic).
+- **Bloque** : A-02 (audit invariants partirait sur base instable).
+  - B-05 reste bloqué sur **B-00b** (anomalie #1 non résolue ici).
 
 - **Effets de bord à anticiper** :
-  - Anomalie #1 : si `teleport_thresh` est relevé, vérifier que les vrais teleports restent détectés (footage tagué).
-  - Anomalie #2 : si `dt_slow_max` est aligné sur `lost_after_s`, impact sur le comportement motion en cas de slow lent.
+  - Anomalie #2 : si `dt_slow_max` est aligné sur `lost_after_s`, impact sur le comportement motion en cas de slow lent. Valider sur session > 30 s avec masks en mouvement lent.
 
 - **Anti-patterns à éviter** :
   - Embarquer ces anomalies dans A-02 → masquerait l'audit derrière du nettoyage.
   - Embarquer dans B-05 → fausserait le diagnostic du slow detector.
   - Corriger sans test de non-régression sur session de référence.
+  - Traiter l'anomalie #1 ici → stats motion non fiables avant B-04.
 
 ---
 
-### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03
+### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[MIS À JOUR post-réorg]`
 
 - **Préconditions dures** :
   - B-03 livré et validé (TTL temporel `lost_after_s` calibré, `last_seen_ts` introduit).
   - Sondes `motion.dt` et `capped_pct` opérationnelles (à confirmer en audit).
   - Session de référence (`docs/session-de-reference.md`) disponible pour mesures avant/après.
+  - **[AJOUT]** Footage de référence avec au moins un vrai teleport tagué déclenché **pendant B-04** (précondition humaine pour B-00b — à planifier en parallèle).
 
 - **Trois périmètres** :
 
@@ -292,10 +294,12 @@
   - **Impact opérationnel mesuré** : `drift_skipped` fréquents avec `max_drift=0.5–0.8 s` → fast tracker handicapé en permanence, applied/received ratio dégradé (parfois 0/1).
   - **Hypothèse principale** : `predict_position` calcule `dt = now - last_detected_ts` sur masks en attente de re-match → cappé systématiquement. **Indépendant de B-03**, confirmé par persistance post-fix.
   - **Hypothèse secondaire** : `last_detected_ts` non harmonisé avec `last_seen_ts` introduit par B-03 → possible double source de vérité.
+  - **[AJOUT]** **Livrable interne** : corriger `compute_predicted_rect` (#60 — sur-compte les stats motion) avant d'utiliser les percentiles `dist` inter-frames comme référence. Sans ce correctif, toute calibration basée sur les stats motion serait structurellement fausse, y compris pour B-00b.
   - **Actions** :
     1. Audit `predict_position` : tracer site exact de `dt`, identifier ref temporelle utilisée.
     2. Harmoniser `last_detected_ts` ↔ `last_seen_ts` (B-03).
     3. Vérifier que `dt` motion utilise un delta **inter-frames motion** et non `now - last_match`.
+    4. Livrer correction `compute_predicted_rect` (#60).
 
   **B-04c — Dégradation FPS session longue** :
   - Session 18s historique : 84 FPS → 44 FPS, dégradation continue et monotone.
@@ -309,16 +313,16 @@
     3. Re-mesurer session > 30 s.
   - **Si FPS toujours instable post-cleanup** : profilage requis (cProfile / py-spy).
 
-  **B-04d — Burst faux positifs slow detector** `[NOUVEAU, hérité B-03]` :
+  **B-04d — Burst faux positifs slow detector** `[hérité B-03, hors-scope]` :
   - Symptôme : rafales de CREATE avec `matches=0` (ex. uid=20→37 sur ~3 s) → pollution registry, EXPIRE en cascade.
   - **Hors-scope motion/tracker** : pathologie côté slow detector (seuil confiance trop bas / NMS insuffisant / faux positifs YOLO sur transitions de scène).
-  - **Statut** : ⚠️ **à scoper en ticket dédié B-05** (slow detector tuning), pas de fix dans B-04.
+  - **Statut** : ⚠️ **scopé en B-05** (slow detector tuning), pas de fix dans B-04.
 
-- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`, harmonisation `last_detected_ts` vs `last_seen_ts`.
+- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`, harmonisation `last_detected_ts` vs `last_seen_ts`, `compute_predicted_rect` (#60).
 
 - **Effort estimé** :
   - B-04a : 0 (fermé).
-  - B-04b : 2–4 h (audit + fix + validation).
+  - B-04b : 2–4 h (audit + fix + correction #60 + validation).
   - B-04c : 30 min cleanup + 15 min re-mesure ; +2 h si profilage requis.
   - B-04d : déplacé en B-05.
   - **Total B-04 : 3–6 h.**
@@ -329,16 +333,19 @@
   - `drift_skipped` rate < 5 % sur scène normale (vs. ~25 % actuel).
   - FPS stable sur session > 30 s (variance < 15 %).
   - Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG.
+  - **[AJOUT]** `compute_predicted_rect` (#60) corrigé et validé — percentiles `dist` exploitables pour B-00b.
+  - **[AJOUT]** Footage teleport tagué disponible en fin de B-04 (déclencheur humain).
 
 - **Ordre d'exécution recommandé** :
   1. B-04c cleanup logs (15 min, gain immédiat lisibilité + FPS).
-  2. B-04b audit + fix `predict_position` (cœur du problème).
-  3. Validation conjointe sur session > 30 s.
-  4. Si OK → fermer B-04, ouvrir B-05 (slow detector).
+  2. B-04b audit + fix `predict_position` + correction #60 (cœur du problème).
+  3. Validation conjointe sur session > 30 s + extraction percentiles `dist`.
+  4. Si OK → fermer B-04, déverrouiller B-00b puis B-05.
 
-- **Bloque** : B-05, B-06, F-08.
+- **Bloque** : B-00b (stats motion + footage requis), B-05, B-06, F-08.
 
 - **Effets de bord à anticiper** :
+  - **Vers B-00b** : percentiles `dist` inter-frames exploitables uniquement post-correction #60. Sans B-04 livré, B-00b ne peut pas trancher sur `teleport_thresh`.
   - **Vers B-05** : `dt` motion fiabilisé → vitesses estimées exploitables par le slow detector si tuning consomme des signaux temporels. Sans B-04b, toute calibration de seuil basée sur la vitesse serait biaisée.
   - **Vers B-06** : le seuil `velocity_eps_pps` du keepalive stationnaire **dépend directement** d'une vitesse fiable. Démarrer B-06 avant B-04b = calibration sur données saturées. Précondition dure.
   - **Vers F-08** (horizon dynamique motion) : F-08 consomme `motion.dt` ; débloqué uniquement post-B-04b.
@@ -348,6 +355,52 @@
   - Démarrer B-04b sans cleanup B-04c préalable → bruit logs masque les mesures.
   - Réouvrir B-04a sans régression observée explicite.
   - Embarquer le slow detector (B-04d → B-05) dans le périmètre B-04.
+  - **[AJOUT]** Omettre la correction #60 avant d'extraire les percentiles → stats motion fausses transmises à B-00b.
+  - **[AJOUT]** Fermer B-04 sans avoir déclenché le footage teleport → B-00b bloqué indéfiniment.
+
+---
+
+### 🔴 B-00b — Anomalie config #1 : `teleport_thresh` vs `vx_max × dt_cap`
+
+> **Justification d'extraction depuis B-00** : cette anomalie nécessite des stats motion fiables (post-B-04 / correction #60) et un footage de référence avec vrai teleport tagué (action humaine à déclencher pendant B-04). Ces deux préconditions n'étant pas satisfaites au moment de B-00, elle est traitée en ticket dédié après B-04.
+
+- **Préconditions dures** :
+  - B-04 livré et validé (`compute_predicted_rect` #60 corrigé, `motion.dt` fiabilisé).
+  - Percentiles `dist` inter-frames extraits sur session de référence post-B-04.
+  - Footage de référence avec au moins un vrai teleport tagué disponible (déclenché pendant B-04 — action humaine).
+
+- **Anomalie** :
+  - `motion.teleport_thresh = 300 < vx_max × dt_cap = 4000 × 0.10 = 400`
+  - Un déplacement nominal à vitesse max sur `dt_cap` déclenche un faux teleport → reset vélocité → CREATE parasite cohérent avec les bursts observés en B-05.
+
+- **Actions** :
+  1. Extraire percentiles `dist` p95/p99 inter-frames sur session de référence post-B-04.
+  2. Trancher : `vx_max` sur-dimensionné (valeur fictive non atteignable) ou `teleport_thresh` sous-dimensionné ?
+  3. Réajuster la valeur incohérente. Cible : `teleport_thresh > vx_max × dt_cap × 1.2` (marge de sécurité 20 %).
+  4. Valider sur footage tagué que les vrais teleports restent détectés après réajustement.
+  5. Documenter la décision produit (seuil retenu + justification percentiles).
+
+- **Effort estimé** : 1 h.
+
+- **Critères de succès** :
+  - `teleport_thresh > vx_max × dt_cap` (incohérence éliminée).
+  - Marge de sécurité documentée (`× 1.2` ou valeur justifiée).
+  - Vrais teleports détectés sur footage tagué.
+  - Percentiles `dist` p95/p99 consignés dans `docs/session-de-reference.md`.
+  - Aucune régression sur session de référence.
+
+- **Bloque** : B-05 (anomalie #1 peut générer des bursts CREATE parasites cohérents avec le symptôme B-05 — diagnostic faussé si non résolu avant).
+
+- **Effets de bord à anticiper** :
+  - Si `teleport_thresh` relevé significativement : vérifier que les cas-limites de teleport (ex. transition de scène brutale) restent couverts.
+  - Si `vx_max` abaissé : impact sur les seuils de drift du fast tracker — auditer les consommateurs de `vx_max` dans le codebase.
+
+- **Anti-patterns à éviter** :
+  - Réajuster sans extraction préalable des percentiles → décision aveugle non reproductible.
+  - Démarrer avant B-04 livré → stats motion structurellement fausses (correction #60 non appliquée).
+  - Valider uniquement sur session sans teleport → absence de preuve que les vrais teleports restent détectés.
+  - Embarquer dans B-00 → préconditions non satisfaites à ce stade.
+  - Embarquer dans B-05 → B-05 partirait sur une config potentiellement incohérente.
 
 ---
 
