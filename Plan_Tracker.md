@@ -232,7 +232,7 @@
 
 ---
 
-## 🟢 B-00 — Anomalies config préalables `[LIVRÉ]`
+### 🟢 B-00 — Anomalies config préalables `[LIVRÉ]`
 
 > **Justification d'insertion** : 4 anomalies détectées dans `config.yaml` lors de la revue v4.3, antérieures au plan. Doivent être traitées avant A-02 (pour ne pas polluer l'audit invariants) et avant B-05 (l'anomalie #1 peut générer des symptômes cohérents avec les bursts CREATE observés).
 >
@@ -407,7 +407,7 @@
 
 ---
 
-## 🔴 B-05 — Slow detector : faux positifs en burst `[RÉÉCRIT, découpé en B-05a + B-05b]`
+### 🔴 B-05 — Slow detector : faux positifs en burst `[RÉÉCRIT, découpé en B-05a + B-05b]`
 
 > **Note d'honnêteté préservée** : la cause racine exacte n'est pas connue. Le découpage audit/implémentation reflète cette incertitude. B-05a peut révéler que le problème est ailleurs (effet de bord B-04 résiduel, anomalie B-00 #1, etc.), auquel cas B-05b devient sans objet.
 
@@ -618,7 +618,7 @@
 
 - **Invariants à vérifier** _(liste consolidée post-audit YAML, à compléter si l'audit code base révèle d'autres dépendances)_ :
 
-  ### Catégorie 1 — Cohérence sémantique cycle de vie
+  #### Catégorie 1 — Cohérence sémantique cycle de vie
 
   ```text
   tracker.lifecycle.expire_after_lost_s >= tracker.lifecycle.lost_after_s
@@ -627,20 +627,20 @@
 
   _Note_ : le 3ème invariant croise une clé en frames et une clé en secondes via `capture_fps` — ce croisement est légitime à condition d'être explicite.
 
-  ### Catégorie 2 — Cohérence motion / teleport
+  #### Catégorie 2 — Cohérence motion / teleport
 
   ```text
   motion.teleport_thresh > max(motion.vx_max, motion.vy_max) × motion.dt_cap
   motion.dt_cap < motion.dt_slow_max
   ```
 
-  ### Catégorie 3 — Étanchéité unités (frames vs secondes)
+  #### Catégorie 3 — Étanchéité unités (frames vs secondes)
 
   Toute clé suffixée `_s` doit être en secondes ; toute clé suffixée `_frames` doit être en frames. Convention non négociable.
   - **Aucune clé en secondes** dans `detect.fast.*` _sauf_ `event_timeout_s` (explicitement temporel).
   - **Aucune clé en frames** dans `tracker.lifecycle.*`, `masks.motion.*`, `masks.fast_max_drift_s`.
 
-  ### Catégorie 4 — Plages de valeurs [0, 1]
+  #### Catégorie 4 — Plages de valeurs [0, 1]
 
   ```text
   detect.fast.ncc_threshold ∈ [0, 1]
@@ -657,7 +657,7 @@
   detect.geometry.max_fill ∈ [0, 1]
   ```
 
-  ### Catégorie 5 — Cohérence min/max
+  #### Catégorie 5 — Cohérence min/max
 
   ```text
   detect.geometry.min_fill < detect.geometry.max_fill
@@ -667,7 +667,7 @@
   detect.horizontal_bands.gap_fill < detect.horizontal_bands.min_fill   # hystérésis
   ```
 
-  ### Catégorie 6 — Sommes et invariants associator
+  #### Catégorie 6 — Sommes et invariants associator
 
   ```text
   sum(masks.associator.weights_source_slow) ≈ 1.0  (tolérance ±0.01)
@@ -675,14 +675,14 @@
   masks.associator.source_confidence_fast <= masks.associator.source_confidence_slow
   ```
 
-  ### Catégorie 7 — Capture / vcam
+  #### Catégorie 7 — Capture / vcam
 
   ```text
   screen.capture_fps >= screen.vcam_fps
   screen.width > 0 && screen.height > 0
   ```
 
-  ### Catégorie 8 — Cohérence consolidation temporelle (post B-05)
+  #### Catégorie 8 — Cohérence consolidation temporelle (post B-05)
 
   ```text
   tracker.lifecycle.confirm_after / screen.capture_fps < 0.3 × tracker.lifecycle.lost_after_s
