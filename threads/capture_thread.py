@@ -20,6 +20,8 @@ class CaptureThread:
         self._frame_id = 0
 
     def start(self):
+        devices = dxcam.device_info()
+        log.info(f"[DXCam] Devices disponibles : {devices}")
         self._camera = dxcam.create(output_color="RGB")
         self._camera.start(target_fps=self._target_fps)
         self._running = True
@@ -46,10 +48,22 @@ class CaptureThread:
             return self._frame_id
 
     def _worker(self):
+        _diag_count = 0
+        _diag_t0 = time.perf_counter()
+
         while self._running:
             frame = self._camera.get_latest_frame()
             if frame is None:
+                time.sleep(0.001)
                 continue
+
+            _diag_count += 1
+            _diag_elapsed = time.perf_counter() - _diag_t0
+            if _diag_elapsed >= 5.0:
+                log.info(f"[CaptureThread] FPS réel DXCam : {_diag_count / _diag_elapsed:.1f}")
+                _diag_count = 0
+                _diag_t0 = time.perf_counter()
+
             frame = frame.copy()
             ts = time.perf_counter()
             with self._frame_lock:
