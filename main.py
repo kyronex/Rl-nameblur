@@ -12,12 +12,13 @@ def setup_logging():
 setup_logging()
 
 import time
+from datetime import datetime
 import numpy as np
 import pyvirtualcam
 
 from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
 from bench.bench             import bench
-from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
+#from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
 from core.mask_manager       import draw_debug, pad_rect
 from core.blur               import apply_blur
 from core.mask               import MaskState
@@ -174,19 +175,22 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 # Stats motion (dt inter-slow, capping)
                 m = motion_get_and_reset_stats()
                 if m["n"] > 0:
-                    dt_avg      = m["dt_sum_ms"] / m["n"]
-                    dt_max      = m["dt_max_ms"]
-                    capped_pct  = 100.0 * m["capped"] / m["n"]
-                    motion_tag  = (
-                        f"motion.dt avg={dt_avg:.1f}ms "
-                        f"max={dt_max:.1f}ms "
+                    stale_avg  = m["staleness_slow_sum_ms"] / m["n"]
+                    stale_max  = m["staleness_slow_max_ms"]
+                    capped_pct = 100.0 * m["capped"] / m["n"]
+                    motion_tag = (
+                        f"staleness_slow avg={stale_avg:.1f}ms "
+                        f"max={stale_max:.1f}ms "
                         f"capped={capped_pct:.1f}%"
                     )
                 else:
-                    motion_tag = "motion.dt n/a"
+                    motion_tag = "staleness_slow n/a"
+
+
+                ts = datetime.now().strftime("%H:%M:%S")
 
                 log.info(
-                    f"⚡ {fps:.1f} FPS | "
+                    f"[{ts}] ⚡ {fps:.1f} FPS | "
                     f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
                     f"{motion_tag} | "
                     f"{mode} {fast_tag}"
@@ -201,7 +205,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         log.info("\n🛑 Arrêt propre")
 
     finally:
-        csv_close()
         sender.stop()
         if fast_enabled:
             fast_tracker.stop()

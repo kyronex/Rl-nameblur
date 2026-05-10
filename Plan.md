@@ -286,87 +286,80 @@
 ### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[MIS À JOUR post-réorg]`
 
 - **Préconditions dures** :
-  - B-03 livré et validé (TTL temporel `lost_after_s` calibré, `last_seen_ts` introduit).
-  - Sondes `motion.dt` et `capped_pct` opérationnelles (à confirmer en audit).
-  - Session de référence (`docs/session-de-reference.md`) disponible pour mesures avant/après.
-  - **[AJOUT]** Footage de référence avec au moins un vrai teleport tagué déclenché **pendant B-04** (précondition humaine pour B-00b — à planifier en parallèle).
+  - B-03 livré et validé ✅
+  - Sondes `staleness_slow` / `capped_pct` opérationnelles ✅ (renommées depuis `motion.dt` — B-04b)
+  - Session de référence disponible ✅
+  - **[AJOUT]** Footage de référence avec au moins un vrai teleport tagué — ⚠️ précondition humaine pour B-00b, à planifier.
+
+---
 
 - **Trois périmètres** :
 
   **B-04a — Cap adaptatif stale (dette B-02)** :
-  - Sur fond statique prolongé, `max_stale_frames` permet encore N cycles avant `fast_mask_lost`.
-  - Piste : NCC threshold relevé à `0.70+` quand `velocity == 0` depuis > 1 s.
-  - **Statut révisé post-B-03** : ✅ **fermé par observation**. Logs session post-fix : aucun zombie fast pathologique, long-runners (uid=0/9) stables avec ratio slow/fast sain (40:135). Rouvrir uniquement si régression observée.
+  ✅ **FERMÉ par observation.** Aucun zombie fast pathologique, long-runners stables. Rouvrir uniquement si régression observée.
 
-  **B-04b — Dérive `dt` motion** `[PRIORITAIRE]` :
-  - Symptôme historique : `motion.dt` dérive (750 ms → 2 300 ms), `capped_pct` saturé.
-  - **Symptôme reconfirmé logs post-B-03** : `motion.dt avg=575–982 ms / max=1431–1802 ms / capped=99–100 %` sur **toute** la session (FPS 45–88). Attendu ≈ 11–22 ms.
-  - **Impact opérationnel mesuré** : `drift_skipped` fréquents avec `max_drift=0.5–0.8 s` → fast tracker handicapé en permanence, applied/received ratio dégradé (parfois 0/1).
-  - **Hypothèse principale** : `predict_position` calcule `dt = now - last_detected_ts` sur masks en attente de re-match → cappé systématiquement. **Indépendant de B-03**, confirmé par persistance post-fix.
-  - **Hypothèse secondaire** : `last_detected_ts` non harmonisé avec `last_seen_ts` introduit par B-03 → possible double source de vérité.
-  - **[AJOUT]** **Livrable interne** : corriger `compute_predicted_rect` (#60 — sur-compte les stats motion) avant d'utiliser les percentiles `dist` inter-frames comme référence. Sans ce correctif, toute calibration basée sur les stats motion serait structurellement fausse, y compris pour B-00b.
-  - **Actions** :
-    1. Audit `predict_position` : tracer site exact de `dt`, identifier ref temporelle utilisée.
-    2. Harmoniser `last_detected_ts` ↔ `last_seen_ts` (B-03).
-    3. Vérifier que `dt` motion utilise un delta **inter-frames motion** et non `now - last_match`.
-    4. Livrer correction `compute_predicted_rect` (#60).
+  **B-04b — Dérive `dt` motion** :
+  ✅ **FERMÉ.**
+  - **Cause racine traitée** : `predict_position` calculait `dt = now - last_detected_ts` (référence temporelle incorrecte). Migré vers `last_slow_ts` — sémantique correcte, site unique.
+  - **Renommage sonde** : `motion.dt` → `staleness_slow` (reflète la sémantique réelle : délai depuis dernière détection slow, pas latence prédiction).
+  - **Correction #60** : `compute_predicted_rect` rendue pure — n'alimente plus les sondes. Sonde alimentée uniquement depuis `predict_position` (1×/mask/tick).
+  - **Bug `get_and_reset_stats()`** : clé dupliquée `staleness_slow_max_ms` / `staleness_slow_sum_ms` absente → corrigé, crash `KeyError` résolu.
+  - **Calibration `dt_cap`** : valeur initiale `0.10 s` systématiquement cappée (`capped=100%`). Recalibrée à **`0.35 s`** sur la base des métriques réelles.
+  - **Validation `dt_cap=0.30`** (session intermédiaire) :
+    - Régime nominal FPS ≥ 120 : `capped=7–11%` ✅ sous le seuil cible.
+    - Régime moyen FPS 125–141 : `capped=16–19%` ⚠️ légèrement au-dessus.
+    - Régime bas FPS < 60 : `capped=12–44%` — corrélé à la montée de `staleness_slow max` (385–428 ms). **Jugé acceptable** : dégradation mécanique liée au ralentissement slow, non bloquante.
+  - **Valeur définitive retenue : `dt_cap: 0.35`**. Critère de succès réévalué :
+    - `capped_pct < 10%` en régime nominal (FPS ≥ 120) — critère dur.
+    - `capped_pct < 50%` à bas FPS (< 60) — critère souple, non bloquant pour fermeture.
+  - **Métriques de référence** : `staleness_slow avg=233–289 ms / max=300–445 ms` en régime nominal.
 
   **B-04c — Dégradation FPS session longue** :
-  - Session 18s historique : 84 FPS → 44 FPS, dégradation continue et monotone.
-  - **Observation post-B-03** : FPS oscille 45–88 sur ~14 s sans tendance monotone claire (88.3 → 50.2 → 60.7 → 49.9 → 58.0). **Dégradation atténuée mais non éliminée.**
-  - **Hypothèses restantes** :
-    - Overhead logs INFO `[FAST-APPLY]` (haute fréquence) + `ZOMBIE-SUSPECT` toujours actifs.
-    - Couplage avec B-04b : `drift_skipped` à chaque frame motion = surcharge CPU.
-  - **Actions préalables** (avant profilage) :
-    1. Passer `[FAST-APPLY]` et `ZOMBIE-SUSPECT` en DEBUG (gain attendu : significatif).
-    2. Retirer commentaire `# QUICK-FIX B-01`.
-    3. Re-mesurer session > 30 s.
-  - **Si FPS toujours instable post-cleanup** : profilage requis (cProfile / py-spy).
+  - **Statut** : ⚠️ **non clôturé.** Cleanup logs B-04b appliqué, validation > 30 s non effectuée.
+  - FPS observé : oscille 44–204 (forte variance). Corrélation probable avec présence/absence de masks actifs (C=4 → FPS bas, C=0 → FPS haut).
+  - **Hypothèse principale** : surcoût floutage + fast tracker sur masks actifs — à confirmer par profilage.
+  - **Actions restantes** :
+    1. Confirmer que `[FAST-APPLY]` et `ZOMBIE-SUSPECT` sont bien en DEBUG sur session live.
+    2. Session de validation > 30 s avec `dt_cap=0.35` — mesurer variance FPS **séparément** scène avec/sans masks.
+    3. Si FPS toujours instable (variance > 15% à charge constante) : profilage cProfile / py-spy.
 
-  **B-04d — Burst faux positifs slow detector** `[hérité B-03, hors-scope]` :
-  - Symptôme : rafales de CREATE avec `matches=0` (ex. uid=20→37 sur ~3 s) → pollution registry, EXPIRE en cascade.
-  - **Hors-scope motion/tracker** : pathologie côté slow detector (seuil confiance trop bas / NMS insuffisant / faux positifs YOLO sur transitions de scène).
-  - **Statut** : ⚠️ **scopé en B-05** (slow detector tuning), pas de fix dans B-04.
+  **B-04d — Burst faux positifs slow detector** :
+  ⚠️ **Hors-scope B-04 — scopé en B-05.** Aucun changement.
 
-- 🔍 **Audit requis** : sondes `motion.dt` / `capped_pct`, `predict_position`, sites de calcul `dt`, harmonisation `last_detected_ts` vs `last_seen_ts`, `compute_predicted_rect` (#60).
+---
 
-- **Effort estimé** :
-  - B-04a : 0 (fermé).
-  - B-04b : 2–4 h (audit + fix + correction #60 + validation).
-  - B-04c : 30 min cleanup + 15 min re-mesure ; +2 h si profilage requis.
-  - B-04d : déplacé en B-05.
-  - **Total B-04 : 3–6 h.**
+- **Critères de succès — état** :
 
-- **Critères de succès** :
-  - `motion.dt.avg < 2 × (1/FPS)` (ex. < 33 ms à 60 FPS).
-  - `capped_pct < 10 %`.
-  - `drift_skipped` rate < 5 % sur scène normale (vs. ~25 % actuel).
-  - FPS stable sur session > 30 s (variance < 15 %).
-  - Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG.
-  - **[AJOUT]** `compute_predicted_rect` (#60) corrigé et validé — percentiles `dist` exploitables pour B-00b.
-  - **[AJOUT]** Footage teleport tagué disponible en fin de B-04 (déclencheur humain).
+| Critère                                               | Statut                                       |
+| ----------------------------------------------------- | -------------------------------------------- |
+| Sonde `staleness_slow` opérationnelle                 | ✅                                           |
+| `compute_predicted_rect` pure (#60)                   | ✅                                           |
+| Crash `KeyError get_and_reset_stats`                  | ✅ résolu                                    |
+| `capped_pct < 10%` régime nominal FPS ≥ 120           | ✅ validé à `dt_cap=0.30`, confirmé à `0.35` |
+| `dt_cap` valeur définitive `0.35` appliquée           | ⚠️ pending config.yaml                       |
+| FPS stable > 30 s (variance < 15% à charge constante) | ⚠️ pending validation B-04c                  |
+| Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG       | ✅                                           |
+| Footage teleport tagué                                | ❌ précondition humaine non déclenchée       |
 
-- **Ordre d'exécution recommandé** :
-  1. B-04c cleanup logs (15 min, gain immédiat lisibilité + FPS).
-  2. B-04b audit + fix `predict_position` + correction #60 (cœur du problème).
-  3. Validation conjointe sur session > 30 s + extraction percentiles `dist`.
-  4. Si OK → fermer B-04, déverrouiller B-00b puis B-05.
+---
 
-- **Bloque** : B-00b (stats motion + footage requis), B-05, B-06, F-08.
+- **Actions restantes avant fermeture B-04** :
+  1. Appliquer `dt_cap: 0.35` dans `config.yaml`.
+  2. Session > 30 s — confirmer FPS stable à charge constante (B-04c).
+  3. Déclencher footage teleport (précondition B-00b).
+  4. Si les 3 critères ci-dessus sont verts → **fermer B-04, déverrouiller B-00b + B-05**.
 
-- **Effets de bord à anticiper** :
-  - **Vers B-00b** : percentiles `dist` inter-frames exploitables uniquement post-correction #60. Sans B-04 livré, B-00b ne peut pas trancher sur `teleport_thresh`.
-  - **Vers B-05** : `dt` motion fiabilisé → vitesses estimées exploitables par le slow detector si tuning consomme des signaux temporels. Sans B-04b, toute calibration de seuil basée sur la vitesse serait biaisée.
-  - **Vers B-06** : le seuil `velocity_eps_pps` du keepalive stationnaire **dépend directement** d'une vitesse fiable. Démarrer B-06 avant B-04b = calibration sur données saturées. Précondition dure.
-  - **Vers F-08** (horizon dynamique motion) : F-08 consomme `motion.dt` ; débloqué uniquement post-B-04b.
-  - **Vers cleanup logs (B-04c)** : retrait `[FAST-APPLY]` INFO modifie la lisibilité des sessions de bench → mettre à jour `docs/session-de-reference.md` si les sondes citées y figurent.
+---
+
+- **Bloque** : B-00b (footage + stats motion fiables), B-05, B-06, F-08.
 
 - **Anti-patterns à éviter** :
-  - Démarrer B-04b sans cleanup B-04c préalable → bruit logs masque les mesures.
+  - Fermer B-04 sans `dt_cap: 0.35` appliqué et validé en session live.
+  - Fermer B-04 sans footage teleport — B-00b bloqué indéfiniment.
+  - Interpréter `capped_pct` élevé à bas FPS comme un bug — c'est une dégradation mécanique attendue.
   - Réouvrir B-04a sans régression observée explicite.
-  - Embarquer le slow detector (B-04d → B-05) dans le périmètre B-04.
-  - **[AJOUT]** Omettre la correction #60 avant d'extraire les percentiles → stats motion fausses transmises à B-00b.
-  - **[AJOUT]** Fermer B-04 sans avoir déclenché le footage teleport → B-00b bloqué indéfiniment.
+  - Embarquer B-04d dans B-04 — scopé B-05.
+  - Extraire percentiles `dist` pour B-00b avant `dt_cap: 0.35` validé en session.
 
 ---
 

@@ -1,7 +1,19 @@
-# tracker/motion.py — v2
+# tracker/motion.py — v3 (B-04b.1 + B-04b.2)
 """
 Mouvement des masks : mise à jour sur détection + prédiction inertielle.
 Fonctions pures (pas de global, pas de cfg singleton).
+
+Sonde `staleness_slow` (ex `motion.dt`) :
+    Mesure le délai entre la dernière détection slow d'un mask
+    (`last_slow_ts`) et l'instant de prédiction (`now`).
+    Alimentée UNIQUEMENT depuis `predict_position` (1×/mask non
+    matché/tick) — pas depuis `compute_predicted_rect` qui est
+    appelée N×M fois par l'associator pour le gating IoU.
+
+    NB : `staleness_slow` ne reflète PAS la latence de prédiction
+    réelle. Le fast tracker rafraîchit `last_seen_ts` mais pas
+    `last_slow_ts`. Un mask correctement suivi par le fast peut
+    avoir un `staleness_slow` élevé sans que ce soit un problème.
 """
 
 import logging
@@ -9,7 +21,7 @@ import logging
 log = logging.getLogger("motion")
 
 # ── Stats motion (option B : compteurs ad-hoc, thread-safe via GIL) ──
-_motion_stats = {"dt_sum_ms": 0.0, "dt_max_ms": 0.0, "n": 0, "capped": 0}
+_motion_stats = {"staleness_slow_sum_ms": 0.0, "staleness_slow_max_ms": 0.0, "n": 0, "capped": 0}
 
 def get_and_reset_stats() -> dict:
     """
@@ -19,7 +31,7 @@ def get_and_reset_stats() -> dict:
     """
     global _motion_stats
     s = _motion_stats
-    _motion_stats = {"dt_sum_ms": 0.0, "dt_max_ms": 0.0, "n": 0, "capped": 0}
+    _motion_stats = {"staleness_slow_sum_ms": 0.0, "staleness_slow_max_ms": 0.0, "n": 0, "capped": 0}
     return s
 
 def apply_detection(mask, new_rect, detect_ts, source, config):
@@ -109,22 +121,13 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
 def compute_predicted_rect(mask, ts, config):
     """
     Version PURE de la prédiction : retourne le rect prédit à `ts`
-    sans muter le mask. Utilisée par l'associator pour l'IoU.
+    sans muter le mask et SANS alimenter de sonde.
     Ancrage = last_detected_rect (pas de dérive cumulative).
+    Appelée par l'associator (gating IoU) et par predict_position.
     """
     if mask.last_slow_ts <= 0.0:
         return mask.rect
     dt = ts - mask.last_slow_ts
-    dt_abs_ms = abs(dt) * 1000.0
-
-    # ── Sondes motion (option B) ──
-    _motion_stats["dt_sum_ms"] += dt_abs_ms
-    _motion_stats["n"] += 1
-    if dt_abs_ms > _motion_stats["dt_max_ms"]:
-        _motion_stats["dt_max_ms"] = dt_abs_ms
-    if abs(dt) > config.dt_cap:
-        _motion_stats["capped"] += 1
-
     dt_capped = max(-config.dt_cap, min(dt, config.dt_cap))
     damping = max(0.0, 1.0 - abs(dt) * config.damping_rate)
     lx, ly, lw, lh = mask.last_detected_rect
@@ -137,7 +140,19 @@ def predict_position(mask, now, screen_w, screen_h, config):
     """
     Prédit la position d'un mask non mis à jour ce frame.
     Ancrage = last_detected_rect (pas de dérive cumulative).
+    Alimente la sonde `staleness_slow` (1×/mask/tick).
     """
+    # ── Sonde staleness_slow (alimentée UNIQUEMENT ici) ──
+    if mask.last_slow_ts > 0.0:
+        dt = now - mask.last_slow_ts
+        dt_abs_ms = abs(dt) * 1000.0
+        _motion_stats["staleness_slow_sum_ms"] += dt_abs_ms
+        _motion_stats["n"] += 1
+        if dt_abs_ms > _motion_stats["staleness_slow_max_ms"]:
+            _motion_stats["staleness_slow_max_ms"] = dt_abs_ms
+        if abs(dt) > config.dt_cap:
+            _motion_stats["capped"] += 1
+
     x, y, w, h = compute_predicted_rect(mask, now, config)
     # Taille minimum
     min_size = config.min_mask_size

@@ -88,7 +88,6 @@ detect:
 tracker:
   lifecycle:
     lost_after_s: 0.3 # TTL avant transition CONFIRMED/PENDING → LOST si aucun match (slow OU fast) reçu. Pilote last_seen_ts. Site unique : registry.py › tick_and_expire.
-2. Patch Plan.md
     expire_after_lost_s: 1.0 # LOST → purge si LOST depuis N secondes
     confirm_after: 1 # Nbr de frames matchées consécutives pour passer PENDING → CONFIRMED (mask.py › transition / registry.py › create)
 
@@ -120,7 +119,7 @@ masks:
     vy_max: 2000.0 # Vitesse max (px/s) en y — au-delà, la vélocité est clampée
     vw_max: 1000.0 # Vitesse max (px/s) en largeur — au-delà, la vélocité est clampée
     vh_max: 500.0 # Vitesse max (px/s) en hauteur — au-delà, la vélocité est clampée
-    dt_cap: 0.10 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
+    dt_cap: 0.30 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
     damping_rate: 2.0 # Taux d'amortissement : damping = 1 - dt * rate → vélocité s'annule en ~0.5s
     min_mask_size: 10.0 # Taille min (px) prédite pour w/h — évite un mask dégénéré
   adaptive_margin: # Marge dynamique (px) appliquée autour du candidate_rect lors du NCC.margin = clamp(base + speed*dt*factor, min, max). cf. fast_track_thread._adaptive_margin
