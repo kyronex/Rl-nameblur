@@ -282,14 +282,14 @@ Invariants à ajouter dans la validation config (cohérent avec A-02 du Plan.md)
 | Phase                         | Dépendance     | Durée estimée | Statut    |
 | ----------------------------- | -------------- | ------------- | --------- |
 | 0 — Audit                     | Aucune         | 30 min        | ✅ Livrée |
-| 1 — Abstraction base (A1)     | Phase 0        | 30 min        | ⏳ Prête  |
-| 2 — DXCamSource               | Phase 1        | 30 min        | ⏸ Pause   |
-| 3 — Cv2Source                 | Phase 1        | 1 h           | ⏸ Pause   |
-| 4 — SourceSelector (B1 + β)   | Phases 2 + 3   | 1 h           | ⏸ Pause   |
-| 5 — Intégration CaptureThread | Phase 4 + grep | 30 min        | ⏸ Pause   |
-| 6 — Gestion erreur            | Phase 5        | 30 min        | ⏸ Pause   |
-| 7 — Config                    | Phase 4        | 15 min        | ⏸ Pause   |
-| 8 — Doc                       | Phase 5        | 30 min        | ⏸ Pause   |
+| 1 — Abstraction base (A1)     | Phase 0        | 30 min        | ✅ Livrée |
+| 2 — DXCamSource               | Phase 1        | 30 min        | ✅ Livrée |
+| 3 — Cv2Source                 | Phase 1        | 1 h           | ✅ Livrée |
+| 4 — SourceSelector (B1 + β)   | Phases 2 + 3   | 1 h           | ✅ Livrée |
+| 5 — Intégration CaptureThread | Phase 4 + grep | 30 min        | ✅ Livrée |
+| 6 — Gestion erreur            | Phase 5        | 30 min        | ✅ Livrée |
+| 7 — Config                    | Phase 4        | 15 min        | ✅ Livrée |
+| 8 — Doc                       | Phase 5        | 30 min        | ✅ Livrée |
 
 **Total estimé restant :** 4 h 30.
 

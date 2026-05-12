@@ -287,7 +287,7 @@
 
 - **Préconditions dures** :
   - B-03 livré et validé ✅
-  - Sondes `staleness_slow` / `capped_pct` opérationnelles ✅ (renommées depuis `motion.dt` — B-04b)
+  - Sondes `motion.dt` / `capped_pct` opérationnelles ✅ (héritées B-03, renommage `staleness_slow` livré dans B-04b ci-dessous)
   - Session de référence disponible ✅
   - **[AJOUT]** Footage de référence avec au moins un vrai teleport tagué — ⚠️ précondition humaine pour B-00b, à planifier.
 
@@ -300,6 +300,7 @@
 
   **B-04b — Dérive `dt` motion** :
   ✅ **FERMÉ.**
+  - **Filiation** : traite la dette héritée B-03 (`motion.dt avg=575–982 ms / capped=99–100%`).
   - **Cause racine traitée** : `predict_position` calculait `dt = now - last_detected_ts` (référence temporelle incorrecte). Migré vers `last_slow_ts` — sémantique correcte, site unique.
   - **Renommage sonde** : `motion.dt` → `staleness_slow` (reflète la sémantique réelle : délai depuis dernière détection slow, pas latence prédiction).
   - **Correction #60** : `compute_predicted_rect` rendue pure — n'alimente plus les sondes. Sonde alimentée uniquement depuis `predict_position` (1×/mask/tick).
@@ -310,8 +311,9 @@
     - Régime moyen FPS 125–141 : `capped=16–19%` ⚠️ légèrement au-dessus.
     - Régime bas FPS < 60 : `capped=12–44%` — corrélé à la montée de `staleness_slow max` (385–428 ms). **Jugé acceptable** : dégradation mécanique liée au ralentissement slow, non bloquante.
   - **Valeur définitive retenue : `dt_cap: 0.35`**. Critère de succès réévalué :
-    - `capped_pct < 10%` en régime nominal (FPS ≥ 120) — critère dur.
-    - `capped_pct < 50%` à bas FPS (< 60) — critère souple, non bloquant pour fermeture.
+    - `capped_pct < 10%` en régime nominal **main loop ≥ 120 FPS** — critère dur, conditionné à un main loop nominal (cf. B-04c).
+    - `capped_pct < 50%` à main loop < 60 FPS — critère souple, non bloquant pour fermeture.
+    - **Note de calibration** : seuils initiaux établis sur boucle capture 60–80 FPS. Post-optimisations capture, le facteur déterminant est devenu le FPS **main loop**, pas le FPS capture. Tant que B-04c n'a pas stabilisé le main loop à régime nominal, `capped_pct` observé reste structurellement supérieur — comportement attendu, non bloquant.
   - **Métriques de référence** : `staleness_slow avg=233–289 ms / max=300–445 ms` en régime nominal.
 
   **B-04c — Dégradation FPS session longue** :
@@ -335,7 +337,7 @@
 | Sonde `staleness_slow` opérationnelle                 | ✅                                           |
 | `compute_predicted_rect` pure (#60)                   | ✅                                           |
 | Crash `KeyError get_and_reset_stats`                  | ✅ résolu                                    |
-| `capped_pct < 10%` régime nominal FPS ≥ 120           | ✅ validé à `dt_cap=0.30`, confirmé à `0.35` |
+| `capped_pct < 10%` régime nominal main loop ≥ 120 FPS | ✅ validé à `dt_cap=0.30`, confirmé à `0.35` |
 | `dt_cap` valeur définitive `0.35` appliquée           | ⚠️ pending config.yaml                       |
 | FPS stable > 30 s (variance < 15% à charge constante) | ⚠️ pending validation B-04c                  |
 | Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG       | ✅                                           |
