@@ -1,8 +1,10 @@
 comtypes==1.4.15
 dxcam==0.0.5
+mss==10.2.0
 numpy==2.4.2
 opencv-python==4.13.0.92
 pandas==3.0.2
+pygrabber==0.2
 python-dateutil==2.9.0.post0
 pyvirtualcam==0.15.0
 PyYAML==6.0.3
@@ -10,4 +12,6 @@ scipy==1.17.1
 screeninfo==0.8.1
 six==1.17.0
 types-PyYAML==6.0.12.20250915
+typing_extensions==4.15.0
 tzdata==2026.2
+windows-capture==2.0.0

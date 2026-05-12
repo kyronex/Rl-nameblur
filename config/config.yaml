@@ -9,6 +9,18 @@ screen:
   capture_fps: 120 # Fréquence de capture écran — pilote la boucle principale (main.py)
   vcam_fps: 120 # Fréquence de sortie vers la caméra virtuelle — indépendant du capture_fps (main.py)
 
+capture:
+  source_priority: ["wgc", "dxcam", "cv2", "mss"] # Ordre de tentative — première source validée par probe = retenue (capture/selector.py)
+  probe_timeout_s: 0.5 # Durée max (s) pour valider une source (start + N frames + stop) — (capture/selector.py)
+  probe_min_frames: 1 # Nombre min de frames valides pendant la probe pour valider la source — (capture/selector.py)
+  cv2:
+    device_name: "OBS" # Substring (case-insensitive) recherchée dans les noms DirectShow — (capture/cv2_source.py)
+  mss:
+    monitor_index: 1 # Moniteur selectionner par mss — (capture/mss_source.py)
+  wgc:
+    target: "monitor" # "monitor" | "window"
+    monitor_index: 1 # utilisé si target=monitor (1 = primaire)
+    window_name: "Rocket League" # utilisé si target=window (substring match
 # ═══════════════════════════════════════════════════════════════════
 #  DÉTECTION
 # ═══════════════════════════════════════════════════════════════════

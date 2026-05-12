@@ -252,7 +252,20 @@ Invariants à ajouter dans la validation config (cohérent avec A-02 du Plan.md)
 
 ---
 
-## Phase 8 — Documentation
+## Phase 8 — Ajout MSSSource (additive, post-Phase 7)
+
+**Préconditions** : : Phases 1-5 livrées.
+
+**Objectif** : ajouter une 3e source de capture (MSS) .
+
+**Décisions figées** :
+
+- Validation résolution stricte (Option A — raise si mismatch)
+- Sélection moniteur via config.capture.mss_monitor_index (défaut 1)
+- target_fps stocké mais inutilisé (capture synchrone)
+- Position dans source_priority : à définir en config selon priorité user
+
+## Phase 9 — Documentation
 
 **Préconditions** : Phase 5 livrée.
 

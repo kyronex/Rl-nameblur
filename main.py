@@ -11,11 +11,14 @@ def setup_logging():
     )
 setup_logging()
 
+import sys
 import time
 from datetime import datetime
 import numpy as np
 import pyvirtualcam
-
+from capture.config   import CaptureConfig
+from capture.selector import SourceSelector
+from capture.base     import CaptureSourceNotFound
 from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
 from bench.bench             import bench
 #from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
@@ -35,10 +38,28 @@ VCAM_FPS      = cfg.get("screen.vcam_fps")
 cfg.start_watcher()
 
 # ═══════════════════════════════════════════════════════
+#  RÉSOLUTION SOURCE CAPTURE                            ← AJOUT Phase 6
+# ═══════════════════════════════════════════════════════
+try:
+    capture_cfg = CaptureConfig()
+    _source      = SourceSelector.resolve(capture_cfg)
+except CaptureSourceNotFound:
+    log.error(
+        "\n[ERREUR] Aucune source de capture disponible.\n"
+        "\n"
+        "Solutions :\n"
+        "  1. Lancez Rocket League en mode Borderless Window\n"
+        "  2. OU lancez OBS avec une source \"Game Capture\"\n"
+        "     et activez la Virtual Camera\n"
+        "\n"
+        "Puis relancez le script."
+    )
+    sys.exit(1)
+
+# ═══════════════════════════════════════════════════════
 #  LANCEMENT
 # ═══════════════════════════════════════════════════════
-
-capturer = CaptureThread(target_fps=CAPTURE_FPS)
+capturer = CaptureThread(source=_source, target_fps=CAPTURE_FPS)
 capturer.start()
 
 detector = DetectThread()
