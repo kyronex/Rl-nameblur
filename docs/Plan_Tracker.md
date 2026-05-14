@@ -353,7 +353,6 @@
   6. ⏳ Si variance > 15% à charge constante → profilage cProfile / py-spy.
 
 - **Dettes à solder avant clôture** :
-  - `bench.py` : ajouter `snapshot_and_reset()` pour agrégats périodiques JSONL.
   - Reprendre étape 4 protocole : localiser les sondes restantes par fichier, compléter cartographie.
   - `README.md` : documenter la feature bench (cf. section dédiée ci-dessous).
 
