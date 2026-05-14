@@ -283,7 +283,7 @@
 
 ---
 
-### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[MIS À JOUR post-réorg]`
+### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[MIS À JOUR post-session JSONL]`
 
 - **Préconditions dures** :
   - B-03 livré et validé ✅
@@ -317,13 +317,47 @@
   - **Métriques de référence** : `staleness_slow avg=233–289 ms / max=300–445 ms` en régime nominal.
 
   **B-04c — Dégradation FPS session longue** :
-  - **Statut** : ⚠️ **non clôturé.** Cleanup logs B-04b appliqué, validation > 30 s non effectuée.
-  - FPS observé : oscille 44–204 (forte variance). Corrélation probable avec présence/absence de masks actifs (C=4 → FPS bas, C=0 → FPS haut).
-  - **Hypothèse principale** : surcoût floutage + fast tracker sur masks actifs — à confirmer par profilage.
-  - **Actions restantes** :
-    1. Confirmer que `[FAST-APPLY]` et `ZOMBIE-SUSPECT` sont bien en DEBUG sur session live.
-    2. Session de validation > 30 s avec `dt_cap=0.35` — mesurer variance FPS **séparément** scène avec/sans masks.
-    3. Si FPS toujours instable (variance > 15% à charge constante) : profilage cProfile / py-spy.
+  - **Statut** : ⚠️ **non clôturé.**
+
+- **Symptôme** :
+  - **Symptôme initial (pré-instrumentation B-04b)** : FPS oscille 44–204 (forte variance). Corrélation supposée avec présence/absence de masks actifs (C=4 → FPS bas, C=0 → FPS haut).
+  - **Symptôme confirmé (session JSONL post-B-04b)** : FPS main loop 30–42 fps (régime nominal), pics 67–72 fps (régime allégé). La fourchette `44–204` du symptôme initial est **caduque** — résultait d'une mesure agrégée non fiable avant instrumentation bench dédiée.
+
+- **Hypothèse principale (plan original)** : ~~surcoût floutage + fast tracker sur masks actifs~~ → **INVALIDÉE par session JSONL.**
+  - Les corrélations observées (cf. tableau d'audit ci-dessous) ne mettent pas en évidence de surcoût dominant sur le couple floutage / fast tracker à charge masks active.
+  - **Nouvelle hypothèse à formuler** lors de l'audit fichier-par-fichier (étape 4 protocole) — pas de pré-engagement avant données.
+
+- **Instrumentation bench posée (B-04b)** :
+  - `bench.gauge("masks_confirmed/pending/lost")` — `Tracker.tick()`, chaque frame.
+  - `bench.probe("staleness_slow_ms")`, `bench.count("staleness_capped")` — `motion.predict_position()`.
+  - `bench.count("frames")`, `bench.count("masks_total")` — `main.py`, chaque frame.
+  - **[ajout post-B-04b]** `bench.timer("fast_wakeup_lag")` — `FastTrackThread`, mesure latence wakeup.
+  - **[ajout post-B-04b]** `bench.count("fast_stale_skipped")` — `FastTrackThread`, branche stale skip.
+  - **[ajout post-B-04b]** `bench.count("fast_ncc_confirmed")` — `FastTrackThread`, validation NCC réussie.
+  - **[ajout post-B-04b]** `bench.timer("capture_wait")` — boucle capture, attente frame source.
+
+- **Export JSONL — format normalisé (étape 3 validée)** :
+  - **Deux fichiers** :
+    - `bench_frame.jsonl` — 1 objet/frame (granularité maximale).
+    - `bench_agg.jsonl` — 1 objet/intervalle N secondes, agrégats min/max/p50/p95.
+  - **Contenu** : défini fichier par fichier après audit des fonctions principales du workflow (étape 4 protocole, en cours).
+  - **Format** : JSON-Lines (robustesse crash).
+
+- **Protocole de validation** :
+  1. ✅ Audit `bench.py` ↔ README terminé.
+  2. ✅ Instrumentation B-04b posée.
+  3. ✅ Format normalisé JSONL défini.
+  4. ⏳ Audit contenu fichiers par fichier (fonctions principales workflow → sondes retenues) — **repoussé**, à reprendre après exploitation session JSONL.
+     4bis. ✅ Session JSONL réelle collectée et analysée (session post-B-04b) — invalidation hypothèse floutage/fast, requalification fourchette FPS.
+  5. ⏳ Session > 30 s — variance FPS mesurée **séparément** scène avec/sans masks actifs.
+  6. ⏳ Si variance > 15% à charge constante → profilage cProfile / py-spy.
+
+- **Dettes à solder avant clôture** :
+  - `bench.py` : ajouter `snapshot_and_reset()` pour agrégats périodiques JSONL.
+  - Reprendre étape 4 protocole : localiser les sondes restantes par fichier, compléter cartographie.
+  - `README.md` : documenter la feature bench (cf. section dédiée ci-dessous).
+
+- **Bloque** : B-04d (scopé B-05), B-05, B-06.
 
   **B-04d — Burst faux positifs slow detector** :
   ⚠️ **Hors-scope B-04 — scopé en B-05.** Aucun changement.
@@ -338,16 +372,17 @@
 | `compute_predicted_rect` pure (#60)                   | ✅                                           |
 | Crash `KeyError get_and_reset_stats`                  | ✅ résolu                                    |
 | `capped_pct < 10%` régime nominal main loop ≥ 120 FPS | ✅ validé à `dt_cap=0.30`, confirmé à `0.35` |
-| `dt_cap` valeur définitive `0.35` appliquée           | ⚠️ pending config.yaml                       |
+| `dt_cap` valeur définitive `0.35` appliquée           | ✅ appliquée dans `config.yaml`              |
 | FPS stable > 30 s (variance < 15% à charge constante) | ⚠️ pending validation B-04c                  |
 | Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG       | ✅                                           |
 | Footage teleport tagué                                | ❌ précondition humaine non déclenchée       |
+| README.md alligner avec le code                       | ⏳ En cours                                  |
 
 ---
 
 - **Actions restantes avant fermeture B-04** :
-  1. Appliquer `dt_cap: 0.35` dans `config.yaml`.
-  2. Session > 30 s — confirmer FPS stable à charge constante (B-04c).
+  1. Appliquer `dt_cap: 0.35` dans `config.yaml`. ✅ fait.
+  2. Session > 30 s — confirmer FPS stable à charge constante (B-04c, via protocole Option C : audit bench → format normalisé → exécution).
   3. Déclencher footage teleport (précondition B-00b).
   4. Si les 3 critères ci-dessus sont verts → **fermer B-04, déverrouiller B-00b + B-05**.
 
@@ -362,6 +397,7 @@
   - Réouvrir B-04a sans régression observée explicite.
   - Embarquer B-04d dans B-04 — scopé B-05.
   - Extraire percentiles `dist` pour B-00b avant `dt_cap: 0.35` validé en session.
+  - **[AJOUT]** Lancer la session de validation B-04c avant que l'audit bench ↔ README ne soit clos et le format de restitution figé.
 
 ---
 

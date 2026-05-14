@@ -103,24 +103,70 @@ CaptureThread (worker daemon)
 
 ## Métriques bench
 
-| Sonde                | Type  | Description                               |
-| -------------------- | ----- | ----------------------------------------- |
-| `capture_wait`       | timer | Attente frame capturée                    |
-| `slow_poll`          | timer | Poll résultat DetectThread                |
-| `match`              | timer | Matching détections → tracker             |
-| `fast_poll`          | timer | Poll résultat FastTrackThread             |
-| `predict`            | timer | Tick tracker (predict + TTL + purge)      |
-| `blur`               | timer | Application blur + debug overlay          |
-| `frames`             | count | Nombre total de frames traitées           |
-| `masks_total`        | count | Nombre total de masques confirmés         |
-| `fast_wakeup_lag`    | probe | Délai dépôt frame → début traitement (ms) |
-| `fast_tick`          | timer | Tick complet FastTrack                    |
-| `fast_of_total`      | timer | Phase OF toutes views                     |
-| `fast_ncc_total`     | timer | Phase NCC + stale toutes views            |
-| `fast_ncc_confirmed` | count | Masques confirmés par NCC                 |
-| `fast_stale_used`    | count | Masques servis depuis état stale          |
-| `fast_mask_lost`     | count | Masques dépassant `max_stale_frames`      |
-| `send`               | timer | Publish frame vers SendThread             |
+Instrumentation centralisée via `core/bench.py` (activée par `debug.bench.enabled: true`).
+Quatre types de sondes : `timer` (durée), `count` (compteur), `probe` (valeur scalaire échantillonnée),
+`gauge` (valeur instantanée écrasée à chaque mesure).
+
+Export JSONL configurable via `debug.bench.jsonl.*` (per-frame, agrégé, mask, fast).
+
+### Sondes par fichier
+
+#### `main.py` — boucle principale
+
+| Sonde          | Type  | Description                          |
+| -------------- | ----- | ------------------------------------ |
+| `capture_wait` | timer | Attente frame capturée               |
+| `slow_poll`    | timer | Poll résultat DetectThread           |
+| `match`        | timer | Matching détections → tracker        |
+| `fast_poll`    | timer | Poll résultat FastTrackThread        |
+| `predict`      | timer | Tick tracker (predict + TTL + purge) |
+| `blur`         | timer | Application blur + debug overlay     |
+| `send`         | timer | Publish frame vers SendThread        |
+| `frames`       | count | Nombre total de frames traitées      |
+| `masks_total`  | count | Nombre total de masques confirmés    |
+
+#### `tracker/registry.py` — lifecycle masques
+
+| Sonde             | Type  | Description                         |
+| ----------------- | ----- | ----------------------------------- |
+| `masks_confirmed` | gauge | Nombre de masques en état CONFIRMED |
+| `masks_pending`   | gauge | Nombre de masques en état PENDING   |
+| `masks_lost`      | gauge | Nombre de masques en état LOST      |
+
+#### `tracker/motion.py` — prédiction inertielle
+
+| Sonde               | Type  | Description                                              |
+| ------------------- | ----- | -------------------------------------------------------- |
+| `staleness_slow_ms` | probe | Âge (ms) de la dernière détection slow au moment du tick |
+| `staleness_capped`  | count | Nombre de prédictions où `dt` a été plafonné à `dt_cap`  |
+
+#### `fast_track_thread.py` — tracking inter-frames
+
+| Sonde                    | Type  | Description                                                         |
+| ------------------------ | ----- | ------------------------------------------------------------------- |
+| `fast_ncc_ok`            | count | Masques confirmés par NCC                                           |
+| `fast_stale_skipped`     | count | Masques servis depuis état stale (NCC échoué, sous seuil max_stale) |
+| `fast_mask_lost`         | count | Masques dépassant `max_stale_frames`                                |
+| `fast_ncc_roi_too_small` | count | Appels NCC rejetés — ROI plus petite que le template                |
+
+#### Sondes restantes à localiser ⏳
+
+Audit fichier-par-fichier en cours (étape 4 protocole B-04) — sondes à confirmer pour :
+
+- `detect.py` — pipeline slow detector (geometry / refine / HSV / morpho).
+- `tracker/associator.py` — gates NCC, géo, continuité slow.
+- `core/blur.py` — coût floutage par ROI.
+
+### Configuration export JSONL
+
+| Clé YAML                    | Défaut | Description                              |
+| --------------------------- | ------ | ---------------------------------------- |
+| `debug.jsonl.per_frame`     | `true` | 1 ligne JSON / frame capturée            |
+| `debug.jsonl.aggregated`    | `true` | 1 ligne JSON / `agg_interval`            |
+| `debug.jsonl.mask`          | `true` | 1 ligne JSON / masque confirmé / frame   |
+| `debug.jsonl.agg_interval`  | `2.0`  | Secondes entre 2 lignes agrégées         |
+| `debug.jsonl.fast`          | `true` | Export sondes fast                       |
+| `debug.jsonl.fast_interval` | `1.0`  | Période d'agrégation des sondes fast (s) |
 
 ---
 
