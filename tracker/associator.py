@@ -11,7 +11,7 @@ from tracker.hasher import best_hash_similarity
 from tracker.models import Detection, TrackerConfig, MatchScore
 from tracker.motion import compute_predicted_rect
 
-log = logging.getLogger("associator")
+log = logging.getLogger("tracker.associator")
 
 # Coût prohibitif mais fini — Hungarian gère mieux qu'un +inf
 _GATED_COST = 1e6

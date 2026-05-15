@@ -4,7 +4,7 @@ import threading
 import time
 import numpy as np
 
-log = logging.getLogger("send_thread")
+log = logging.getLogger("threads.send_thread")
 
 class SendThread:
     """Envoie les frames à la vcam dans un thread séparé — double buffer zéro copie."""

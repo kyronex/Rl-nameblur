@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import numpy as np
 from capture.base import CaptureSource
 
-log = logging.getLogger("capture_thread")
+log = logging.getLogger("threads.capture_thread")
 
 class CaptureThread:
     """Capture en continu, la main loop prend la dernière frame sans bloquer."""

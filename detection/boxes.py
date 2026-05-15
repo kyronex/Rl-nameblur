@@ -6,7 +6,7 @@ from config import cfg
 from detection.tools import write_circles , write_rects , get_color
 from core.box import Box
 
-log = logging.getLogger("boxes")
+log = logging.getLogger("detection.boxes")
 
 # ── _extract_raw_boxes ──
 def _extract_raw_boxes(masked, params):

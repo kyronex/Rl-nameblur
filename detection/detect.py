@@ -9,7 +9,7 @@ from detection.boxes import process_channel
 from core.box import Box
 from bench import bench
 
-log = logging.getLogger("detect")
+log = logging.getLogger("detection.detect")
 
 # ── Cache kernels par scale ──
 _cache_by_scale = {}

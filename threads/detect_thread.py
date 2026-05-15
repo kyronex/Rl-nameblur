@@ -4,7 +4,7 @@ import time
 import logging
 from detection.detect import detect_plates
 
-log = logging.getLogger("detect_thread")
+log = logging.getLogger("threads.detect_thread")
 
 class DetectThread:
     """Slow detect — full frame, scale lent."""

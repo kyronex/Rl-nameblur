@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 from tracker.models import TrackerConfig
 
-log = logging.getLogger("registry")
+log = logging.getLogger("tracker.registry")
 
 class MaskRegistry:
     def __init__(self, config: TrackerConfig):

@@ -3,7 +3,7 @@ import logging
 import cv2
 from config import cfg
 
-log = logging.getLogger("mask_manager")
+log = logging.getLogger("core.mask_manager")
 
 # ═══════════════════════════════════════════════════════
 #  GÉOMÉTRIE

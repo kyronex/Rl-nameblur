@@ -3,7 +3,7 @@ import cv2
 import logging
 from config import cfg
 
-log = logging.getLogger("tools")
+log = logging.getLogger("detection.tools")
 
 # ── write_rects ──
 def write_rects(image, rects, color , thickness=2):

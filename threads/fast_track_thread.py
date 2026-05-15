@@ -12,7 +12,7 @@ from core.optical_flow import of_track
 from threads.fast_track_config import FastTrackConfig
 from bench import bench
 
-log = logging.getLogger("fast_track_thread")
+log = logging.getLogger("threads.fast_track_thread")
 
 class FastTrackThread:
     """
