@@ -53,7 +53,7 @@
 
 ---
 
-### L0.2 — Décisions transverses actées
+### L0.2 — Décisions transverses actées ✅ **Livré**
 
 - **T-1 (R6)** : 3 canaux JSONL :
   - `bench_frame_{session_id}.jsonl` (1 ligne / frame).
@@ -66,7 +66,7 @@
 
 ---
 
-### L0.3 — Migration config `debug.csv.*` → `debug.bench.*`
+### L0.3 — Migration config `debug.csv.*` → `debug.bench.*` ✅ **Livré**
 
 > **R9-2 acté** : remplacement complet de la structure v4. `debug.csv.*` supprimé (hard cut).
 
@@ -100,7 +100,7 @@ debug:
 
 ---
 
-### L0.4 — Schéma JSONL figé
+### L0.4 — Schéma JSONL figé ✅ **Livré**
 
 > **R9-3 acté** : ajout schéma `bench_fast` + nommage `session_id`.
 > ⚠️ **Schéma immuable** : toute évolution post-L0 = nouveau ticket.

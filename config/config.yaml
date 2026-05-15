@@ -205,4 +205,3 @@ debug:
       enabled: true
       path: "logs/json/bench_fast.jsonl"
       interval_s: 1.0 # Période entre deux snapshots fast (s)
-

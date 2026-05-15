@@ -190,6 +190,7 @@ class BenchJsonlWriter:
         """Sérialise + enqueue. Drop + sonde si queue pleine."""
         line = json.dumps(
             {
+                "schema_version": 1,
                 "ts": time.time(),
                 "mono": time.perf_counter(),
                 "session_id": self._session_id,

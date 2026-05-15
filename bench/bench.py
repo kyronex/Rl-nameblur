@@ -7,6 +7,38 @@ from datetime import datetime
 from config import cfg
 from bench.jsonl_writer import BenchJsonlWriter
 
+"""
+Bench — registre centralisé de métriques runtime (probes / counts / gauges).
+
+═══════════════════════════════════════════════════════════════════════════
+  DÉCISIONS TRANSVERSES VERROUILLÉES (Plan_Bench L0.2)
+═══════════════════════════════════════════════════════════════════════════
+
+T-1 — Canaux de sortie JSONL (3 fichiers distincts)
+───────────────────────────────────────────────────
+  • bench_agg.jsonl    : 1 ligne / intervalle agrégé (snapshot_all, cumulatif).
+  • bench_frame.jsonl  : 1 ligne / frame main loop  (snapshot_frame, différentiel).
+  • bench_fast.jsonl   : 1 ligne / intervalle fast  (snapshot_fast, sondes fast_*).
+  Chaque canal est piloté par un BenchJsonlWriter dédié, partageant un session_id commun calculé au boot (cf. _maybe_start_writers).
+
+T-2 — Convention de nommage des sondes
+──────────────────────────────────────
+  Format imposé : <domaine>_<action>[_<qualifieur>]
+    • <domaine>    : préfixe métier obligatoire (main_, tracker_, motion_,fast_, detect_, boxes_, mask_, registry_, bench_writer_).
+    • <action>     : verbe ou nom d'événement (tick, match, transition, ...).
+    • <qualifieur> : optionnel, précise la variante (_slow, _confirmed, ...).
+  Toute sonde sans préfixe domaine valide est considérée non conforme.
+  Le préfixe 'bench_writer_' est réservé aux auto-sondes des writers et exclu des snapshots métier (cf. _is_writer_probe).
+
+T-3 — Politique de rétention
+────────────────────────────
+  • snapshot_all()   : sémantique CUMULATIVE depuis start (jamais reset implicite). Destiné à bench_agg.jsonl.
+  • snapshot_frame() : sémantique DIFFÉRENTIELLE (vidange du buffer _frame_probes / _frame_counts à chaque appel).Destiné à bench_frame.jsonl.
+  • snapshot_fast()  : filtrage des sondes fast_* sur fenêtre glissante (history_window_s). Destiné à bench_fast.jsonl.
+  Le reset global (reset()) est réservé aux tests / redémarrages explicites.
+═══════════════════════════════════════════════════════════════════════════
+"""
+
 # ── Préfixes auto-sondes writer (à exclure des snapshots pour éviter la récursion observable) ──
 _WRITER_PROBE_PREFIX = "bench_writer_"
 
