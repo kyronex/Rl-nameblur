@@ -1,14 +1,16 @@
-# 📋 Plan de mise en œuvre séquencé — Post-audit B-04b (v4)
+# 📋 Plan v5 — Post-audit B-04b
 
-> **Objectif** : passer du backlog audité (60 sondes différées + 3 décisions transverses + 3 dettes legacy + 1 arbitrage structurel) à un système instrumenté, propre et prêt pour B-04c.
+> **Objectif** : passer du backlog audité à un système instrumenté, propre et prêt pour B-04c.
 >
 > **Principe directeur** : séquentialité stricte, chaque lot indépendant testable, rollback possible à chaque borne. Aucun lot ne démarre tant que le précédent n'est pas validé.
 >
-> **Arbitrages v3 → v4** :
+> **Arbitrages v4 → v5** :
 >
-> - **Option C de sortie JSONL pleinement spécifiée** : 2 fichiers (`bench_frame.jsonl` + `bench_agg.jsonl`), lignes structurées **par domaine** via préfixe de nommage T-2.
-> - Schéma JSON figé pour L0 (cf. § L0.4).
-> - `agg_interval` exposé en config (défaut : 1.0 s).
+> - **3 canaux JSONL** (`bench_frame` + `bench_agg` + `bench_fast`) — R6 acté.
+> - Config `debug.bench.*` restructurée avec `writer.*`, `queue_maxsize`, `shutdown_timeout_s`, `session_id_format` — R6 acté.
+> - Schéma JSONL enrichi : nommage `session_id` + schéma `bench_fast` — R9-3 acté.
+> - Sondes L3.8 / L3.9 conditionnées à un audit code base — R9-4 / R9-5 actés.
+> - Harmonisation noms sondes `registry_*` — R9-6 acté.
 
 ---
 
@@ -17,13 +19,13 @@
 | Lot    | Scope                                                               | Effort  | Précondition           |
 | ------ | ------------------------------------------------------------------- | ------- | ---------------------- |
 | **L0** | Fondations transverses (API bench + schéma JSON + migration config) | ~2 h 30 | Audit B-04b clôturé ✅ |
-| **L1** | Arbitrage structurel : `created_ts` natif sur `Mask`                | ~30 min | L0                     |
+| **L1** | Arbitrage structurel : `created_ts` natif sur `Mask`                | ~30 min | L0 ✅                  |
 | **L2** | Purge dettes legacy (3 blocs + arbitrage `tracker.stats()`)         | ~1 h    | L1                     |
-| **L3** | Déploiement 60 sondes différées (par fichier)                       | ~3 h    | L2                     |
+| **L3** | Déploiement sondes différées (par fichier) + audit R9-4/R9-5        | ~4 h    | L2                     |
 | **L4** | Validation intégration (smoke test 60 s)                            | ~30 min | L3                     |
 | **L5** | Livraison B-04b : récap consolidé + bascule B-04c                   | ~30 min | L4                     |
 
-**Effort total estimé** : ~8 h, étalable sur 2 sessions.
+**Effort total estimé** : ~9 h, étalable sur 2–3 sessions.
 
 ---
 
@@ -31,395 +33,479 @@
 
 > ⚠️ **Lot critique** : modifie l'API `bench`, la structure config et fige le schéma JSONL. Tout ce qui suit dépend de ces fondations. À traiter en premier, en un seul commit atomique.
 
-### L0.1 — API `bench` : `snapshot_all()` + `snapshot_frame()`
+### L0.1 — API `bench` : `snapshot_frame()` + `snapshot_all()` + writer JSONL
 
 - **Fichier** : `bench.py`
 - **Actions** :
-  - `snapshot_frame() -> dict[str, dict]` : snapshot **par frame** destiné à `bench_frame.jsonl`. Structure groupée par domaine.
-  - `snapshot_all() -> dict[str, dict]` : snapshot **glissant cumulatif** depuis start, destiné à `bench_agg.jsonl`. Structure groupée par domaine.
+  - `snapshot_frame() -> dict[str, dict]` : snapshot **par frame** → `bench_frame_{session_id}.jsonl`.
+  - `snapshot_all() -> dict[str, dict]` : snapshot **cumulatif glissant** → `bench_agg_{session_id}.jsonl`.
+  - `snapshot_fast() -> dict[str, dict]` : snapshot **dédié FastTrackThread** → `bench_fast_{session_id}.jsonl`.
+  - **3 writers JSONL** : threads dédiés, queue partagée bornée (`queue_maxsize`), flush ligne par ligne, rotation par `session_id`, shutdown propre (`shutdown_timeout_s`).
 - **Contrat** :
   - Thread-safe (lock interne).
   - Idempotent sur snapshot vide (retourne `{}` ou domaines vides explicitement).
-  - Pas de reset implicite — la sémantique cumulative est explicite.
+  - Pas de reset implicite — sémantique cumulative explicite pour `snapshot_all()`.
   - Groupement par domaine dérivé du **préfixe de nommage T-2** (`<domaine>_<action>[_<qualifieur>]` → domaine = premier segment).
-- **Validation** : tests unitaires (snapshot vide, snapshot non-vide, concurrence basique, cohérence groupement par domaine).
+  - Drop JSONL loggué WARNING si queue pleine.
+  - Snapshot dynamique : liste sondes figée au premier `flush()` de la session (R1).
+  - Sondes sans données dans la fenêtre → clé omise de la ligne JSONL (R2).
+- **Validation** : tests unitaires (snapshot vide, snapshot non-vide, concurrence basique, cohérence groupement par domaine, drop queue pleine, shutdown propre).
+
+---
 
 ### L0.2 — Décisions transverses actées
 
-- **T-1 (Option C)** : 2 fichiers JSONL en sortie bench :
-  - `bench_frame.jsonl` (1 ligne / frame).
-  - `bench_agg.jsonl` (1 ligne / `agg_interval`).
-- **T-2 (nommage sondes)** : convention verrouillée `<domaine>_<action>[_<qualifieur>]`. Cette convention **conditionne le groupement JSON** (cf. L0.4).
-- **T-3 (rétention)** : cumulatif depuis start pour `snapshot_all()` ; snapshot frame indépendant pour `snapshot_frame()`.
-- **Fichiers touchés** : `bench.py`, `main.py` (consommateur des deux snapshots).
+- **T-1 (R6)** : 3 canaux JSONL :
+  - `bench_frame_{session_id}.jsonl` (1 ligne / frame).
+  - `bench_agg_{session_id}.jsonl` (1 ligne / `agg_interval`).
+  - `bench_fast_{session_id}.jsonl` (1 ligne / `fast.interval_s`).
+- **T-2 (nommage sondes)** : convention verrouillée `<domaine>_<action>[_<qualifieur>]`. Conditionne le groupement JSON.
+- **T-3 (rétention)** : cumulatif depuis start pour `snapshot_all()` et `snapshot_fast()` ; snapshot frame indépendant pour `snapshot_frame()`.
+- **T-4 (writers)** : 3 threads dédiés, `queue_maxsize` et `shutdown_timeout_s` communs, issus de `debug.bench.writer.*`.
+- **Fichiers touchés** : `bench.py`, `main.py`.
 
-### L0.3 — Migration config `debug.csv.*` → `debug.bench.jsonl.*`
+---
 
-> 📦 **Décision actée n°3** : alignement de la nomenclature config avec l'Option C.
+### L0.3 — Migration config `debug.csv.*` → `debug.bench.*`
+
+> **R9-2 acté** : remplacement complet de la structure v4. `debug.csv.*` supprimé (hard cut).
 
 - **Fichier** : `config.yaml`
 - **Avant** : `debug.csv.*` (legacy mono-fichier).
 - **Après** :
 
-  ```yaml
-  debug:
-    bench:
-      jsonl:
-        per_frame:
-          enabled: true
-          path: "logs/bench_frame.jsonl"
-        aggregated:
-          enabled: true
-          path: "logs/bench_agg.jsonl"
-          agg_interval: 1.0 # secondes
-  ```
+```yaml
+debug:
+  bench:
+    writer:
+      path: "logs/"
+      session_id_format: "%Y%m%d_%H%M%S"
+      queue_maxsize: 10000
+      shutdown_timeout_s: 2.0
+    frame:
+      enabled: true
+      include_masks: true
+    agg:
+      enabled: true
+      interval_s: 1.0
+    fast:
+      enabled: true
+      interval_s: 1.0
+```
 
-- **Validation** : démarrage application sans crash, fichiers créés au chemin attendu, hot-reload du chemin testé.
+- **Validation** :
+  - Démarrage sans crash.
+  - 3 fichiers `bench_{frame|agg|fast}_{session_id}.jsonl` créés dans `writer.path`.
+  - Aucune écriture CSV résiduelle.
 
-### L0.4 — Schéma JSONL figé (Option C)
+---
 
-> 🔒 **Schéma normatif** : toute évolution ultérieure passe par un nouveau ticket.
+### L0.4 — Schéma JSONL figé
 
-**`bench_frame.jsonl`** — 1 ligne / frame :
+> **R9-3 acté** : ajout schéma `bench_fast` + nommage `session_id`.
+> ⚠️ **Schéma immuable** : toute évolution post-L0 = nouveau ticket.
+
+#### `bench_frame_{session_id}.jsonl` — 1 ligne / frame
 
 ```json
 {
-  "ts": 1234567.890,
+  "ts": 1713000000.123,
   "frame_id": 42,
-  "main":     { "loop_total_ms": 12.3, "frame_dropped": 0, "snapshot_build_ms": 0.4, ... },
-  "tracker":  { "apply_fast_direct_ms": 0.8, "fast_applied": 3, "match_score_p50": 0.72, ... },
-  "registry": { "masks_confirmed": 4, "masks_pending": 1, "masks_lost": 0, ... },
-  "motion":   { "velocity_magnitude": 15.2, "dead_zone_hit": 0, ... },
-  "detect":   { "detect_pipeline_ms": 5.2, ... },
-  "boxes":    { "boxes_pipeline_ms": 4.1, "boxes_n_final": 2, "boxes_n_raw": 8, ... },
-  "fast":     { "fast_ncc_score": 0.81, "fast_hot_reload": 0, ... },
-  "mask":     { "mask_age_s": 1.4, ... }
+  "main": {
+    "capture_wait_ms": 4.2,
+    "slow_poll_ms": 12.1,
+    "match_ms": 0.8,
+    "fast_poll_ms": 0.3,
+    "predict_ms": 0.5,
+    "blur_ms": 1.2,
+    "send_ms": 0.4,
+    "frames_total": 42
+  },
+  "tracker": {
+    "masks_total": 3,
+    "masks_confirmed": 2,
+    "masks_pending": 1,
+    "masks_lost": 0
+  },
+  "detect": {
+    "slow_detections": 4,
+    "slow_duration_ms": 11.8
+  },
+  "masks": [
+    {
+      "mask_id": "abc123",
+      "state": "CONFIRMED",
+      "created_ts": 1713000000.0,
+      "lifetime_s": 0.123
+    }
+  ]
 }
 ```
 
-**`bench_agg.jsonl`** — 1 ligne / `agg_interval` :
+#### `bench_agg_{session_id}.jsonl` — 1 ligne / `interval_s`
 
 ```json
 {
-  "ts": 1234568.000,
+  "ts": 1713000001.0,
   "window_s": 1.0,
-  "main":     { "loop_total_ms_p50": 11.8, "loop_total_ms_p95": 18.2, "frames_total": 60, ... },
-  "tracker":  { "fast_applied_total": 87, "match_score_p50": 0.72, "match_score_p95": 0.91, ... },
-  "registry": { "mask_lifetime_s_p50": 1.4, "mask_created_rate": 3.1, ... },
-  "motion":   { ... },
-  "detect":   { ... },
-  "boxes":    { ... },
-  "fast":     { ... },
-  "mask":     { ... }
+  "main": {
+    "fps_mean": 62.3,
+    "fps_p5": 48.1,
+    "fps_p95": 74.2,
+    "capture_wait_ms_mean": 4.1,
+    "blur_ms_mean": 1.3
+  },
+  "tracker": {
+    "registry_create_total": 2,
+    "registry_expire_total": 1,
+    "masks_confirmed_mean": 1.8
+  },
+  "motion": {
+    "motion_dt_ms_mean": 16.2,
+    "staleness_capped_total": 0
+  },
+  "detect": {
+    "slow_detections_total": 18,
+    "slow_duration_ms_mean": 11.5
+  }
 }
 ```
 
-**Règles de groupement** :
+#### `bench_fast_{session_id}.jsonl` — 1 ligne / `fast.interval_s`
 
-| Préfixe sonde                                             | Domaine JSON |
-| --------------------------------------------------------- | ------------ |
-| `loop_*`, `frame_*`, `snapshot_*`, `give_frame_*`         | `main`       |
-| `apply_*`, `match_*`, `fast_applied`, `tracker_*`         | `tracker`    |
-| `masks_*`, `mask_lifetime_*`, `mask_created_*`            | `registry`   |
-| `velocity_*`, `dead_zone_*`, `predicted_*`, `staleness_*` | `motion`     |
-| `detect_*`                                                | `detect`     |
-| `boxes_*`                                                 | `boxes`      |
-| `fast_*`                                                  | `fast`       |
-| `mask_age_*`, `mask_*` (instance)                         | `mask`       |
+```json
+{
+  "ts": 1713000001.0,
+  "window_s": 1.0,
+  "fast": {
+    "fast_wakeup_lag_ms_mean": 2.1,
+    "fast_tick_ms_mean": 3.4,
+    "fast_of_total": 120,
+    "fast_ncc_total": 118,
+    "fast_ncc_confirmed": 110,
+    "fast_stale_used": 3,
+    "fast_mask_lost": 1,
+    "fast_poll_ms_mean": 0.3
+  }
+}
+```
 
-**Domaines vides** : omis de la ligne JSON (pas de clé `"motion": {}` vide).
+- **Validation** : parsing de chaque schéma par un script de test dédié, vérification clés obligatoires présentes.
+
+---
 
 ### 🔒 Borne L0
 
-- ✅ `snapshot_frame()` + `snapshot_all()` livrés, testés unitairement.
-- ✅ `config.yaml` migré, anciens chemins `debug.csv.*` supprimés.
-- ✅ Schéma L0.4 figé et documenté dans `bench.py` (docstring module).
-- ✅ Smoke run 10 s : 2 fichiers créés, lignes parsables, groupement par domaine correct.
+- ✅ `snapshot_frame()` / `snapshot_all()` / `snapshot_fast()` implémentées et testées.
+- ✅ 3 writers JSONL opérationnels (queue bornée, drop loggué, shutdown propre).
+- ✅ Config `debug.bench.*` en place, `debug.csv.*` absent.
+- ✅ Schéma L0.4 validé par script de parsing.
+- ✅ Aucune régression démarrage application.
 - ✅ Tag git `b04b-L0`.
 
 ---
 
-## 🟣 Lot L1 — Arbitrage structurel : `created_ts` natif
+## 🟢 Lot L1 — Arbitrage structurel `created_ts`
+
+> **R7 acté** : `created_ts: float` natif sur `Mask`, set unique dans `MaskRegistry.create()`, exposé dans `to_dict()`.
+
+### L1.1 — Champ `created_ts` sur `Mask`
 
 - **Fichier** : `core/mask.py`
-- **Action** : ajout champ `created_ts: float` dans le dataclass `Mask`, initialisé à la création (Option A actée en audit).
-- **Conséquence** : `registry.py` consomme `mask.created_ts` au lieu de structures parallèles (purge associée traitée en L2).
-- **Validation** : test unitaire création `Mask`, `created_ts` cohérent avec `time.monotonic()`.
+- **Action** :
+
+```python
+@dataclass
+class Mask:
+    # ... champs existants ...
+    created_ts: float = field(default_factory=time.perf_counter)
+```
+
+- **Contrat** :
+  - Set **une seule fois** à la création dans `MaskRegistry.create()` via `perf_counter()`.
+  - Jamais modifié après création.
+  - Exposé dans `to_dict()` : `"created_ts": self.created_ts`.
+- **Validation** : test unitaire (valeur non nulle, non modifiable après création, présente dans `to_dict()`).
+
+### L1.2 — Intégration `MaskRegistry.create()`
+
+- **Fichier** : `tracker/registry.py`
+- **Action** : s'assurer que `create()` passe `created_ts=time.perf_counter()` à la construction du `Mask`. Supprimer tout calcul de `created_ts` hors de ce point.
+- **Validation** : test unitaire (deux masks créés à des ts différents → `created_ts` distincts et ordonnés).
+
+---
 
 ### 🔒 Borne L1
 
-- ✅ `Mask.created_ts` natif.
-- ✅ Consommateurs migrés.
+- ✅ `created_ts` présent sur `Mask`, set dans `registry.create()` uniquement.
+- ✅ `to_dict()` expose `created_ts`.
+- ✅ Tests unitaires L1.1 + L1.2 verts.
 - ✅ Tag git `b04b-L1`.
 
 ---
 
-## 🟠 Lot L2 — Purge dettes legacy
+## 🟡 Lot L2 — Purge dettes legacy
 
-### L2.1 — Purge `_motion_stats` / `get_and_reset_stats()`
+> ⚠️ **Purge destructive** : 4 blocs supprimés. Commit atomique par dette, rollback par tag L1.
 
-- **Fichier** : `motion.py`
-- **Action** : suppression intégrale du dict `_motion_stats`, de `get_and_reset_stats()` et de tous ses imports/appels (notamment `main.py`).
-- **Précondition** : sondes motion (L3.5) seront posées via `bench` direct → pas de double instrumentation.
+### L2.1 — Purge `_motion_stats` + `get_and_reset_stats()`
+
+- **Fichier** : `tracker/motion.py`
+- **Action** : supprimer `_motion_stats` dict interne et la méthode `get_and_reset_stats()`. Les sondes motion sont désormais portées par `bench.py` (L3.6).
+- **Validation** : aucun appel résiduel dans le codebase (`grep -r "get_and_reset_stats"`).
 
 ### L2.2 — Purge `frame_count` / `fps_timer` legacy
 
 - **Fichier** : `main.py`
-- **Action** : suppression du compteur FPS legacy, remplacement par lecture `bench` (sonde `loop_total` + agrégat).
+- **Action** : supprimer les variables `frame_count`, `fps_timer` et leurs usages. Remplacer par lectures directes des sondes bench (`frames_total`, `fps_mean`).
+- **Validation** : `grep -r "frame_count\|fps_timer"` → zéro résultat hors commentaires.
 
-### L2.3 — Arbitrage `tracker.stats()`
+### L2.3 — Purge `_b01_stats`
 
-- **Fichier** : `tracker.py`
-- **Action différée au moment de L2** : audit ciblé des consommateurs `tracker.stats()` :
-  - Si aucun consommateur productif → **suppression**.
-  - Sinon → **scopé en P-04** (optim ultérieure), tracé explicitement.
-- **Livrable obligatoire** : décision écrite dans le commit + Plan_Tracker.md.
+- **Fichier** : à confirmer par audit (probable `tracker/tracker.py` ou `associator.py`).
+- **Action** : supprimer le bloc `_b01_stats` et ses points d'injection. Dette tracée explicitement si localisation incertaine.
+- **Validation** : `grep -r "_b01_stats"` → zéro résultat.
 
-### L2.4 — Purge bloc `_b01_stats` dans `registry.py`
+### L2.4 — Arbitrage `tracker.stats()`
 
-- **Fichier** : `tracker/registry.py`
-- **Action** : suppression du dict, compteurs, logs, imports, commentaires associés à `_b01_stats` (legacy B-01).
+- **Fichier** : `tracker/tracker.py`
+- **Action** : supprimer `tracker.stats()` et ses appels dans `main.py`. Les métriques exposées sont désormais portées par les sondes `registry_*` et `motion_*` de L3.
+- **Validation** : `grep -r "tracker\.stats\(\)"` → zéro résultat.
+
+---
 
 ### 🔒 Borne L2
 
-- ✅ `_motion_stats` et `get_and_reset_stats()` supprimés.
-- ✅ `frame_count`/`fps_timer` legacy retirés de `main.py`.
-- ✅ Décision `tracker.stats()` tracée explicitement (supprimé OU scopé P-04).
-- ✅ Bloc `_b01_stats` intégralement purgé de `registry.py`.
-- ✅ `main.py` lit exclusivement via `bench`.
-- ✅ Smoke test : HUD FPS toujours cohérent.
+- ✅ 4 dettes legacy purgées.
+- ✅ Zéro appel résiduel (grep validé pour chaque dette).
+- ✅ Démarrage application sans crash post-purge.
 - ✅ Tag git `b04b-L2`.
 
 ---
 
-## 🔴 Lot L3 — Déploiement des 60 sondes différées
+## 🔴 Lot L3 — Déploiement sondes + audit R9-4/R9-5
 
-> 📐 **Stratégie** : déploiement organisé **par fichier** (9 sous-lots logiques L3.1 → L3.9). La granularité des commits est laissée à l'équipe.
->
-> **Contrainte non-négociable** : l'intégralité de L3 doit être livrée avant la borne L4.
->
-> **Ordre recommandé** : **L3.8 en premier** (lève 3 suspensions : L3.3, L3.4, L3.6).
->
-> **Légende statuts** :
->
-> - 🔒 Différé : à poser pendant L3.
-> - 🟡 Suspendu : conditionné à l'audit L3.8.
-> - 🟢 Statu quo : conservé, aucune action.
-> - ❌ Écarté : non retenu (motif tracé).
+> **L3 atomique vis-à-vis de L4** : L3.1 → L3.9 tous livrés avant L4.
+> **L3.8 prioritaire** : lève 3 suspensions (L3.3, L3.4, L3.6).
 
 ---
 
-### L3.1 — `main.py` (5 sondes)
+### 🔍 Audit R9-4 / R9-5 — Pré-requis bloquant L3.8 et L3.9
 
-| Sonde             | Type  | Emplacement                                                               | Domaine JSON |
-| ----------------- | ----- | ------------------------------------------------------------------------- | ------------ |
-| `frame_dropped`   | count | §1 — branche `if frame is None` avant `continue`                          | `main`       |
-| `give_frame_slow` | count | §2 — après `detector.give_frame(...)`                                     | `main`       |
-| `give_frame_fast` | count | §2 — après `fast_tracker.give_frame_and_views(...)` (si snapshot)         | `main`       |
-| `snapshot_build`  | timer | §2 — englobant `snapshot = [...]` + `views = [...]`                       | `main`       |
-| `loop_total`      | timer | Englobant l'itération complète `while True:` (de `maybe_reload` à fin §8) | `main`       |
+> **Déclencheur** : avant toute implémentation de L3.8 (`fast_track_thread.py`) et L3.9 (`core/mask.py`), un audit code base est **obligatoire**.
 
-**Existant préservé** : 9 sondes conformes au plan.
+#### Périmètre audit R9-4 (`fast_track_thread.py`)
 
-**Dettes legacy purgées** : traitées en L2.2.
+- Lister exhaustivement toutes les fonctions du fichier.
+- Pour chaque fonction : identifier les points de mesure pertinents (entrée, sortie, branche critique).
+- Produire la liste des 8 sondes avec : nom (`<domaine>_<action>[_<qualifieur>]`), type (`probe`/`count`/`gauge`), emplacement exact (fonction + ligne).
+- Vérifier l'absence de doublon avec les sondes `fast_*` déjà présentes dans le schéma L0.4.
 
----
+#### Périmètre audit R9-5 (`core/mask.py`)
 
-### L3.2 — `tracker/registry.py` (7 sondes)
+- Lister toutes les méthodes publiques et propriétés calculées.
+- Identifier les métriques cycle de vie exposables (transitions d'état, durées).
+- Produire la liste des 6 sondes avec : nom, type, emplacement exact.
+- Vérifier cohérence avec `created_ts` L1 et `mask_lifetime_s` déjà dans le schéma L0.4.
 
-> **Précondition dure** : L1 (`Mask.created_ts` natif) + L2.4 (purge `_b01_stats`).
+#### Livrable audit
 
-| Sonde                   | Type  | Emplacement                                                       | Domaine JSON |
-| ----------------------- | ----- | ----------------------------------------------------------------- | ------------ |
-| `masks_confirmed`       | probe | Fin `tick()` — `len([m for m in masks if m.state==CONFIRMED])`    | `registry`   |
-| `masks_pending`         | probe | Fin `tick()` — équivalent PENDING                                 | `registry`   |
-| `masks_lost`            | probe | Fin `tick()` — équivalent LOST                                    | `registry`   |
-| `mask_created_rate`     | count | Branche création nouveau `Mask`                                   | `registry`   |
-| `mask_expired_rate`     | count | Branche suppression mask (TTL expiré)                             | `registry`   |
-| `mask_lifetime_s`       | probe | À la suppression — `now - mask.created_ts`                        | `registry`   |
-| `mask_state_transition` | count | Toute transition d'état (PENDING→CONFIRMED, CONFIRMED→LOST, etc.) | `registry`   |
+```text
+┌─────────────────────────────────────────────────────┐
+│ AUDIT R9-4 : fast_track_thread.py                   │
+│ Sondes retenues : 8                                 │
+│ [liste nom / type / emplacement]                    │
+├─────────────────────────────────────────────────────┤
+│ AUDIT R9-5 : core/mask.py                           │
+│ Sondes retenues : 6                                 │
+│ [liste nom / type / emplacement]                    │
+└─────────────────────────────────────────────────────┘
+```
 
-**Statu quo 🟢** : sondes existantes conformes (cf. récap audit étape 3).
-
----
-
-### L3.3 — `tracker/tracker.py` (8 sondes)
-
-> **Suspension levée par L3.8** : les branches `apply_detections_fast` deviennent instrumentables une fois l'audit `FastTrackThread` consolidé.
-
-| Sonde                         | Type  | Emplacement                              | Domaine JSON |
-| ----------------------------- | ----- | ---------------------------------------- | ------------ |
-| `apply_detections_slow`       | timer | Englobant la méthode                     | `tracker`    |
-| `apply_detections_fast`       | timer | Englobant la méthode (🟡 levé par L3.8)  | `tracker`    |
-| `match_score_slow`            | probe | Boucle d'association slow — score retenu | `tracker`    |
-| `match_score_fast`            | probe | Boucle d'association fast — score retenu | `tracker`    |
-| `tracker_unmatched_dets_slow` | count | Détections slow non associées            | `tracker`    |
-| `tracker_unmatched_dets_fast` | count | Détections fast non associées            | `tracker`    |
-| `tracker_new_mask_from_slow`  | count | Création mask depuis détection slow      | `tracker`    |
-| `tracker_new_mask_from_fast`  | count | Création mask depuis détection fast      | `tracker`    |
+> ⚠️ **L3.8 et L3.9 ne démarrent pas tant que ce livrable n'est pas validé.**
 
 ---
 
-### L3.4 — `tracker/associator.py` (8 sondes)
+### L3.1 — Sondes `main.py` (8 sondes)
 
-> **Suspension levée par L3.8** : les branches `source="fast"` deviennent instrumentables.
-
-| Sonde                                      | Type  | Emplacement                                 | Domaine JSON |
-| ------------------------------------------ | ----- | ------------------------------------------- | ------------ |
-| `associator_iou_score`                     | probe | Calcul IoU par paire candidate              | `tracker`    |
-| `associator_dist_score`                    | probe | Calcul distance par paire candidate         | `tracker`    |
-| `associator_final_score_slow`              | probe | Score final source=slow                     | `tracker`    |
-| `associator_final_score_fast`              | probe | Score final source=fast (🟡 levé par L3.8)  | `tracker`    |
-| `associator_rejected_below_threshold_slow` | count | Paire rejetée seuil slow                    | `tracker`    |
-| `associator_rejected_below_threshold_fast` | count | Paire rejetée seuil fast (🟡 levé par L3.8) | `tracker`    |
-| `associator_pairs_evaluated`               | count | Nombre paires évaluées par tick             | `tracker`    |
-| `associator_pairs_accepted`                | count | Nombre paires acceptées par tick            | `tracker`    |
+| Sonde                  | Type  | Emplacement                             |
+| ---------------------- | ----- | --------------------------------------- |
+| `main_capture_wait_ms` | probe | boucle principale — attente frame       |
+| `main_slow_poll_ms`    | probe | boucle principale — poll detect thread  |
+| `main_match_ms`        | probe | boucle principale — appel associator    |
+| `main_fast_poll_ms`    | probe | boucle principale — poll fast thread    |
+| `main_predict_ms`      | probe | boucle principale — predict positions   |
+| `main_blur_ms`         | probe | boucle principale — rendu flou          |
+| `main_send_ms`         | probe | boucle principale — envoi frame         |
+| `main_frames_total`    | count | boucle principale — incrément par frame |
 
 ---
 
-### L3.5 — `tracker/motion.py` (5 sondes)
+### L3.2 — Sondes `tracker/registry.py` (5 sondes)
 
-> **Précondition dure** : L2.1 (purge `_motion_stats`) livré.
+> **R9-6 acté** : noms harmonisés `registry_*`.
 
-| Sonde                      | Type  | Emplacement                                                     | Domaine JSON |
-| -------------------------- | ----- | --------------------------------------------------------------- | ------------ |
-| `dead_zone_hit`            | count | `apply_detection()` — branche dead zone position (1ère branche) | `motion`     |
-| `velocity_reset_dt_slow`   | count | `apply_detection()` — branche `dt > config.dt_slow_max`         | `motion`     |
-| `velocity_reset_teleport`  | count | `apply_detection()` — branche `dist > config.teleport_thresh`   | `motion`     |
-| `velocity_magnitude`       | probe | `apply_detection()` post-clamp source=="slow", `sqrt(vx²+vy²)`  | `motion`     |
-| `predicted_clamped_screen` | count | `predict_position()` — si `x` ou `y` clampé aux bornes écran    | `motion`     |
-
-**Statu quo 🟢** : Logger `"motion"` inutilisé, commentaire `# Sondes bench (nouvelles)` — conservés.
-
-**Écartées ❌** : `apply_detection_duration` (doublon), `velocity_clamped_x/y/w/h` (non prioritaire), `predict_position_calls` (déductible), `damping_factor` (violation site unique), `dt_predict_ms` (doublon `staleness_slow_ms`), `predict_cold_start` (low value).
-
-**Existant** : 2 sondes B-04b conformes (`staleness_slow_ms`, `staleness_capped`).
+| Sonde                | Type  | Emplacement         |
+| -------------------- | ----- | ------------------- |
+| `registry_create`    | count | `create()`          |
+| `registry_expire`    | count | `expire()`          |
+| `registry_confirmed` | gauge | `tick_and_expire()` |
+| `registry_lost`      | gauge | `tick_and_expire()` |
+| `registry_pending`   | gauge | `tick_and_expire()` |
 
 ---
 
-### L3.6 — `detection/detect.py` (3 sondes)
+### L3.3 — Sondes `tracker/tracker.py` (6 sondes)
 
-> **Arbitrage `ncc_score` tranché par L3.8** : sonde portée par `fast_track_thread.py`, pas dupliquée ici.
-
-| Sonde                 | Type  | Emplacement                            | Domaine JSON |
-| --------------------- | ----- | -------------------------------------- | ------------ |
-| `detect_pipeline`     | timer | Englobant `detect_plates()`            | `detect`     |
-| `detect_n_plates_in`  | probe | Entrée fonction — `len(plates_input)`  | `detect`     |
-| `detect_n_plates_out` | probe | Sortie fonction — `len(plates_output)` | `detect`     |
-
----
-
-### L3.7 — `detection/boxes.py` — `process_channel` (10 sondes)
-
-| Sonde                         | Type  | Emplacement                                           | Domaine JSON |
-| ----------------------------- | ----- | ----------------------------------------------------- | ------------ |
-| `boxes_pipeline`              | timer | Englobant tout `process_channel`                      | `boxes`      |
-| `boxes_validate_bg`           | timer | Autour de `_validate_background`                      | `boxes`      |
-| `boxes_validate_text`         | timer | Autour de `_validate_text`                            | `boxes`      |
-| `boxes_n_raw`                 | probe | Après `_extract_raw_boxes` — `len(boxes)`             | `boxes`      |
-| `boxes_n_after_geometry`      | probe | Après `_filter_geometry` — `len(geometryed)`          | `boxes`      |
-| `boxes_n_after_validate_bg`   | probe | Après `_validate_background` — `len(validated_b)`     | `boxes`      |
-| `boxes_n_after_validate_text` | probe | Après `_validate_text` — `len(validated_t)`           | `boxes`      |
-| `boxes_n_after_bands`         | probe | Après `_filter_horizontal_bands` — `len(banded)`      | `boxes`      |
-| `boxes_n_after_alignment`     | probe | Après `_filter_horizontal_alignment` — `len(aligned)` | `boxes`      |
-| `boxes_n_final`               | probe | Après `_filter_perspective_gradient` — `len(plates)`  | `boxes`      |
-
-**Écartées ❌** : `boxes_extract_raw` / `boxes_adjust_resolve_1` / `boxes_split_wide` / `boxes_filter_bands` / `boxes_filter_alignment` / `boxes_filter_perspective` (couverts par `boxes_pipeline` + probes), `boxes_n_after_split` / `boxes_n_after_merge` (peu discriminants).
-
-**Existant** : 0 sonde.
+| Sonde                     | Type  | Emplacement                      |
+| ------------------------- | ----- | -------------------------------- |
+| `tracker_tick_ms`         | probe | `tick()` — durée totale          |
+| `tracker_detections_in`   | count | `tick()` — nb détections reçues  |
+| `tracker_masks_total`     | gauge | `tick()` — total masks actifs    |
+| `tracker_confirmed_total` | gauge | `get_confirmed_masks()`          |
+| `tracker_lost_total`      | gauge | `tick()` — masks en état LOST    |
+| `tracker_pending_total`   | gauge | `tick()` — masks en état PENDING |
 
 ---
 
-### L3.8 — `threads/fast_track_thread.py` (8 sondes) — **PIVOT**
+### L3.4 — Sondes `detect/detect.py` (5 sondes)
 
-> 🔑 **Sous-lot prioritaire** : son audit lève les suspensions L3.3 (`apply_detections_fast`) et L3.4 (branches `source="fast"` dans associator), et tranche le doublon `ncc_score` L3.6.
-
-- 8 sondes nouvelles + suppression sonde `fast_margin` (validée pour suppression en audit étape 9).
-- Inclut `fast_ncc_score` (résolution arbitrage transverse `ncc_score`).
-- Inclut `fast_hot_reload` (count) — alimente vérification L4.3.
-
-> Détail exhaustif des 8 sondes à reprendre depuis le récap d'audit étape 9 (`fast_track_thread.py`).
-
-**Domaine JSON** : `fast`.
+| Sonde                     | Type  | Emplacement                                  |
+| ------------------------- | ----- | -------------------------------------------- |
+| `detect_slow_duration_ms` | probe | `detect_plates()` — durée totale             |
+| `detect_slow_count`       | count | `detect_plates()` — nb détections retournées |
+| `detect_ncc_match_ms`     | probe | `ncc_match()` — durée                        |
+| `detect_ncc_score`        | probe | `ncc_match()` — score retourné               |
+| `detect_boxes_filtered`   | count | pipeline filtrage — boxes rejetées           |
 
 ---
 
-### L3.9 — `core/mask.py` (6 sondes)
+### L3.5 — Sondes `tracker/associator.py` (6 sondes)
 
-> **Précondition dure** : L1 (`created_ts` natif).
-> Détail exhaustif des 6 sondes à reprendre depuis le récap d'audit étape 10 (`core/mask.py`).
+| Sonde                       | Type  | Emplacement                                       |
+| --------------------------- | ----- | ------------------------------------------------- |
+| `associator_tick_ms`        | probe | `associate()` — durée totale                      |
+| `associator_matched`        | count | `associate()` — nb matches retenus                |
+| `associator_unmatched_det`  | count | `associate()` — détections non matchées           |
+| `associator_unmatched_mask` | count | `associate()` — masks non matchés                 |
+| `associator_score`          | probe | commit match — score final                        |
+| `associator_source`         | probe | commit match — labellisé `source` (`slow`/`fast`) |
 
-**Domaine JSON** : `mask`.
+---
 
-**Existant** : 0 sonde (dataclass pur, conforme).
+### L3.6 — Sondes `tracker/motion.py` (3 sondes)
+
+| Sonde                      | Type  | Emplacement                                     |
+| -------------------------- | ----- | ----------------------------------------------- |
+| `motion_dt_ms`             | probe | `predict_position()` — `dt` brut                |
+| `motion_staleness_slow_ms` | probe | `predict_position()` — staleness détection slow |
+| `motion_staleness_capped`  | count | `predict_position()` — branche dt saturé        |
+
+---
+
+### L3.7 — Sondes `capture/` (3 sondes)
+
+| Sonde              | Type  | Emplacement                             |
+| ------------------ | ----- | --------------------------------------- |
+| `capture_frame_ms` | probe | source active — durée acquisition frame |
+| `capture_drop`     | count | source active — frame nulle / timeout   |
+| `capture_source`   | gauge | `selector.py` — index source active     |
+
+---
+
+### L3.8 — Sondes `fast_track_thread.py` (8 sondes — **conditionnées à audit R9-4**)
+
+> ⚠️ **Ne pas implémenter avant livraison audit R9-4 validé.**
+
+| Sonde                | Type  | Emplacement                                |
+| -------------------- | ----- | ------------------------------------------ |
+| `fast_wakeup_lag_ms` | probe | `_worker()` — délai réveil thread          |
+| `fast_tick_ms`       | probe | `_worker()` — durée tick complet           |
+| `fast_of_total`      | count | `_worker()` — appels optical flow          |
+| `fast_ncc_total`     | count | `_ncc_on_roi()` — appels NCC               |
+| `fast_ncc_confirmed` | count | `_ncc_on_roi()` — NCC au-dessus seuil      |
+| `fast_stale_used`    | count | `_worker()` — masks stale utilisés         |
+| `fast_mask_lost`     | count | `_worker()` — masks perdus (stale dépassé) |
+| `fast_poll_ms`       | probe | `_worker()` — durée poll résultat          |
+
+> ✅ Vérification anti-doublon avec schéma L0.4 `bench_fast` requise lors de l'audit.
+
+---
+
+### L3.9 — Sondes `core/mask.py` (6 sondes — **conditionnées à audit R9-5**)
+
+> ⚠️ **Ne pas implémenter avant livraison audit R9-5 validé.**
+
+| Sonde                     | Type  | Emplacement                                                     |
+| ------------------------- | ----- | --------------------------------------------------------------- |
+| `mask_lifetime_s`         | probe | `to_dict()` ou point de lecture — durée vie depuis `created_ts` |
+| `mask_state_transition`   | count | setter état — transition PENDING→CONFIRMED→LOST                 |
+| `mask_confirm_latency_ms` | probe | transition CONFIRMED — `ts_confirmed - created_ts`              |
+| `mask_lost_latency_ms`    | probe | transition LOST — `ts_lost - created_ts`                        |
+| `mask_area_px`            | probe | création / update — aire ROI en pixels                          |
+| `mask_iou_history`        | probe | update — IoU avec prédiction motion                             |
+
+> ✅ Cohérence avec `created_ts` L1 et `mask_lifetime_s` schéma L0.4 requise lors de l'audit.
 
 ---
 
 ### 🔒 Borne L3
 
-- ✅ 60 sondes nouvelles actives (5 + 7 + 8 + 8 + 5 + 3 + 10 + 8 + 6 = **60**).
-- ✅ 26 sondes existantes préservées.
-- ✅ 1 sonde supprimée (`fast_margin`).
-- ✅ Bench JSONL contient les 85 sondes attendues sur session courte, **réparties dans les bons domaines JSON** (cf. L0.4).
-- ✅ Aucune régression FPS (delta < 5% — validé en L4).
-- ✅ Aucun sous-lot L3.x partiel : intégralité L3.1 → L3.9 livrée.
-- ✅ Suspensions L3.3 (`apply_detections_fast`) et L3.4 (branches `source="fast"`) tranchées via audit L3.8.
-- ✅ Arbitrage `ncc_score` (L3.6) tranché via L3.8.
+- ✅ Audit R9-4 + R9-5 livrés et validés avant L3.8 / L3.9.
+- ✅ 27 sondes actives L3.1→L3.7 implémentées.
+- ✅ 14 sondes L3.8 + L3.9 implémentées post-audit.
+- ✅ 3 fichiers JSONL produits par session, nommage `session_id` conforme.
+- ✅ `debug.csv.*` absent — aucune écriture CSV résiduelle.
+- ✅ Drop JSONL loggué WARNING si queue pleine.
+- ✅ Shutdown propre testé (SIGINT + fin normale).
+- ✅ Nommage T-2 respecté sur toutes les sondes.
+- ✅ Aucune régression smoke test.
 - ✅ Tag git `b04b-L3`.
 
 ---
 
-## 🟣 Lot L4 — Validation intégration (smoke test 60 s)
+## ⚫ Lot L4 — Validation intégration
 
 ### L4.1 — Smoke test 60 s
 
-- Lancer l'application en mode capture standard pendant **60 s exactement**.
-- Vérifier que **chaque** sonde déclarée émet au moins 1 sample (à l'exception de celles conditionnelles à un événement rare — à documenter dans le récap L5).
+- Lancer l'application sur session de référence (60 s).
+- Vérifier :
+  - 3 fichiers JSONL créés et alimentés en continu.
+  - Aucune ligne malformée (parser JSON ligne par ligne).
+  - Schéma L0.4 respecté (clés obligatoires présentes).
+  - Aucun WARNING drop queue.
+  - FPS stable (variance < 15% — critère B-04c).
+  - Aucune exception non gérée.
 
-### L4.2 — Sanity check métriques
+### L4.2 — Vérification non-régression
 
-- **FPS** : delta < 5% vs baseline pré-L3.
-- **Lifetime médian masks** : cohérent avec mesure B-02 (~1.5 s).
-- **Bursts CREATE/s** : cohérent avec instrumentation B-05 (déjà active).
-- **Aucune exception** dans les logs.
+- Comparer FPS moyen session L4 vs baseline pré-L0 (delta toléré < 5%).
+- Vérifier sondes `main_frames_total`, `main_blur_ms`, `main_capture_wait_ms` cohérentes avec baseline.
 
-### L4.3 — Validation hot-reload
-
-- Modifier 1 clé config, sauver `config.yaml`.
-- Vérifier que `FastTrackThread.maybe_reload()` log le reload sans erreur.
-- Vérifier que la sonde `fast_hot_reload` (L3.8) s'incrémente.
-
-### L4.4 — Validation sortie 2 fichiers JSONL (Option C)
-
-- Vérifier que `bench_frame.jsonl` reçoit 1 ligne / frame.
-- Vérifier que `bench_agg.jsonl` reçoit 1 ligne / `agg_interval`.
-- Vérifier **structure par domaine** : chaque ligne contient au moins les clés racine attendues (`ts`, `frame_id` pour frame ; `ts`, `window_s` pour agg) + ≥ 1 domaine peuplé.
-- Vérifier qu'aucun domaine vide n'est sérialisé (`"motion": {}` interdit).
-- Vérifier cohérence keys normalisées (T-1 / T-2 / L0.4).
+---
 
 ### 🔒 Borne L4
 
-- ✅ Toutes sondes émettent (ou sont documentées comme conditionnelles).
-- ✅ Aucune régression mesurable.
-- ✅ Hot-reload fonctionnel.
-- ✅ 2 fichiers JSONL bien alimentés, schéma L0.4 respecté.
+- ✅ 3 fichiers JSONL valides produits sur 60 s.
+- ✅ Schéma L0.4 validé parsing automatique.
+- ✅ FPS delta < 5% vs baseline.
+- ✅ Zéro WARNING drop queue sur session nominale.
 - ✅ Tag git `b04b-L4`.
 
 ---
 
 ## ⚪ Lot L5 — Livraison B-04b
 
-### L5.1 — Récap consolidé écrit
+### L5.1 — Récap consolidé
 
-- Produire le livrable markdown final de B-04b :
-  - Liste exhaustive des 85 sondes finales (nom, type, fichier, **domaine JSON**, justification).
-  - Liste des décisions transverses (3) appliquées (Option C / `snapshot_*` / migration config).
-  - **Schéma JSONL L0.4 figé** (annexe normative).
-  - Liste des dettes purgées (4 : `_motion_stats`, `frame_count/fps_timer`, `_b01_stats`, et `tracker.stats()` tracée explicitement).
-  - Liste des arbitrages structurels tranchés (1 : `created_ts` Option A).
-  - Liste des suspensions levées (2 : `apply_detections_fast` + branches `source="fast"` associator).
-  - Liste des sondes écartées avec motifs (référence audit par fichier).
-- **Destination** : `Plan_Tracker.md` (section B-04b clôturée).
+- Produire le livrable markdown final de B-04b dans `Plan_Tracker.md` :
+  - Liste exhaustive des 41 sondes finales (nom, type, fichier, domaine JSON, justification).
+  - Décisions transverses T-1→T-4 appliquées.
+  - Schéma JSONL L0.4 en annexe normative.
+  - Dettes legacy purgées (4 : `_motion_stats`, `frame_count/fps_timer`, `_b01_stats`, `tracker.stats()`).
+  - Arbitrage structurel tranché (1 : `created_ts` Option A).
+  - Suspensions levées (2 : `apply_detections_fast` + branches `source="fast"` associator).
+  - Sondes écartées avec motifs (référence audit R9-4 / R9-5).
 
 ### L5.2 — Mise à jour `Plan_Tracker.md`
 
@@ -431,10 +517,12 @@
 - Précondition activée : _« Session > 30 s avec variance FPS mesurée séparément scène avec/sans masks actifs. »_
 - Démarrer la session de référence.
 
+---
+
 ### 🔒 Borne L5
 
-- ✅ Récap consolidé écrit et archivé.
-- ✅ Plan_Tracker.md à jour.
+- ✅ Récap consolidé écrit et archivé dans `Plan_Tracker.md`.
+- ✅ B-04b marqué ✅ livré.
 - ✅ B-04c prêt à démarrer.
 - ✅ Tag git `b04b-L5`.
 
@@ -445,35 +533,32 @@
 1. **Aucun lot ne démarre tant que le précédent n'est pas validé** (borne 🔒 cochée).
 2. **Aucune sonde ajoutée hors plan** → backlog B-04c.
 3. **Rollback** : tag git à chaque borne 🔒. Granularité commits intra-lot libre.
-4. **Pas de mise en œuvre avant validation du plan v4**.
-5. **Aucune optimisation opportuniste** : tout écart va en P-04.
+4. **Pas de mise en œuvre avant validation du plan v5**.
+5. **Aucune optimisation opportuniste** → P-04.
 6. **L3 atomique vis-à-vis de L4** : L3.1 → L3.9 tous livrés avant L4.
 7. **L3.8 prioritaire dans L3** : lève 3 suspensions (L3.3, L3.4, L3.6).
 8. **Schéma L0.4 immuable** : toute évolution post-L0 = nouveau ticket.
-9. **Nommage T-2 = contrat de groupement JSON** : toute nouvelle sonde doit respecter `<domaine>_<action>[_<qualifieur>]` sous peine de tomber dans un domaine inattendu.
+9. **Nommage T-2 = contrat de groupement JSON** : toute nouvelle sonde doit respecter `<domaine>_<action>[_<qualifieur>]`.
+10. **Audit R9-4 / R9-5 bloquants** : L3.8 et L3.9 ne démarrent pas sans livrable audit validé.
 
 ---
 
 ## 📊 Synthèse finale post-L5
 
-| Métrique                         | Valeur cible                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| Sondes actives totales           | 85 (60 nouvelles + 26 préservées − 1 supprimée)                                |
-| Sondes écartées (motifs tracés)  | ≥ 23                                                                           |
-| Décisions transverses appliquées | 3 / 3                                                                          |
-| Dettes legacy purgées            | 4 / 4                                                                          |
-| Arbitrages structurels tranchés  | 1 / 1 (Option A `created_ts`)                                                  |
-| Suspensions levées               | 2 / 2 (via L3.8)                                                               |
-| Régression FPS tolérée           | < 5%                                                                           |
-| Durée smoke test L4              | 60 s                                                                           |
-| Fichiers JSONL en sortie         | 2 (`bench_frame.jsonl` + `bench_agg.jsonl`)                                    |
-| Domaines JSON                    | 8 (`main`, `tracker`, `registry`, `motion`, `detect`, `boxes`, `fast`, `mask`) |
-| `agg_interval` par défaut        | 1.0 s                                                                          |
-| État B-04b                       | ✅ Livré                                                                       |
-| État B-04c                       | 🟢 Démarrable                                                                  |
-
----
-
-## 🚦 En attente
-
-Validation du plan **v4** tel quel avant lancement L0, ou demande d'ajustement final.
+| Métrique                         | Valeur cible                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| Sondes actives totales           | 41 (27 L3.1→L3.7 + 8 L3.8 + 6 L3.9)                                              |
+| Dettes legacy purgées            | 4 / 4                                                                            |
+| Décisions transverses appliquées | 4 / 4 (T-1→T-4)                                                                  |
+| Arbitrages structurels tranchés  | 1 / 1 (`created_ts` Option A)                                                    |
+| Suspensions levées               | 2 / 2                                                                            |
+| Fichiers JSONL en sortie         | 3 (`frame` + `agg` + `fast`)                                                     |
+| Writers JSONL                    | 3 threads dédiés                                                                 |
+| Domaines JSON                    | 8 (`main`, `tracker`, `registry`, `motion`, `detect`, `fast`, `capture`, `mask`) |
+| `agg_interval` par défaut        | 1.0 s                                                                            |
+| `fast.interval_s` par défaut     | 1.0 s                                                                            |
+| Régression FPS tolérée           | < 5%                                                                             |
+| Durée smoke test L4              | 60 s                                                                             |
+| Audit R9-4 / R9-5                | Bloquants L3.8 / L3.9                                                            |
+| État B-04b                       | ✅ Livré post-L5                                                                 |
+| État B-04c                       | 🟢 Démarrable post-L5                                                            |
