@@ -1,6 +1,3 @@
-## 📄 `docs/bench-jsonl-schema.md`
-
-````markdown
 # Schéma JSONL bench — Contrat normatif L0.4
 
 > 🔒 **Statut** : figé.
@@ -68,7 +65,6 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
   "rates":  { <rate_name>: <float>, ... }
 }
 ```
-````
 
 ### 3.2 Sections de données
 
@@ -189,8 +185,6 @@ Chaque entrée est un scalaire flottant représentant un taux dérivé (typiquem
 Producteur unique : `bench/jsonl_writer.py`, méthode `_enqueue()`.
 Toute divergence entre ce document et l'implémentation est un bug de l'un ou de l'autre — la résolution est arbitrée par l'équipe avant merge.
 
-```
-
 ---
 
 ### ✅ Borne L0 atteinte
@@ -201,6 +195,3 @@ Avec ce document, **L0.4 est livré**. Récapitulatif L0 complet :
 - ✅ L0.2 — 3 fichiers JSONL en sortie
 - ✅ L0.3 — Bloc config `debug.bench.jsonl.*` validé
 - ✅ L0.4 — Schéma figé documenté (`docs/bench-jsonl-schema.md`)
-
-→ Prochaine étape : **Lot L1 — Arbitrage structurel `created_ts`** ?
-```

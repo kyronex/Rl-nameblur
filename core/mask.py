@@ -74,6 +74,7 @@ class Mask:
     # --- Cycle de vie : timestamps
     last_seen_ts:       float          = 0.0
     lost_since_ts:      Optional[float]= None
+    created_ts:         float          = 0.0
 
     confirm_after:      int            = field(default=2, repr=False)
     lost_after_s:       float          = field(default=1.0, repr=False)
@@ -85,8 +86,15 @@ class Mask:
         self.hash_history = deque(maxlen=self.hash_history_max)
         if self.last_seen_ts == 0.0:
             self.last_seen_ts = self.last_detected_ts
+        if self.created_ts == 0.0:
+            self.created_ts = self.last_detected_ts
 
     def transition(self, event: str, ts: float) -> MaskState:
+        """Fait progresser l'état du mask en fonction d'un événement.
+            Contrat temporel (Plan_Bench L1.2) :
+            `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` et joue le rôle de `last_match_ts`. Aucun champ distinct
+            `last_match_ts` n'est défini ni requis ; toute sonde mesurant l'âge du dernier match (ex. `mask_last_match_age_s`) doit lire `last_seen_ts`.
+        """
         if event == "matched":
             self.frames_matched += 1
             self.last_seen_ts = ts
@@ -145,5 +153,6 @@ class Mask:
             "state":             self.state.name,
             "frames_matched":    self.frames_matched,
             "last_seen_ts":      round(self.last_seen_ts, 4),
+            "created_ts":        round(self.created_ts, 4),
             "lost_since_ts":     round(self.lost_since_ts, 4) if self.lost_since_ts is not None else None,
         }

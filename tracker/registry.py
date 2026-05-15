@@ -69,6 +69,7 @@ class MaskRegistry:
             state=MaskState.PENDING,
             frames_matched=1,
             last_seen_ts=ts,
+            created_ts=ts,
             lost_since_ts=None,
             **kwargs,
         )
