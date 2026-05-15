@@ -205,7 +205,7 @@ debug:
 
 ---
 
-## 🟢 Lot L1 — Arbitrage structurel `created_ts`
+## 🟢 Lot L1 — Arbitrage structurel `created_ts` ✅ **Livré**
 
 > **R7 acté** : `created_ts: float` natif sur `Mask`, set unique dans `MaskRegistry.create()`, exposé dans `to_dict()`.
 
@@ -244,7 +244,7 @@ class Mask:
 
 ---
 
-## 🟡 Lot L2 — Purge dettes legacy
+## 🟡 Lot L2 — Purge dettes legacy ✅ **Livré**
 
 > ⚠️ **Purge destructive** : 4 blocs supprimés. Commit atomique par dette, rollback par tag L1.
 
@@ -262,7 +262,7 @@ class Mask:
 
 ### L2.3 — Purge `_b01_stats`
 
-- **Fichier** : à confirmer par audit (probable `tracker/tracker.py` ou `associator.py`).
+- **Fichier** : à confirmer par audit (probable `tracker/registry.py`).
 - **Action** : supprimer le bloc `_b01_stats` et ses points d'injection. Dette tracée explicitement si localisation incertaine.
 - **Validation** : `grep -r "_b01_stats"` → zéro résultat.
 

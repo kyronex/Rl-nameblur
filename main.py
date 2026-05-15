@@ -1,6 +1,7 @@
 # main.py — v13 (migration Mask dataclass)
 import logging
 from config import cfg
+from bench import bench
 
 def setup_logging():
     level_str = cfg.get("debug.log_level", "WARNING")
@@ -20,14 +21,12 @@ from capture.config   import CaptureConfig
 from capture.selector import SourceSelector
 from capture.base     import CaptureSourceNotFound
 from threads                 import CaptureThread, DetectThread, FastTrackThread, SendThread
-from bench.bench             import bench
-#from bench.csv_bench         import csv_open, csv_write_frame, csv_write_agg,csv_write_mask,csv_write_fast, csv_flush, csv_close
+
 from core.mask_manager       import draw_debug, pad_rect
 from core.blur               import apply_blur
 from core.mask               import MaskState
 from tracker.tracker         import Tracker
 from tracker.models          import TrackerConfig , Detection
-from tracker.motion          import get_and_reset_stats as motion_get_and_reset_stats
 log = logging.getLogger("main")
 
 # ── PARAMÈTRES ──
@@ -90,7 +89,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         last_detect_version   = 0
         last_fast_version     = 0
         last_frame_id         = 0
-        frame_count           = 0
         fps_timer             = time.perf_counter()
 
         while True:
@@ -180,47 +178,35 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             bench.count("masks_total", len(confirmed_masks))
 
             # ── 8. FPS print toutes les 2s ──
-            frame_count += 1
             elapsed = time.perf_counter() - fps_timer
             if elapsed >= 2.0:
-                fps      = frame_count / elapsed
+                fps  = bench.rate("frames", window_s=elapsed)
                 mode     = "DEBUG" if debug_draw else "PROD"
                 fast_tag = "+FAST" if fast_enabled else ""
 
-                # Stats tracker (pending / confirmed / lost)
-                t_stats = tracker.stats()
-                n_confirmed = t_stats.get("confirmed", 0)
-                n_pending   = t_stats.get("pending",   0)
-                n_lost      = t_stats.get("lost",      0)
+                # Stats tracker — lues depuis bench (gauges posées dans tracker.tick)
+                n_confirmed = bench.read_gauge("masks_confirmed") or 0
+                n_pending   = bench.read_gauge("masks_pending")   or 0
+                n_lost      = bench.read_gauge("masks_lost")      or 0
 
-                # Stats motion (dt inter-slow, capping)
-                m = motion_get_and_reset_stats()
-                if m["n"] > 0:
-                    stale_avg  = m["staleness_slow_sum_ms"] / m["n"]
-                    stale_max  = m["staleness_slow_max_ms"]
-                    capped_pct = 100.0 * m["capped"] / m["n"]
-                    motion_tag = (
-                        f"staleness_slow avg={stale_avg:.1f}ms "
-                        f"max={stale_max:.1f}ms "
-                        f"capped={capped_pct:.1f}%"
-                    )
+                # Stats motion — bench.last = valeur instantanée la plus récente
+                # (approximation court terme, remplacé par summary_window à l'étape 2)
+                stale_last = bench.last("staleness_slow_ms")
+                if stale_last is not None:
+                    motion_tag = f"staleness_slow last={stale_last:.1f}ms"
                 else:
                     motion_tag = "staleness_slow n/a"
 
-
-                ts = datetime.now().strftime("%H:%M:%S")
+                ts_str = datetime.now().strftime("%H:%M:%S")
 
                 log.info(
-                    f"[{ts}] ⚡ {fps:.1f} FPS | "
+                    f"[{ts_str}] ⚡ {fps:.1f} FPS | "
                     f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
                     f"{motion_tag} | "
                     f"{mode} {fast_tag}"
                 )
 
-                frame_count = 0
-                fps_timer   = time.perf_counter()
-
-                #bench.print_summary()
+                fps_timer = time.perf_counter()
 
     except KeyboardInterrupt:
         log.info("\n🛑 Arrêt propre")
@@ -231,3 +217,4 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             fast_tracker.stop()
         detector.stop()
         capturer.stop()
+        bench.shutdown()
