@@ -1,4 +1,4 @@
-# Plan — Capture hybride DXCam → cv2 fallback
+# Plan — Capture hybride DXCam → cv2 fallback ✅ LIVRER
 
 > **Document autoportant.** Aucune référence implicite aux plans antérieurs. En cas de doute sur le périmètre exact d'un item, un **audit de code base** est explicitement requis avant démarrage.
 
