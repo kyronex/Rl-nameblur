@@ -131,7 +131,7 @@ masks:
     vy_max: 2000.0 # Vitesse max (px/s) en y — au-delà, la vélocité est clampée
     vw_max: 1000.0 # Vitesse max (px/s) en largeur — au-delà, la vélocité est clampée
     vh_max: 500.0 # Vitesse max (px/s) en hauteur — au-delà, la vélocité est clampée
-    dt_cap: 0.30 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
+    dt_cap: 0.35 # Durée max (s) utilisée pour la prédiction inertielle — évite les sauts sur longue absence
     damping_rate: 2.0 # Taux d'amortissement : damping = 1 - dt * rate → vélocité s'annule en ~0.5s
     min_mask_size: 10.0 # Taille min (px) prédite pour w/h — évite un mask dégénéré
   adaptive_margin: # Marge dynamique (px) appliquée autour du candidate_rect lors du NCC.margin = clamp(base + speed*dt*factor, min, max). cf. fast_track_thread._adaptive_margin
@@ -173,11 +173,36 @@ debug:
       gris: [222, 222, 222]
       noir: [0, 0, 0]
   bench:
-    enabled: true
-  csv:
-    per_frame: true # 1 ligne / frame capturée
-    aggregated: true # 1 ligne / agg_interval
-    mask: true # 1 ligne / masque confirmé / frame
-    agg_interval: 2.0 # secondes entre 2 lignes agrégées
-    fast: true
-    fast_interval: 1.0 # période d'agrégation des sondes fast (s)
+    enabled: true # Active BenchRegistry + démarre les writers si writer.enabled=true
+
+    history_window_s: 60 # Fenêtre glissante conservée en mémoire pour summary_window() (s)
+
+    # ── Writers JSONL ────────────────────────────────────────────
+    writer:
+      enabled: true # Maître : false = aucun writer démarré, quelles que soient les clés fille
+      queue_maxsize:
+        10000 # Taille max de la queue bornée partagée entre writers.
+        # Au-delà : ligne droppée + bench.count("bench_writer_dropped") incrémenté
+      shutdown_timeout_s: 2.0 # Délai max (s) accordé à chaque writer pour vider sa queue à l'arrêt
+      session_id_format:
+        "%Y%m%d_%H%M%S"
+        # Strftime inséré dans le nom de fichier avant l'extension
+        # ex: bench_agg_20240101_120000.jsonl
+
+    # ── Canal agrégé (snapshot_all, 1 ligne / interval_s) ────────
+    agg:
+      enabled: true
+      path: "logs/json/bench_agg.jsonl" # session_id inséré avant ext
+      interval_s: 1.0 # Période entre deux snapshots agrégés (s)
+
+    # ── Canal par frame (snapshot_frame, 1 ligne / frame capturée)
+    frame:
+      enabled: true # Désactivé par défaut — volume élevé (≈ capture_fps lignes/s)
+      path: "logs/json/bench_frame.jsonl"
+
+    # ── Canal FastTrackThread (snapshot_fast, 1 ligne / interval_s)
+    fast:
+      enabled: true
+      path: "logs/json/bench_fast.jsonl"
+      interval_s: 1.0 # Période entre deux snapshots fast (s)
+

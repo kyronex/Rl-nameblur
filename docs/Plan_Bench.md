@@ -33,7 +33,7 @@
 
 > ⚠️ **Lot critique** : modifie l'API `bench`, la structure config et fige le schéma JSONL. Tout ce qui suit dépend de ces fondations. À traiter en premier, en un seul commit atomique.
 
-### L0.1 — API `bench` : `snapshot_frame()` + `snapshot_all()` + writer JSONL
+### L0.1 — API `bench` : `snapshot_frame()` + `snapshot_all()` + writer JSONL ✅ **Livré**
 
 - **Fichier** : `bench.py`
 - **Actions** :
