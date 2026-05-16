@@ -298,7 +298,7 @@ class Mask:
 
 ---
 
-### 🔍 L3.0 — Audit règle de groupement JSON — Pré-requis bloquant L3 entier
+### 🔍 L3.0 — Audit règle de groupement JSON — Pré-requis bloquant L3 entier ✅ **Livré**
 
 > **Déclencheur** : avant toute implémentation de L3.1→L3.9, la règle de groupement JSON doit être tranchée et documentée.
 
@@ -328,7 +328,7 @@ Trancher une règle unique parmi :
 
 ---
 
-### 🔍 Audit R9-4 / R9-5 — Pré-requis bloquant L3.8 et L3.9
+### 🔍 Audit R9-4 / R9-5 — Pré-requis bloquant L3.8 et L3.9 ✅ **Livré**
 
 > **Déclencheur** : avant toute implémentation de L3.8 (`fast_track_thread.py`) et L3.9 (`core/mask.py`), un audit code base est **obligatoire**.
 

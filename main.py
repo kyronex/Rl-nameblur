@@ -98,7 +98,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             now = time.perf_counter()
 
             # ── 1. Capture (NON BLOQUANT) ──
-            with bench.timer("capture_wait"):
+            with bench.timer("main_capture_wait_ms"):
                 frame, frame_ts = capturer.get_frame()
             if frame is None:
                 time.sleep(0.001)
@@ -106,6 +106,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             # ── 2. Nouvelle frame → distribuer aux threads ──
             frame_id = capturer.get_frame_id()
+            bench.gauge("main_frame_id", frame_id)
             if frame_id > last_frame_id:
                 last_frame_id = frame_id
                 detector.give_frame(frame, frame_ts)
@@ -118,14 +119,14 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             updated_uids = set()
 
             # ── 3. Slow detect ──
-            with bench.timer("slow_poll"):
+            with bench.timer("main_slow_poll_ms"):
                 new_plates, detect_ts, current_version, detected_frame_ts = detector.get_result()
             slow_updated = current_version > last_detect_version
             if slow_updated:
                 last_detect_version = current_version
 
             if slow_updated and new_plates:
-                with bench.timer("match"):
+                with bench.timer("main_match_ms"):
                     dets = [Detection(
                         rect=pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT),
                         source="slow",
@@ -138,7 +139,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
             # ── 3b. Fast track ──
             if fast_enabled and not slow_updated:
-                with bench.timer("fast_poll"):
+                with bench.timer("main_fast_poll_ms"):
                     fast_version, fast_results, fast_ts = fast_tracker.get_results()
                 if fast_version > last_fast_version:
                     last_fast_version = fast_version
@@ -152,7 +153,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         updated_uids |= matched
 
             # ── 4. Tick (predict + TTL + purge) ──
-            with bench.timer("predict"):
+            with bench.timer("main_predict_ms"):
                 confirmed_masks = tracker.tick(now, updated_uids)
 
             # ── 5. Blur / debug draw ──
@@ -164,23 +165,23 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             buf = sender.borrow()
             np.copyto(buf, frame)
 
-            with bench.timer("blur"):
+            with bench.timer("main_blur_ms"):
                 apply_blur(buf, blur_zones)
                 if debug_draw:
                     draw_debug(buf, confirmed_masks)
 
             # ── 6. Envoi ──
-            with bench.timer("send"):
+            with bench.timer("main_send_ms"):
                 sender.publish()
 
             # ── 7. Stats ──
-            bench.count("frames")
-            bench.count("masks_total", len(confirmed_masks))
-
+            bench.count("main_frames_total")
+            bench.gauge("main_masks_total", len(confirmed_masks))
+            bench.push_frame()
             # ── 8. FPS print toutes les 2s ──
             elapsed = time.perf_counter() - fps_timer
             if elapsed >= 2.0:
-                fps  = bench.rate("frames", window_s=elapsed)
+                fps  = bench.rate("main_frames_total", window_s=elapsed)
                 mode     = "DEBUG" if debug_draw else "PROD"
                 fast_tag = "+FAST" if fast_enabled else ""
 
