@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 from tracker.models import TrackerConfig
+from bench import bench
 
 log = logging.getLogger("tracker.registry")
 
@@ -58,6 +59,7 @@ class MaskRegistry:
             **kwargs,
         )
         added = self._add(mask)
+        bench.count("registry_create_total")
         return added
 
     def remove(self, uid: int) -> Optional[Mask]:
@@ -94,13 +96,22 @@ class MaskRegistry:
                 if mask.state in (MaskState.PENDING, MaskState.CONFIRMED):
                     if (ts - mask.last_seen_ts) >= lost_after_s:
                         mask.transition("missing", ts)  # passe en LOST, set lost_since_ts=ts
+                        bench.count("registry_lost_total")
 
             # Purge des LOST trop vieux (qu'ils aient été ré-évalués ce tick ou non)
             if mask.state == MaskState.LOST and mask.lost_since_ts is not None:
                 if (ts - mask.lost_since_ts) >= expire_after_lost_s:
                     expired.append(mask)
                     del self._masks[mask.uid]
+                    bench.count("registry_expire_total")
 
+        # L3.2 — gauges états courants (fin de boucle, après toutes transitions)
+        confirmed = sum(1 for m in self._masks.values() if m.state == MaskState.CONFIRMED)
+        pending   = sum(1 for m in self._masks.values() if m.state == MaskState.PENDING)
+        lost      = sum(1 for m in self._masks.values() if m.state == MaskState.LOST)
+        bench.gauge("registry_confirmed", confirmed)
+        bench.gauge("registry_pending",   pending)
+        bench.gauge("registry_lost",      lost)
         return expired
 
     # ── interne ───────────────────────────────────────────
@@ -121,3 +132,4 @@ class MaskRegistry:
             worst.uid, worst.state.name, worst.last_seen_ts,
         )
         del self._masks[worst.uid]
+        bench.count("registry_evict_total")
