@@ -1,4 +1,4 @@
-# 📋 Plan v5 — Post-audit B-04b
+# 📋 Plan v6 — Post-audit B-04b
 
 > **Objectif** : passer du backlog audité à un système instrumenté, propre et prêt pour B-04c.
 >
@@ -11,21 +11,28 @@
 > - Schéma JSONL enrichi : nommage `session_id` + schéma `bench_fast` — R9-3 acté.
 > - Sondes L3.8 / L3.9 conditionnées à un audit code base — R9-4 / R9-5 actés.
 > - Harmonisation noms sondes `registry_*` — R9-6 acté.
+>
+> **Arbitrages v5 → v6** :
+>
+> - Compte sondes corrigé : **50** (les tableaux L3.1→L3.9 font foi).
+> - L2 — **4 dettes legacy** purgées (titre rectifié, statut "Livré" fait foi).
+> - L2.3 — `_b01_stats` localisé et purgé dans `registry.py`.
+> - L3.0 — **Audit règle de groupement JSON** ajouté, bloquant pour l'intégralité de L3.
 
 ---
 
 ## 🎯 Vue d'ensemble
 
-| Lot    | Scope                                                               | Effort  | Précondition           |
-| ------ | ------------------------------------------------------------------- | ------- | ---------------------- |
-| **L0** | Fondations transverses (API bench + schéma JSON + migration config) | ~2 h 30 | Audit B-04b clôturé ✅ |
-| **L1** | Arbitrage structurel : `created_ts` natif sur `Mask`                | ~30 min | L0 ✅                  |
-| **L2** | Purge dettes legacy (3 blocs + arbitrage `tracker.stats()`)         | ~1 h    | L1                     |
-| **L3** | Déploiement sondes différées (par fichier) + audit R9-4/R9-5        | ~4 h    | L2                     |
-| **L4** | Validation intégration (smoke test 60 s)                            | ~30 min | L3                     |
-| **L5** | Livraison B-04b : récap consolidé + bascule B-04c                   | ~30 min | L4                     |
+| Lot    | Scope                                                                  | Effort  | Précondition           |
+| ------ | ---------------------------------------------------------------------- | ------- | ---------------------- |
+| **L0** | Fondations transverses (API bench + schéma JSON + migration config)    | ~2 h 30 | Audit B-04b clôturé ✅ |
+| **L1** | Arbitrage structurel : `created_ts` natif sur `Mask`                   | ~30 min | L0 ✅                  |
+| **L2** | Purge dettes legacy (3 blocs + arbitrage `tracker.stats()`)            | ~1 h    | L1 ✅                  |
+| **L3** | Déploiement sondes différées (par fichier) + audits L3.0 / R9-4 / R9-5 | ~5 h    | L2                     |
+| **L4** | Validation intégration (smoke test 60 s)                               | ~30 min | L3                     |
+| **L5** | Livraison B-04b : récap consolidé + bascule B-04c                      | ~30 min | L4                     |
 
-**Effort total estimé** : ~9 h, étalable sur 2–3 sessions.
+**Effort total estimé** : ~10 h, étalable sur 2–3 sessions.
 
 ---
 
@@ -244,7 +251,7 @@ class Mask:
 
 ---
 
-## 🟡 Lot L2 — Purge dettes legacy ✅ **Livré**
+## 🟡 Lot L2 — Purge dettes legacy (4 blocs)✅ **Livré**
 
 > ⚠️ **Purge destructive** : 4 blocs supprimés. Commit atomique par dette, rollback par tag L1.
 
@@ -262,8 +269,8 @@ class Mask:
 
 ### L2.3 — Purge `_b01_stats`
 
-- **Fichier** : à confirmer par audit (probable `tracker/registry.py`).
-- **Action** : supprimer le bloc `_b01_stats` et ses points d'injection. Dette tracée explicitement si localisation incertaine.
+- **Fichier** : `registry.py`.
+- **Action** : supprimer le bloc `_b01_stats` et ses points d'injection.
 - **Validation** : `grep -r "_b01_stats"` → zéro résultat.
 
 ### L2.4 — Arbitrage `tracker.stats()`
@@ -286,7 +293,38 @@ class Mask:
 ## 🔴 Lot L3 — Déploiement sondes + audit R9-4/R9-5
 
 > **L3 atomique vis-à-vis de L4** : L3.1 → L3.9 tous livrés avant L4.
+> **L3.0 prioritaire absolu** : bloque l'intégralité de L3.1→L3.9.
 > **L3.8 prioritaire** : lève 3 suspensions (L3.3, L3.4, L3.6).
+
+---
+
+### 🔍 L3.0 — Audit règle de groupement JSON — Pré-requis bloquant L3 entier
+
+> **Déclencheur** : avant toute implémentation de L3.1→L3.9, la règle de groupement JSON doit être tranchée et documentée.
+
+#### Périmètre
+
+- Recenser, dans le schéma L0.4, toutes les clés JSON présentes dans `bench_frame`, `bench_agg`, `bench_fast`.
+- Pour chaque clé : comparer **préfixe T-2** vs **emplacement effectif** dans le JSON.
+- Identifier les exceptions actuelles (cas `registry_*` sous `tracker`, cas `masks[]` payload tableau).
+- Lecture du code réel de `bench.py` pour caractériser la mécanique de groupement actuelle (pas d'hypothèse hallucinée).
+
+#### Décision à prendre
+
+Trancher une règle unique parmi :
+
+- **(A) Stricte** : domaine JSON = préfixe T-2, sans exception.
+- **(B) Hybride documentée** : préfixe T-2 par défaut + table d'exceptions explicites.
+- **(C) Découplage** : préfixe T-2 = nommage interne sonde ; domaine JSON défini par map indépendante.
+
+#### Livrable
+
+- `docs/audits/L3-0-groupement-json.md` : audit + décision + schéma L0.4 corrigé si besoin.
+- Impact mis à jour sur la borne L3 (compteur de domaines JSON).
+
+#### Effort estimé
+
+~1 h.
 
 ---
 
@@ -451,14 +489,16 @@ class Mask:
 
 ### 🔒 Borne L3
 
+- ✅ L3.0 livré et validé avant tout déploiement de sondes.
 - ✅ Audit R9-4 + R9-5 livrés et validés avant L3.8 / L3.9.
-- ✅ 27 sondes actives L3.1→L3.7 implémentées.
+- ✅ 36 sondes actives L3.1→L3.7 implémentées.
 - ✅ 14 sondes L3.8 + L3.9 implémentées post-audit.
 - ✅ 3 fichiers JSONL produits par session, nommage `session_id` conforme.
 - ✅ `debug.csv.*` absent — aucune écriture CSV résiduelle.
 - ✅ Drop JSONL loggué WARNING si queue pleine.
 - ✅ Shutdown propre testé (SIGINT + fin normale).
 - ✅ Nommage T-2 respecté sur toutes les sondes.
+- ✅ Règle de groupement JSON L3.0 respectée sur toutes les sondes.
 - ✅ Aucune régression smoke test.
 - ✅ Tag git `b04b-L3`.
 
@@ -499,12 +539,13 @@ class Mask:
 ### L5.1 — Récap consolidé
 
 - Produire le livrable markdown final de B-04b dans `Plan_Tracker.md` :
-  - Liste exhaustive des 41 sondes finales (nom, type, fichier, domaine JSON, justification).
+  - Liste exhaustive des **50 sondes finales** (nom, type, fichier, domaine JSON, justification).
   - Décisions transverses T-1→T-4 appliquées.
-  - Schéma JSONL L0.4 en annexe normative.
-  - Dettes legacy purgées (4 : `_motion_stats`, `frame_count/fps_timer`, `_b01_stats`, `tracker.stats()`).
+  - Schéma JSONL L0.4 en annexe normative (post-L3.0).
+  - Dettes legacy purgées (4 : `_motion_stats`, `frame_count/fps_timer`, `_b01_stats` dans `registry.py`, `tracker.stats()`).
   - Arbitrage structurel tranché (1 : `created_ts` Option A).
   - Suspensions levées (2 : `apply_detections_fast` + branches `source="fast"` associator).
+  - Règle de groupement JSON tranchée (L3.0).
   - Sondes écartées avec motifs (référence audit R9-4 / R9-5).
 
 ### L5.2 — Mise à jour `Plan_Tracker.md`
@@ -535,30 +576,32 @@ class Mask:
 3. **Rollback** : tag git à chaque borne 🔒. Granularité commits intra-lot libre.
 4. **Pas de mise en œuvre avant validation du plan v5**.
 5. **Aucune optimisation opportuniste** → P-04.
-6. **L3 atomique vis-à-vis de L4** : L3.1 → L3.9 tous livrés avant L4.
-7. **L3.8 prioritaire dans L3** : lève 3 suspensions (L3.3, L3.4, L3.6).
-8. **Schéma L0.4 immuable** : toute évolution post-L0 = nouveau ticket.
-9. **Nommage T-2 = contrat de groupement JSON** : toute nouvelle sonde doit respecter `<domaine>_<action>[_<qualifieur>]`.
-10. **Audit R9-4 / R9-5 bloquants** : L3.8 et L3.9 ne démarrent pas sans livrable audit validé.
+6. **L3 atomique vis-à-vis de L4** : L3.0 → L3.9 tous livrés avant L4.
+7. **L3.0 bloquant absolu** : aucune sonde L3.1→L3.9 déployée sans règle de groupement JSON tranchée.
+8. **L3.8 prioritaire dans L3.1→L3.9** : lève 3 suspensions (L3.3, L3.4, L3.6).
+9. **Schéma L0.4 immuable post-L3.0** : toute évolution ultérieure = nouveau ticket.
+10. **Nommage T-2 = contrat de nommage sonde** ; la règle de groupement JSON est portée par L3.0.
+11. **Audits L3.0 / R9-4 / R9-5 bloquants** : L3 entier pour L3.0 ; L3.8 / L3.9 pour R9-4 / R9-5.
 
 ---
 
 ## 📊 Synthèse finale post-L5
 
-| Métrique                         | Valeur cible                                                                     |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| Sondes actives totales           | 41 (27 L3.1→L3.7 + 8 L3.8 + 6 L3.9)                                              |
-| Dettes legacy purgées            | 4 / 4                                                                            |
-| Décisions transverses appliquées | 4 / 4 (T-1→T-4)                                                                  |
-| Arbitrages structurels tranchés  | 1 / 1 (`created_ts` Option A)                                                    |
-| Suspensions levées               | 2 / 2                                                                            |
-| Fichiers JSONL en sortie         | 3 (`frame` + `agg` + `fast`)                                                     |
-| Writers JSONL                    | 3 threads dédiés                                                                 |
-| Domaines JSON                    | 8 (`main`, `tracker`, `registry`, `motion`, `detect`, `fast`, `capture`, `mask`) |
-| `agg_interval` par défaut        | 1.0 s                                                                            |
-| `fast.interval_s` par défaut     | 1.0 s                                                                            |
-| Régression FPS tolérée           | < 5%                                                                             |
-| Durée smoke test L4              | 60 s                                                                             |
-| Audit R9-4 / R9-5                | Bloquants L3.8 / L3.9                                                            |
-| État B-04b                       | ✅ Livré post-L5                                                                 |
-| État B-04c                       | 🟢 Démarrable post-L5                                                            |
+| Métrique                         | Valeur cible                                           |
+| -------------------------------- | ------------------------------------------------------ |
+| Sondes actives totales           | **50** (36 L3.1→L3.7 + 8 L3.8 + 6 L3.9)                |
+| Dettes legacy purgées            | 4 / 4                                                  |
+| Décisions transverses appliquées | 4 / 4 (T-1→T-4)                                        |
+| Arbitrages structurels tranchés  | 1 / 1 (`created_ts` Option A)                          |
+| Suspensions levées               | 2 / 2                                                  |
+| Règle groupement JSON            | Tranchée en L3.0                                       |
+| Fichiers JSONL en sortie         | 3 (`frame` + `agg` + `fast`)                           |
+| Writers JSONL                    | 3 threads dédiés                                       |
+| Domaines JSON                    | Défini par L3.0 (8 par défaut, à confirmer post-audit) |
+| `agg_interval` par défaut        | 1.0 s                                                  |
+| `fast.interval_s` par défaut     | 1.0 s                                                  |
+| Régression FPS tolérée           | < 5%                                                   |
+| Durée smoke test L4              | 60 s                                                   |
+| Audits bloquants                 | L3.0 (L3 entier) · R9-4 (L3.8) · R9-5 (L3.9)           |
+| État B-04b                       | ✅ Livré post-L5                                       |
+| État B-04c                       | 🟢 Démarrable post-L5                                  |
