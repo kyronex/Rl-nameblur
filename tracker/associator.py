@@ -1,6 +1,7 @@
 # tracker/associator.py
 from __future__ import annotations
 import logging
+from bench import bench
 
 from typing import List, Tuple, Optional
 import numpy as np
@@ -78,9 +79,12 @@ class Associator:
             min_score = self._get_min_score(det)
             for j, mask in enumerate(masks):
                 if not self._geo_gate_passes(det.rect, predicted_rects[j], mask):
+                    bench.count("associator_gated_total")
                     continue  # scores[i][j] reste GATED_SCORE, cost reste _GATED_COST
+                bench.count("associator_candidates_total")
                 ms = self._compute_score(det, mask, predicted_rects[j], ts)
                 if ms.total < min_score:
+                    bench.count("associator_score_rejected_total")
                     continue
                 scores[i][j] = ms
                 cost[i, j] = 1.0 - ms.total
@@ -89,31 +93,38 @@ class Associator:
 
     # ── assignation hongroise ─────────────────────────────
     def associate(self,detections: List[Detection],masks: List[Mask],ts) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
-        n_det = len(detections)
-        n_mask = len(masks)
-        if n_det == 0 and n_mask == 0:
-            return [], [], []
-        if n_det == 0:
-            return [], [], list(range(n_mask))
-        if n_mask == 0:
-            return [], list(range(n_det)), []
-        cost, scores = self._build_cost_matrix(detections, masks, ts)
-        det_indices, mask_indices = linear_sum_assignment(cost)
-        matches: List[Tuple[int, int]] = []
-        unmatched_dets = set(range(n_det))
-        unmatched_masks = set(range(n_mask))
-        for di, mi in zip(det_indices, mask_indices):
-            ms = scores[di][mi]
-            if ms.gated:
-                continue
-            min_score = self._get_min_score(detections[di])
-            if ms.total >= min_score:
-                detections[di].scores["match"] = ms
-                detections[di].scores["source_confidence"] = self._get_source_confidence(detections[di])
-                matches.append((di, mi))
-                unmatched_dets.discard(di)
-                unmatched_masks.discard(mi)
-        return matches, sorted(unmatched_dets), sorted(unmatched_masks)
+        with bench.timer("associator_tick_ms"):
+            n_det = len(detections)
+            n_mask = len(masks)
+            if n_det == 0 and n_mask == 0:
+                return [], [], []
+            if n_det == 0:
+                return [], [], list(range(n_mask))
+            if n_mask == 0:
+                return [], list(range(n_det)), []
+            cost, scores = self._build_cost_matrix(detections, masks, ts)
+            det_indices, mask_indices = linear_sum_assignment(cost)
+            matches: List[Tuple[int, int]] = []
+            unmatched_dets = set(range(n_det))
+            unmatched_masks = set(range(n_mask))
+            for di, mi in zip(det_indices, mask_indices):
+                ms = scores[di][mi]
+                if ms.gated:
+                    bench.count("associator_hungarian_rejected_total")
+                    continue
+                min_score = self._get_min_score(detections[di])
+                if ms.total >= min_score:
+                    detections[di].scores["match"] = ms
+                    detections[di].scores["source_confidence"] = self._get_source_confidence(detections[di])
+                    matches.append((di, mi))
+                    unmatched_dets.discard(di)
+                    unmatched_masks.discard(mi)
+                else:
+                    bench.count("associator_hungarian_rejected_total")
+            bench.count("associator_matched_total", len(matches))
+            bench.count("associator_unmatched_det_total", len(unmatched_dets))
+            bench.count("associator_unmatched_mask_total", len(unmatched_masks))
+            return matches, sorted(unmatched_dets), sorted(unmatched_masks)
 
 
 def compute_iou(rect1: tuple, rect2: tuple) -> float:
