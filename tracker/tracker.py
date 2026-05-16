@@ -13,8 +13,9 @@ from tracker.associator import Associator
 from tracker.motion import apply_detection, predict_position
 from tracker.hasher import compute_phash
 from core.mask import MaskState
+from bench.bench             import bench
 
-log = logging.getLogger("tracker")
+log = logging.getLogger("tracker.tracker")
 
 class Tracker:
 
@@ -33,131 +34,156 @@ class Tracker:
         Applique une vague de détections (slow OU fast).
         Returns: (matched_uids, created_uids)
         """
-        if ts is None:
-            ts = time.perf_counter()
-        H, W = frame.shape[:2]
-        # ── 1. Detection objects + phash ──
-        skip_phash = (source == "fast")
-        det_objects = []
-        for d in detections:
-            x, y, w, h = (int(v) for v in d.rect)
-            # 3. Clamp aux bornes du frame (sécurité anti-crash)
-            x = max(0, min(x, W - 1))    # x dans [0, W-1]
-            y = max(0, min(y, H - 1))    # y dans [0, H-1]
-            w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
-            h = max(1, min(h, H - y))
-            clamped_rect = (x, y, w, h)
-            if skip_phash:
-                phash = None
-            else:
-                crop = frame[y:y+h, x:x+w]
-                phash = compute_phash(crop)
-            det_objects.append(Detection(
-                rect=clamped_rect,
-                phash=phash,
-                source=d.source or source,
-                confidence=d.confidence,
-                template=d.template,
-                scores=d.scores,
-            ))
-        active = self.registry.masks
-        # ── 2. Association ──
-        matches, unmatched_dets, unmatched_masks = self.associator.associate(det_objects, active, ts)
-        # ── 3. Matchés : maj motion + phash + champs métier ──
-        matched_uids = set()
-        for det_idx, mask_idx in matches:
-            mask = active[mask_idx]
-            det = det_objects[det_idx]
-            apply_detection(mask, det.rect, ts, det.source, self.cfg)
-            if det.phash is not None:
-                mask.hash_history.append(det.phash)
-            mask.confidence = det.confidence
-            if det.template is not None:
-                mask.template = det.template
-            if det.scores:
-                mask.scores = det.scores
-            self.registry.mark_matched(mask.uid, ts=ts, source=source)
-            matched_uids.add(mask.uid)
-        # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
-        created_uids = set()
-        if source == "slow":
-            for det_idx in unmatched_dets:
+        with bench.timer("tracker_apply_detections_ms"):
+            if ts is None:
+                ts = time.perf_counter()
+            H, W = frame.shape[:2]
+            bench.count("tracker_detections_in", len(detections))
+            # ── 1. Detection objects + phash ──
+            skip_phash = (source == "fast")
+            det_objects = []
+            for d in detections:
+                x, y, w, h = (int(v) for v in d.rect)
+                # 3. Clamp aux bornes du frame (sécurité anti-crash)
+                x = max(0, min(x, W - 1))    # x dans [0, W-1]
+                y = max(0, min(y, H - 1))    # y dans [0, H-1]
+                w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
+                h = max(1, min(h, H - y))
+                clamped_rect = (x, y, w, h)
+                if skip_phash:
+                    phash = None
+                else:
+                    crop = frame[y:y+h, x:x+w]
+                    phash = compute_phash(crop)
+                det_objects.append(Detection(
+                    rect=clamped_rect,
+                    phash=phash,
+                    source=d.source or source,
+                    confidence=d.confidence,
+                    template=d.template,
+                    scores=d.scores,
+                ))
+            active = self.registry.masks
+            # ── 2. Association ──
+            matches, unmatched_dets, unmatched_masks = self.associator.associate(det_objects, active, ts)
+            # ── 3. Matchés : maj motion + phash + champs métier ──
+            matched_uids = set()
+            for det_idx, mask_idx in matches:
+                mask = active[mask_idx]
                 det = det_objects[det_idx]
-                mask = self.registry.create(det.rect, ts, source=det.source)
+                apply_detection(mask, det.rect, ts, det.source, self.cfg)
                 if det.phash is not None:
                     mask.hash_history.append(det.phash)
                 mask.confidence = det.confidence
-                mask.template = det.template
-                mask.scores = det.scores
-                created_uids.add(mask.uid)
-        return matched_uids, created_uids
+                if det.template is not None:
+                    mask.template = det.template
+                if det.scores:
+                    mask.scores = det.scores
+                self.registry.mark_matched(mask.uid, ts=ts, source=source)
+                matched_uids.add(mask.uid)
+            # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
+            created_uids = set()
+            if source == "slow":
+                for det_idx in unmatched_dets:
+                    det = det_objects[det_idx]
+                    mask = self.registry.create(det.rect, ts, source=det.source)
+                    if det.phash is not None:
+                        mask.hash_history.append(det.phash)
+                    mask.confidence = det.confidence
+                    mask.template = det.template
+                    mask.scores = det.scores
+                    created_uids.add(mask.uid)
+            return matched_uids, created_uids
 
     def apply_fast_direct(self, frame: np.ndarray, uid_to_rect: dict, ts: float = None) -> set:
         """
         Commit direct des résultats du fast tracker
         """
-        if ts is None:
-            ts = time.perf_counter()
-        H, W = frame.shape[:2]
-        matched_uids = set()
-        drift_skipped = 0
-        drift_max_seen = 0.0
-        for uid, rect in uid_to_rect.items():
-            mask = self.registry.get(uid)
-            if mask is None:
-                continue  # mask purgé entre-temps côté slow
-            # ── Garde-fou drift : fast ne peut prolonger qu'un mask
-            # confirmé récemment par le slow ──
-            drift = ts - mask.last_slow_ts if mask.last_slow_ts > 0 else float('inf')
-            if drift > self.cfg.fast_max_drift_s:
-                drift_skipped += 1
-                drift_max_seen = max(drift_max_seen, drift if drift != float('inf') else 0)
-                continue
-            # Clamp identique à apply_detections
-            x, y, w, h = (int(v) for v in rect)
-            x = max(0, min(x, W - 1))
-            y = max(0, min(y, H - 1))
-            w = max(1, min(w, W - x))
-            h = max(1, min(h, H - y))
-            clamped_rect = (x, y, w, h)
-            # Pipeline de mutation strictement aligné sur la branche `matched`
-            # de apply_detections (source="fast" → skip phash, pas de template/scores)
-            apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
-            self.registry.mark_matched(mask.uid, ts=ts,source = "fast")
-            matched_uids.add(mask.uid)
-        # Log agrégé une fois par tick fast
-        if uid_to_rect:
-            log.debug(
-                f"[FAST-APPLY] received={len(uid_to_rect)} "
-                f"applied={len(matched_uids)} drift_skipped={drift_skipped}"
-                + (f" max_drift={drift_max_seen:.1f}s" if drift_skipped else "")
-            )
-            # Warning agrégé si drift dégradé (signal B-04b)
-            if drift_skipped and drift_skipped >= len(uid_to_rect) // 2:
-                log.warning(
-                    f"[FAST-APPLY] drift dégradé : {drift_skipped}/{len(uid_to_rect)} "
-                    f"max_drift={drift_max_seen:.1f}s"
+        with bench.timer("tracker_apply_fast_direct_ms"):
+            if ts is None:
+                ts = time.perf_counter()
+            H, W = frame.shape[:2]
+            matched_uids = set()
+            drift_skipped = 0
+            drift_max_seen = 0.0
+            for uid, rect in uid_to_rect.items():
+                mask = self.registry.get(uid)
+                if mask is None:
+                    continue  # mask purgé entre-temps côté slow
+                # ── Garde-fou drift : fast ne peut prolonger qu'un mask
+                # confirmé récemment par le slow ──
+                drift = ts - mask.last_slow_ts if mask.last_slow_ts > 0 else float('inf')
+                if drift > self.cfg.fast_max_drift_s:
+                    drift_skipped += 1
+                    drift_max_seen = max(drift_max_seen, drift if drift != float('inf') else 0)
+                    continue
+                # Clamp identique à apply_detections
+                x, y, w, h = (int(v) for v in rect)
+                x = max(0, min(x, W - 1))
+                y = max(0, min(y, H - 1))
+                w = max(1, min(w, W - x))
+                h = max(1, min(h, H - y))
+                clamped_rect = (x, y, w, h)
+                # Pipeline de mutation strictement aligné sur la branche `matched`
+                # de apply_detections (source="fast" → skip phash, pas de template/scores)
+                apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
+                self.registry.mark_matched(mask.uid, ts=ts,source = "fast")
+                matched_uids.add(mask.uid)
+            if drift_skipped:
+                bench.count("tracker_fast_drift_skipped", drift_skipped)
+            # Log agrégé une fois par tick fast
+            if uid_to_rect:
+                log.debug(
+                    f"[FAST-APPLY] received={len(uid_to_rect)} "
+                    f"applied={len(matched_uids)} drift_skipped={drift_skipped}"
+                    + (f" max_drift={drift_max_seen:.1f}s" if drift_skipped else "")
                 )
-        return matched_uids
+                # Warning agrégé si drift dégradé (signal B-04b)
+                if drift_skipped and drift_skipped >= len(uid_to_rect) // 2:
+                    log.warning(
+                        f"[FAST-APPLY] drift dégradé : {drift_skipped}/{len(uid_to_rect)} "
+                        f"max_drift={drift_max_seen:.1f}s"
+                    )
+            return matched_uids
 
     def tick(self, ts: float = None, updated_uids: set = None) -> list:
         """
         À appeler chaque frame : predict inertiel + TTL + purge.
         Returns: list[Mask] CONFIRMED.
         """
-        if ts is None:
-            ts = time.perf_counter()
-        if updated_uids is None:
-            updated_uids = set()
-        # predict pour les non-matchés cette frame
-        for mask in self.registry.masks:
-            if mask.uid in updated_uids:
-                continue
-            if mask.state == MaskState.LOST:
-                continue
-            predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
-        self.registry.tick_and_expire(ts,updated_uids)
-        return [m for m in self.registry.masks if m.state == MaskState.CONFIRMED]
+        with bench.timer("tracker_tick_ms"):
+            if ts is None:
+                ts = time.perf_counter()
+            if updated_uids is None:
+                updated_uids = set()
+            # predict pour les non-matchés cette frame
+            for mask in self.registry.masks:
+                if mask.uid in updated_uids:
+                    continue
+                if mask.state == MaskState.LOST:
+                    continue
+                predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
+            self.registry.tick_and_expire(ts,updated_uids)
+
+            # Comptage unique post-purge (fusionne return + instrumentation)
+            confirmed = []
+            n_pending = 0
+            n_lost = 0
+            for m in self.registry.masks:
+                if m.state == MaskState.CONFIRMED:
+                    confirmed.append(m)
+                elif m.state == MaskState.PENDING:
+                    n_pending += 1
+                elif m.state == MaskState.LOST:
+                    n_lost += 1
+
+            n_confirmed = len(confirmed)
+            bench.gauge("tracker_confirmed", n_confirmed)
+            bench.gauge("tracker_pending", n_pending)
+            bench.gauge("tracker_lost", n_lost)
+            bench.gauge("tracker_masks_total", n_confirmed + n_pending + n_lost)
+
+            return confirmed
 
     # ───────────────────────────────────────────────
     #  ACCESSEURS DEBUG
@@ -165,15 +191,6 @@ class Tracker:
 
     def all_masks(self):
         return self.registry.masks
-
-    def stats(self):
-        all_m = self.registry.masks
-        return {
-            "total": len(all_m),
-            "pending": sum(1 for m in all_m if m.state == MaskState.PENDING),
-            "confirmed": sum(1 for m in all_m if m.state == MaskState.CONFIRMED),
-            "lost": sum(1 for m in all_m if m.state == MaskState.LOST),
-        }
 
     # ───────────────────────────────────────────────
     #  HOT-RELOAD
