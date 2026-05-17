@@ -186,13 +186,13 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 fast_tag = "+FAST" if fast_enabled else ""
 
                 # Stats tracker — lues depuis bench (gauges posées dans tracker.tick)
-                n_confirmed = bench.read_gauge("registry_confirmed") or 0
-                n_pending   = bench.read_gauge("registry_pending")   or 0
-                n_lost      = bench.read_gauge("registry_lost")      or 0
+                n_confirmed = bench.read_gauge("tracker_confirmed") or 0
+                n_pending   = bench.read_gauge("tracker_pending")   or 0
+                n_lost      = bench.read_gauge("tracker_lost")      or 0
 
                 # Stats motion — bench.last = valeur instantanée la plus récente
                 # (approximation court terme, remplacé par summary_window à l'étape 2)
-                stale_last = bench.last("staleness_slow_ms")
+                stale_last = bench.last("motion_staleness_slow_ms")
                 if stale_last is not None:
                     motion_tag = f"staleness_slow last={stale_last:.1f}ms"
                 else:

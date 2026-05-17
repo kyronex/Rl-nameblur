@@ -6,6 +6,7 @@ from enum import Enum, auto
 from typing import Optional, List , Deque
 import numpy as np
 from core.box import Box
+from bench import bench
 
 class MaskState(Enum):
     PENDING   = auto()   # vient d'apparaître, pas encore confirmé
@@ -94,23 +95,40 @@ class Mask:
             Contrat temporel (Plan_Bench L1.2) :
             `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` et joue le rôle de `last_match_ts`. Aucun champ distinct
             `last_match_ts` n'est défini ni requis ; toute sonde mesurant l'âge du dernier match (ex. `mask_last_match_age_s`) doit lire `last_seen_ts`.
+
+            Sondes bench L3.9 :
+                Volumétrie événements (`mask_transition_matched_total`,
+                `mask_transition_missing_total`) + transitions cycle de vie
+                (`mask_promote_total`, `mask_revive_total`, `mask_to_lost_total`)
+                + latences (`mask_confirm_latency_ms`, `mask_revive_latency_ms`,
+                `mask_lost_latency_ms`).
         """
         if event == "matched":
+            bench.count("mask_transition_matched_total")
+            prev_lost_since_ts = self.lost_since_ts
             self.frames_matched += 1
             self.last_seen_ts = ts
             self.lost_since_ts = None
 
             if self.state == MaskState.PENDING and self.frames_matched >= self.confirm_after:
                 self.state = MaskState.CONFIRMED
+                bench.count("mask_promote_total")
+                bench.probe("mask_confirm_latency_ms", (ts - self.created_ts) * 1000.0)
             elif self.state == MaskState.LOST:
+                if prev_lost_since_ts is not None:
+                    bench.probe("mask_revive_latency_ms", (ts - prev_lost_since_ts) * 1000.0)
                 self.state = MaskState.CONFIRMED
                 self.frames_matched = 1
+                bench.count("mask_revive_total")
         elif event == "missing":
+            bench.count("mask_transition_missing_total")
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
                 if (ts - self.last_seen_ts) >= self.lost_after_s:
                     self.state = MaskState.LOST
                     self.lost_since_ts = ts
                     self.frames_matched = 0
+                    bench.count("mask_to_lost_total")
+                    bench.probe("mask_lost_latency_ms", (ts - self.created_ts) * 1000.0)
         return self.state
 
     def to_fast_view(self) -> FastMaskView:
