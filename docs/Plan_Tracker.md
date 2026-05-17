@@ -347,10 +347,10 @@
   1. ✅ Audit `bench.py` ↔ README terminé.
   2. ✅ Instrumentation B-04b posée.
   3. ✅ Format normalisé JSONL défini.
-  4. ⏳ Audit contenu fichiers par fichier (fonctions principales workflow → sondes retenues) — **repoussé**, à reprendre après exploitation session JSONL.
-     4bis. ✅ Session JSONL réelle collectée et analysée (session post-B-04b) — invalidation hypothèse floutage/fast, requalification fourchette FPS.
-  5. ⏳ Session > 30 s — variance FPS mesurée **séparément** scène avec/sans masks actifs.
-  6. ⏳ Si variance > 15% à charge constante → profilage cProfile / py-spy.
+  4. ✅ Audit contenu fichiers par fichier (fonctions principales workflow → sondes retenues) .
+  5. ✅ Session JSONL réelle collectée et analysée (session post-B-04b) — invalidation hypothèse floutage/fast, requalification fourchette FPS.
+  6. ⏳ Session > 30 s — variance FPS mesurée **séparément** scène avec/sans masks actifs.
+  7. ⏳ Si variance > 15% à charge constante → profilage cProfile / py-spy.
 
 - **Dettes à solder avant clôture** :
   - Reprendre étape 4 protocole : localiser les sondes restantes par fichier, compléter cartographie.

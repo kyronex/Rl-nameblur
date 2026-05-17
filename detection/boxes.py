@@ -848,6 +848,9 @@ def _make_template( boxes, frame):
 
 
 def process_channel(masked,rgb, mask_white, h_img, params, kernels):
+    # ══════════════════════════════════════════════════
+    #  Bench.timer potentiel part etape
+    # ══════════════════════════════════════════════════
     plates = []
     boxes = _extract_raw_boxes(masked, params)
     boxes_ar = _adjust_resolve(boxes, mask_white, h_img, params)

@@ -135,7 +135,7 @@ def _build_params(scale):
 def _run_pipeline(frame, scale):
     colors, kernels, params, letter_connect_iter = _build_params(scale)
     # ══════════════════════════════════════════════════
-    #  ÉTAPE 1 — Préparation de l'image Bench.timer potentiel
+    #  ÉTAPE 1 — Préparation de l'image . Bench.timer potentiel part etape
     # ══════════════════════════════════════════════════
     # ── 1. Resize ──
     h_orig, w_orig = frame.shape[:2]
@@ -198,7 +198,6 @@ def ncc_match(roi_gray, template_gray, threshold):
     if roi_gray is None or template_gray is None:
         return 0.0, None
     if (template_gray.shape[0] > roi_gray.shape[0] or template_gray.shape[1] > roi_gray.shape[1]):
-        bench.count("fast_ncc_roi_too_small")
         return 0.0, None
     result = cv2.matchTemplate(roi_gray, template_gray, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)

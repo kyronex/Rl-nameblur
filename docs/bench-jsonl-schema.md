@@ -60,27 +60,25 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
   "mono": <float>,
   "session_id": <string>,
   "mode": "agg",
-  "probes": { <probe_name>: <probe_stats>, ... },
-  "gauges": { <gauge_name>: <float>, ... },
-  "rates":  { <rate_name>: <float>, ... }
+  "probes": { "<probe_name>": <probe_stats>, ... },
+  "gauges": { "<gauge_name>": <float>, ... },
+  "rates":  { "<rate_name>": <float>, ... }
 }
 ```
 
 ### 3.2 Sections de données
 
-| Section  | Type  | Vide autorisé | Contenu                                               |
-| -------- | ----- | ------------- | ----------------------------------------------------- |
-| `probes` | objet | oui (`{}`)    | Sondes scalaires agrégées sur l'intervalle.           |
-| `gauges` | objet | oui (`{}`)    | Valeurs instantanées (dernière mesure de la fenêtre). |
-| `rates`  | objet | oui (`{}`)    | Taux dérivés (compteurs / intervalle).                |
+| Section  | Obligatoire | Peut être vide `{}` | Description                                      |
+| -------- | ----------- | ------------------- | ------------------------------------------------ |
+| `probes` | oui         | oui                 | Statistiques agrégées sur la fenêtre temporelle. |
+| `gauges` | oui         | oui                 | Dernière valeur observée dans la fenêtre.        |
+| `rates`  | oui         | oui                 | Taux dérivés (`count_delta / interval_s`).       |
 
 ---
 
 ## 4. Canal `fast`
 
 ### 4.1 Structure
-
-Strictement identique au canal `agg`, seul `mode` change :
 
 ```json
 {
@@ -89,15 +87,19 @@ Strictement identique au canal `agg`, seul `mode` change :
   "mono": <float>,
   "session_id": <string>,
   "mode": "fast",
-  "probes": { ... },
-  "gauges": { ... },
-  "rates":  { ... }
+  "probes": { "<probe_name>": <probe_stats>, ... },
+  "gauges": { "<gauge_name>": <float>, ... },
+  "rates":  { "<rate_name>": <float>, ... }
 }
 ```
 
-### 4.2 Distinction avec `agg`
+### 4.2 Sections de données
 
-Le canal `fast` partage le contrat structurel du canal `agg`. Sa spécificité est exclusivement temporelle : cadence d'écriture pilotée par `fast_interval` (typiquement plus courte que `agg_interval`), pour observer des dynamiques rapides.
+| Section  | Obligatoire | Peut être vide `{}` | Description                                      |
+| -------- | ----------- | ------------------- | ------------------------------------------------ |
+| `probes` | oui         | oui                 | Statistiques agrégées sur la fenêtre temporelle. |
+| `gauges` | oui         | oui                 | Dernière valeur observée dans la fenêtre.        |
+| `rates`  | oui         | oui                 | Taux dérivés (`count_delta / interval_s`).       |
 
 ---
 
@@ -112,16 +114,25 @@ Le canal `fast` partage le contrat structurel du canal `agg`. Sa spécificité e
   "mono": <float>,
   "session_id": <string>,
   "mode": "frame",
-  "probes": { ... },
-  "gauges": { ... },
-  "rates":  { ... }
+  "probes": { "<probe_name>": <probe_stats>, ... },
+  "gauges": { "<gauge_name>": <float>, ... },
+  "counts": { "<count_name>": <int>, ... }
 }
 ```
 
-### 5.2 Statut
+### 5.2 Sections de données
 
-> ⚠️ **À valider sur exemple réel.**
-> Le canal `frame` partage par symétrie le contrat des canaux `agg` et `fast`. Dès qu'une première session produit un fichier `bench_frame_*.jsonl` non vide, le présent document devra être confronté à un échantillon réel et, si nécessaire, ajusté (avec bump `schema_version` selon §1).
+| Section  | Obligatoire | Peut être vide `{}` | Description                                                                   |
+| -------- | ----------- | ------------------- | ----------------------------------------------------------------------------- |
+| `probes` | oui         | oui                 | Statistiques de la frame courante (timing, pixels, scores, etc.).             |
+| `gauges` | oui         | oui                 | Dernière valeur scalaire observée dans la frame (ex. nombre de masks actifs). |
+| `counts` | oui         | oui                 | Compteurs bruts cumulatifs par frame (ex. `main_frames_total`).               |
+
+> ⚠️ **`counts` ≠ `rates`** : les valeurs de `counts` sont des entiers bruts cumulatifs depuis
+> le démarrage de la session, **pas** des taux normalisés par seconde. Cette sémantique diffère
+> volontairement des sections `rates` présentes sur les canaux `agg` et `fast`.
+> 📋 **Note d'évolution** : le canal `frame` n'expose pas de section `rates`. Si un besoin de
+> taux par frame émerge, il constitue un nouveau ticket avec bump `schema_version`.
 
 ---
 
@@ -160,6 +171,7 @@ Chaque entrée est un scalaire flottant représentant la dernière valeur observ
 ### 6.3 `rates`
 
 Chaque entrée est un scalaire flottant représentant un taux dérivé (typiquement `count_delta / interval_s`).
+Présent sur les canaux `agg` et `fast` uniquement.
 
 ```json
 "<rate_name>": <float>
@@ -167,7 +179,29 @@ Chaque entrée est un scalaire flottant représentant un taux dérivé (typiquem
 
 ---
 
-## 7. Règles d'évolution
+### 6.4 `counts`
+
+Chaque entrée est un entier représentant un compteur brut cumulatif depuis le démarrage
+de la session. Présent sur le canal `frame` uniquement.
+
+```json
+"<count_name>": <int>
+```
+
+---
+
+## 7. Matrice des sections par canal
+
+| Section  | `frame` | `agg` | `fast` |
+| -------- | ------- | ----- | ------ |
+| `probes` | ✅      | ✅    | ✅     |
+| `gauges` | ✅      | ✅    | ✅     |
+| `counts` | ✅      | ❌    | ❌     |
+| `rates`  | ❌      | ✅    | ✅     |
+
+---
+
+## 8. Règles d'évolution
 
 | Type de changement                              | Action                                  |
 | ----------------------------------------------- | --------------------------------------- |
@@ -180,18 +214,17 @@ Chaque entrée est un scalaire flottant représentant un taux dérivé (typiquem
 
 ---
 
-## 8. Référence d'implémentation
+## 9. Référence d'implémentation
 
 Producteur unique : `bench/jsonl_writer.py`, méthode `_enqueue()`.
 Toute divergence entre ce document et l'implémentation est un bug de l'un ou de l'autre — la résolution est arbitrée par l'équipe avant merge.
 
 ---
 
-### ✅ Borne L0 atteinte
+## Historique des versions
 
-Avec ce document, **L0.4 est livré**. Récapitulatif L0 complet :
-
-- ✅ L0.1 — `bench.snapshot_all()` + `snapshot_frame()` opérationnels
-- ✅ L0.2 — 3 fichiers JSONL en sortie
-- ✅ L0.3 — Bloc config `debug.bench.jsonl.*` validé
-- ✅ L0.4 — Schéma figé documenté (`docs/bench-jsonl-schema.md`)
+| Version | Date       | Motif                                                                           |
+| ------- | ---------- | ------------------------------------------------------------------------------- |
+| 1       | 2026-05-15 | Version initiale — 3 canaux, sections `probes`/`gauges`/`rates`.                |
+| 1       | 2026-05-17 | Option A : ajout section `counts` canal `frame`, retrait `rates` frame .        |
+|         |            | Alignement sur tests réels. Pas de bump correction intra-v1 pré-livraison L0.4. |

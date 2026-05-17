@@ -233,7 +233,7 @@ class FastTrackThread:
                                 if last_state["stale"] > max_stale:
                                     bench.count("fast_mask_lost_total")
                                 else:
-                                    bench.count("fast_stale_skipped")
+                                    bench.count("fast_stale_skipped_total")
 
                     # ── 5. Purger masques disparus ──
                     for old_id in list(self._last_known.keys()):

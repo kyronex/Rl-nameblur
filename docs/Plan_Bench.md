@@ -28,7 +28,7 @@
 | **L0** | Fondations transverses (API bench + schéma JSON + migration config)    | ~2 h 30 | Audit B-04b clôturé ✅ |
 | **L1** | Arbitrage structurel : `created_ts` natif sur `Mask`                   | ~30 min | L0 ✅                  |
 | **L2** | Purge dettes legacy (3 blocs + arbitrage `tracker.stats()`)            | ~1 h    | L1 ✅                  |
-| **L3** | Déploiement sondes différées (par fichier) + audits L3.0 / R9-4 / R9-5 | ~5 h    | L2                     |
+| **L3** | Déploiement sondes différées (par fichier) + audits L3.0 / R9-4 / R9-5 | ~5 h    | L2 ✅                  |
 | **L4** | Validation intégration (smoke test 60 s)                               | ~30 min | L3                     |
 | **L5** | Livraison B-04b : récap consolidé + bascule B-04c                      | ~30 min | L4                     |
 
@@ -290,7 +290,7 @@ class Mask:
 
 ---
 
-## 🔴 Lot L3 — Déploiement sondes + audit R9-4/R9-5
+## 🔴 Lot L3 — Déploiement sondes + audit R9-4/R9-5 ✅ **Livré**
 
 > **L3 atomique vis-à-vis de L4** : L3.1 → L3.9 tous livrés avant L4.
 > **L3.0 prioritaire absolu** : bloque l'intégralité de L3.1→L3.9.
