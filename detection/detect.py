@@ -135,7 +135,7 @@ def _build_params(scale):
 def _run_pipeline(frame, scale):
     colors, kernels, params, letter_connect_iter = _build_params(scale)
     # ══════════════════════════════════════════════════
-    #  ÉTAPE 1 — Préparation de l'image
+    #  ÉTAPE 1 — Préparation de l'image Bench.timer potentiel
     # ══════════════════════════════════════════════════
     # ── 1. Resize ──
     h_orig, w_orig = frame.shape[:2]
@@ -154,6 +154,7 @@ def _run_pipeline(frame, scale):
     closed = refine_and_merge(combined, interior, kernels)
     # ── 6. Contours + filtre géométrique (ratio, area, fill) ──
     candidates = process_channel(closed,small, mask_white, h_small, params, kernels )
+    bench.count("detect_slow_candidates_total", len(candidates))
     if not candidates:
         return []
     # ── 7. Remap vers résolution d'entrée ──
@@ -183,7 +184,8 @@ def _run_pipeline(frame, scale):
 def detect_plates(frame):
     """Slow detect — full frame."""
     scale = cfg.get("detect.slow.scale", 2.0)
-    return _run_pipeline(frame, scale)
+    with bench.timer("detect_slow_ms"):
+        return _run_pipeline(frame, scale)
 
 # ═══════════════════════════════════════════════════════
 #  FAST TRACKING — léger, pour ROI connues
