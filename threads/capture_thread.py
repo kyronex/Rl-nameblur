@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 from capture.base import CaptureSource
+from bench import bench
 
 log = logging.getLogger("threads.capture_thread")
 
@@ -57,8 +58,10 @@ class CaptureThread:
         source_name = self._source.name
 
         while self._running:
-            frame = self._source.grab()
+            with bench.timer("capture_frame_ms"):
+                frame = self._source.grab()
             if frame is None:
+                bench.count("capture_drop")
                 time.sleep(0.001)
                 continue
 

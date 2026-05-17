@@ -20,6 +20,10 @@ Extensibilité : pour ajouter une nouvelle source (NDI, WGC, Spout, ...),
 Injection config :
     B1 — explicite (recommandé)  : SourceSelector.resolve(CaptureConfig(...))
     B2 — fallback ergonomique    : SourceSelector.resolve()  → CaptureConfig() auto
+
+Sonde L3.7 :
+    selector_source_<name> (count) — incrément unique à la sélection.
+    Écart documenté vs Plan_Bench.md (qui spécifiait gauge) — à acter en README.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ import logging
 from time import perf_counter, sleep
 from typing import Dict, Optional, Type
 
+from bench import bench
 from capture.base import CaptureSource, CaptureSourceNotFound
 from capture.config import CaptureConfig
 from capture.dxcam_source import DXCamSource
@@ -115,6 +120,7 @@ class SourceSelector:
                 min_frames=config.probe_min_frames,
             ):
                 log.info("[selector] Source retenue : %s", source_name)
+                bench.count(f"selector_source_{source_name}")
                 return source  # arrêtée (β), prête pour start() par CaptureThread
 
         # Aucune source validée
