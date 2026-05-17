@@ -161,15 +161,15 @@ class FastTrackThread:
                 # Lag = délai entre dépôt de la frame et début effectif du traitement.
                 # frame_ts est en time.time() côté producer ; on convertit.
                 lag_ms = (time.perf_counter() - frame_ts) * 1000.0
-                bench.probe("fast_wakeup_lag", lag_ms)
-                bench.count("fast_tick_count")
+                bench.probe("fast_wakeup_lag_ms", lag_ms)
+                bench.count("fast_tick_total")
                 bench.probe("fast_n_masks", float(len(views)))
 
                 # ── Tick complet ──
-                with bench.timer("fast_tick"):
+                with bench.timer("fast_tick_ms"):
 
                     # ── 2. Convertir en gris ──
-                    with bench.timer("fast_cvt"):
+                    with bench.timer("fast_cvt_ms"):
                         curr_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
                     # ── 3. Pas de prev_gray → init ──
@@ -194,7 +194,7 @@ class FastTrackThread:
                     of_outcomes = []  # [(view, candidate_rect, of_ok)]
 
                     # ── 4a. Phase OF (toutes les views) ──
-                    with bench.timer("fast_of_total"):
+                    with bench.timer("fast_of_total_ms"):
                         for v in views:
                             active_ids.add(v.uid)
                             if v.uid not in self._last_known:
@@ -204,32 +204,34 @@ class FastTrackThread:
                             candidate_rect, of_succeeded = of_track(
                                 self._prev_gray, curr_gray, last_state["rect"]
                             )
-                            bench.count("fast_mask_processed")
+                            bench.count("fast_mask_processed_total")
                             if not of_succeeded:
-                                bench.count("fast_of_failed")
+                                bench.count("fast_of_failed_total")
                                 candidate_rect = last_state["rect"]
 
                             of_outcomes.append((v, last_state, candidate_rect))
 
                     # ── 4b. Phase NCC + fallback stale ──
-                    with bench.timer("fast_ncc_total"):
+                    with bench.timer("fast_ncc_total_ms"):
                         for v, last_state, candidate_rect in of_outcomes:
                             if v.template is not None:
-                                with bench.timer("fast_margin"):
+                                with bench.timer("fast_margin_ms"):
                                     margin = self._adaptive_margin(v, frame_ts, snap)
+                                bench.probe("fast_margin_px", float(margin))
                                 ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, v.template, snap, margin=margin)
+                                bench.probe("fast_ncc_score", score)
                             else:
                                 ncc_rect, score = None, 0.0
 
                             if ncc_rect is not None:
-                                bench.count("fast_ncc_confirmed")
+                                bench.count("fast_ncc_confirmed_total")
                                 last_state["rect"] = ncc_rect
                                 last_state["stale"] = 0
                                 results.append((v.uid, ncc_rect, score))
                             else:
                                 last_state["stale"] += 1
                                 if last_state["stale"] > max_stale:
-                                    bench.count("fast_mask_lost")
+                                    bench.count("fast_mask_lost_total")
                                 else:
                                     bench.count("fast_stale_skipped")
 
