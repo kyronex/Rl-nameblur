@@ -1,4 +1,4 @@
-# detection/detect.py — v8 dual detect
+# detection/detect.py
 import cv2
 import numpy as np
 import logging

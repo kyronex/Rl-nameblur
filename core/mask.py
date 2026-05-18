@@ -1,4 +1,4 @@
-# core/mask.py — Dataclass Mask (étape 2)
+# core/mask.py
 from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field

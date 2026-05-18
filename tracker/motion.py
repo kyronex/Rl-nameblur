@@ -1,4 +1,4 @@
-# tracker/motion.py — v4 (B-04b L3.6)
+# tracker/motion.py
 """
 Mouvement des masks : mise à jour sur détection + prédiction inertielle.
 Fonctions pures (pas de global, pas de cfg singleton).

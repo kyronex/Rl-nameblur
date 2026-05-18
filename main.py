@@ -1,4 +1,4 @@
-# main.py — v13 (migration Mask dataclass)
+# main.py
 import logging
 from config import cfg
 from bench import bench

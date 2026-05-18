@@ -1,4 +1,4 @@
-# threads/detect_thread.py — v2
+# threads/detect_thread.py
 import threading
 import time
 import logging
