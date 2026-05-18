@@ -149,7 +149,7 @@ Ctrl+C pour arrêter proprement — le benchmark complet s'affiche à la sortie 
 
 | Document                                                   | Sujet                                                   |
 | ---------------------------------------------------------- | ------------------------------------------------------- |
-| [`config.yaml`](config.yaml)                               | Référence exhaustive des paramètres (commentés)         |
+| [`config.yaml`](config/config.yaml)                        | Référence exhaustive des paramètres (commentés)         |
 | [`docs/bench-config.md`](docs/bench-config.md)             | Activation et configuration du benchmark                |
 | [`docs/bench-probes.md`](docs/bench-probes.md)             | Catalogue des sondes par domaine                        |
 | [`docs/bench-jsonl-schema.md`](docs/bench-jsonl-schema.md) | Schéma des fichiers JSONL produits                      |
