@@ -73,6 +73,39 @@ CaptureThread (worker daemon)
 | `capture/cv2_source.py`   | Backend OpenCV VideoCapture (fallback OBS Virtual Camera)              |
 | `capture/wgc_source.py`   | Backend Windows Graphics Capture (WGC)                                 |
 
+### Détection
+
+| Fichier                    | Rôle                                             |
+| -------------------------- | ------------------------------------------------ |
+| `detection/<TODO>.py`      | TODO — détection HSV des cartouches (full frame) |
+| `threads/<TODO>_thread.py` | TODO — worker Slow détection asynchrone          |
+| `threads/<TODO>_thread.py` | TODO — worker Fast (OF → NCC → stale fallback)   |
+
+### Tracker
+
+| Fichier             | Rôle                                                    |
+| ------------------- | ------------------------------------------------------- |
+| `tracker/<TODO>.py` | TODO — orchestrateur `tick()` + `get_confirmed_masks()` |
+| `tracker/<TODO>.py` | TODO — `TrackerConfig` (snapshot paramètres)            |
+| `tracker/<TODO>.py` | TODO — associator (gating + coût IoU+pHash + Hungarian) |
+| `tracker/<TODO>.py` | TODO — `MaskRegistry` (CRUD + TTL + éviction)           |
+| `tracker/<TODO>.py` | TODO — modèle de mouvement                              |
+| `core/<TODO>.py`    | TODO — dataclass `MaskState`                            |
+
+### Sortie
+
+| Fichier                    | Rôle                                                   |
+| -------------------------- | ------------------------------------------------------ |
+| `core/<TODO>.py`           | TODO — `apply_blur` (pixelate / box / gaussian / fill) |
+| `threads/<TODO>_thread.py` | TODO — double buffer zéro-copie → OBS Virtual Camera   |
+
+### Debug / Bench
+
+| Fichier           | Rôle                                                |
+| ----------------- | --------------------------------------------------- |
+| `debug/<TODO>.py` | TODO — collecteur de sondes + export JSONL          |
+| `debug/<TODO>.py` | TODO — overlay visuel (rectangles, UIDs, métriques) |
+
 #### Paramètres clés à tuner
 
 > Le fichier [`config.yaml`](config/config.yaml) est intégralement commenté et constitue la référence principale. Pour activer le benchmark, voir [`docs/bench-config.md`](docs/bench-config.md).

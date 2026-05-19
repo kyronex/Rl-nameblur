@@ -1,4 +1,4 @@
-# 📋 Plan v6 — Post-audit B-04b
+# 📋 Plan v6 — Post-audit B-04b ✅ **Livré**
 
 > **Objectif** : passer du backlog audité à un système instrumenté, propre et prêt pour B-04c.
 >
@@ -506,7 +506,7 @@ Trancher une règle unique parmi :
 
 ## ⚫ Lot L4 — Validation intégration
 
-### L4.1 — Smoke test 60 s
+### L4.1 — Smoke test 60 s ✅ **Livré**
 
 - Lancer l'application sur session de référence (60 s).
 - Vérifier :
@@ -534,7 +534,7 @@ Trancher une règle unique parmi :
 
 ---
 
-## ⚪ Lot L5 — Livraison B-04b
+## ⚪ Lot L5 — Livraison B-04b ✅ **Livré**
 
 ### L5.1 — Récap consolidé
 

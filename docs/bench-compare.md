@@ -11,6 +11,10 @@ et la compare à deux références :
 
 Produit un JSON structuré contenant les deux comparaisons.
 
+Si une seule session est disponible au total, le script produit un rapport
+en **mode session unique** : seuls les agrégats de la cible sont calculés,
+les deux comparaisons valent `null`.
+
 ---
 
 ## Prérequis
@@ -97,28 +101,22 @@ Dans tous les autres cas, `logs/results/` est en lecture seule.
 
 ## Logique de sélection
 
-Soit **N** = nombre total de sessions disponibles (union `logs/json/` + `logs/results/`,
-dédoublonnée).
+Soit **N** = nombre total de sessions disponibles (union `logs/json/` + `logs/results/`,dédoublonnée).
 
-| Condition | Comportement                                   |
-| --------- | ---------------------------------------------- |
-| N == 0    | Sortie : aucune session disponible             |
-| N < 2     | Sortie : pas assez de sessions pour comparer   |
-| N == 2    | Comparaison **absolue seule**, relative `null` |
-| N >= 3    | Comparaisons **absolue + relative**            |
+| Condition | Comportement                                                                                          |
+| --------- | ----------------------------------------------------------------------------------------------------- |
+| N == 0    | Sortie : aucune session disponible, message explicite                                                 |
+| N == 1    | Mode session unique : rapport produit, `comparisons.absolute` et `comparisons.relative` valent `null` |
+| N == 2    | Cible + référence absolue uniquement ; `comparisons.relative` vaut `null`                             |
+| N >= 3    | Cible + référence absolue + référence relative                                                        |
 
 ### Rôles attribués
 
-Sessions triées par `session_id` croissant (format `YYYYMMDD_HHMMSS`, tri lexicographique
-équivalent à tri chronologique) :
-
-| Rôle               | Sélection                                           |
-| ------------------ | --------------------------------------------------- |
-| Cible              | Session la plus récente (toutes sources confondues) |
-| Référence absolue  | Session la plus ancienne (toutes sources)           |
-| Référence relative | Avant-dernière session (toutes sources)             |
-
-Si la cible est elle-même l'avant-dernière (cas N == 2), la relative est absente.
+- **Cible** : session avec le `session_id` le plus récent (tri lexicographique sur le format `YYYYMMDD_HHMMSS`).
+- **Référence absolue** : session avec le `session_id` le plus ancien.
+- **Référence relative** : session immédiatement antérieure à la cible (avant-dernière dans l'ordre chronologique).
+- En mode N==1 : la cible est l'unique session disponible, aucune référence n'est attribuée.
+- En mode N==2 : référence absolue == avant-dernière. Pour éviter une comparaison redondante avec elle-même, `comparisons.relative` vaut `null`.
 
 ---
 
@@ -222,6 +220,7 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
 ```
 
 Si N == 2, `comparisons.relative` vaut `null`.
+Si N == 1, `comparisons.absolute` et `comparisons.relative` valent `null`.
 
 ---
 
@@ -291,24 +290,20 @@ Valeur positive = target plus élevé que reference.
 Règles de nullité :
 
 - Valeur `null` si reference = 0 (division impossible).
-- Valeur `null` si `target` ou `reference` vaut `null` (donnée manquante d'un côté).
-
-Cette règle s'applique à tous les deltas : `avg`, `min`, `max`, et les
-6 deltas percentiles (`p90_exact_delta_pct`, `p95_exact_delta_pct`,
-`p99_exact_delta_pct`, `p90_approx_delta_pct`, `p95_approx_delta_pct`,
-`p99_approx_delta_pct`).
+- Valeur `null` si `target` ou `reference` est `null` (donnée manquante d'un côté).
+- Valeur `null` pour les percentiles si la méthode (`exact` ou `approx`)
+  est sous le seuil minimal côté target **ou** côté reference.
 
 ---
 
 ## Sémantique des valeurs `null`
 
-| Situation                                       | Valeur dans le JSON |
-| ----------------------------------------------- | ------------------- |
-| Sonde présente avec données suffisantes         | Valeur numérique    |
-| Sonde absente de toute la session               | `null`              |
-| Percentile sous le seuil `samples >= 20`        | `null`              |
-| Percentile `*_exact` pour une sonde `fast_*`    | `null`              |
-| Delta impossible (référence = 0 ou valeur null) | `null`              |
+| Contexte                                        | Signification                                                                |
+| ----------------------------------------------- | ---------------------------------------------------------------------------- |
+| Sonde absente de la session                     | Branche de code non atteinte                                                 |
+| Percentile sous seuil `samples >= 20`           | Échantillon insuffisant pour calcul statistique fiable                       |
+| Delta impossible (référence = 0 ou valeur null) | `null`                                                                       |
+| Mode session unique (N==1)                      | `comparisons.absolute` et `comparisons.relative` valent `null` (cible seule) |
 
 `null` signifie **"donnée non disponible ou non calculable"**, jamais zéro implicite.
 Une sonde absente indique que la branche de code correspondante
@@ -369,7 +364,9 @@ elle ; seul le rapport JSON est (re)généré dans son dossier existant.
 - Une session sans fichier `agg` est ignorée avec avertissement.
 - Une session sans fichier `frame` est traitée — tous les percentiles `*_exact` valent `null`.
 - Une session sans fichier `fast` est traitée — sondes `fast_*` absentes = `null`.
-- Si moins de 2 sessions sont disponibles au total, le script s'arrête avec un message explicite.
+- Si une seule session est disponible, le script produit un rapport en mode single
+  (`comparisons.absolute` et `comparisons.relative` valent `null`). Si aucune
+  session n'est disponible, le script s'arrête avec un message explicite.
 - Les fichiers sont déplacés **après** écriture réussie du JSON de sortie.
   En cas d'erreur, aucun fichier source n'est déplacé.
 - `logs/results/` est en lecture seule, **sauf** dans les deux cas listés à la section

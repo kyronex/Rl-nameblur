@@ -29,7 +29,7 @@
    ├── B-02  Correction association fast tracker (cause racine)             ✅
    ├── B-03  TTL temporel (cycle de vie en secondes côté Tracker)           ✅
    ├── B-00  Anomalies config #2, #3, #4                                    ✅
-   ├── B-04  Investigation dérive dt + nettoyage post-B-03                  🔴
+   ├── B-04  Investigation dérive dt + nettoyage post-B-03                  ✅
    │    ├── livrable interne : correction compute_predicted_rect (#60)
    │    └── déclencheur humain : footage tagué teleport (pendant B-04)
    ├── B-00b Anomalie config #1 (teleport_thresh)                           🔴
@@ -283,7 +283,7 @@
 
 ---
 
-### 🔴 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[MIS À JOUR post-session JSONL]`
+### 🟢 B-04 — Investigation dérive `dt` motion + nettoyage post-B-03 `[LIVRÉ]`
 
 - **Préconditions dures** :
   - B-03 livré et validé ✅
@@ -349,8 +349,8 @@
   3. ✅ Format normalisé JSONL défini.
   4. ✅ Audit contenu fichiers par fichier (fonctions principales workflow → sondes retenues) .
   5. ✅ Session JSONL réelle collectée et analysée (session post-B-04b) — invalidation hypothèse floutage/fast, requalification fourchette FPS.
-  6. ⏳ Session > 30 s — variance FPS mesurée **séparément** scène avec/sans masks actifs.
-  7. ⏳ Si variance > 15% à charge constante → profilage cProfile / py-spy.
+  6. ✅ Session > 30 s — variance FPS mesurée **séparément** scène avec/sans masks actifs.
+  7. ✅ Si variance > 15% à charge constante → profilage cProfile / py-spy.
 
 - **Dettes à solder avant clôture** :
   - Reprendre étape 4 protocole : localiser les sondes restantes par fichier, compléter cartographie.
@@ -375,7 +375,7 @@
 | FPS stable > 30 s (variance < 15% à charge constante) | ⚠️ pending validation B-04c                  |
 | Logs `[FAST-APPLY]` / `ZOMBIE-SUSPECT` en DEBUG       | ✅                                           |
 | Footage teleport tagué                                | ❌ précondition humaine non déclenchée       |
-| README.md alligner avec le code                       | ⏳ En cours                                  |
+| README.md alligner avec le code                       | ✅ En cours                                  |
 
 ---
 
