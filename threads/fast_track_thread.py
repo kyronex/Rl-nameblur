@@ -159,7 +159,6 @@ class FastTrackThread:
                 self._last_processed_ts = frame_ts
 
                 # Lag = délai entre dépôt de la frame et début effectif du traitement.
-                # frame_ts est en time.time() côté producer ; on convertit.
                 lag_ms = (time.perf_counter() - frame_ts) * 1000.0
                 bench.probe("fast_wakeup_lag_ms", lag_ms)
                 bench.count("fast_tick_total")

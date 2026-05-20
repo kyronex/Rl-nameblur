@@ -162,8 +162,7 @@ class BenchJsonlWriter:
         if not snap:
             self._bench.count("bench_writer_frame_empty_snap")
             return
-        if snap:
-            self._enqueue(snap)
+        self._enqueue(snap)
 
     # ─────────────────────────────────────────────────────────────
     #  Threads internes

@@ -63,48 +63,51 @@ CaptureThread (worker daemon)
 
 ### Capture
 
-| Fichier                   | Rôle                                                                   |
-| ------------------------- | ---------------------------------------------------------------------- |
-| `capture/base.py`         | Interface `CaptureSource` + exception `CaptureSourceNotFound`          |
-| `capture/config.py`       | Snapshot immuable `CaptureConfig` (paramètres `capture.*`)             |
-| `capture/selector.py`     | `SourceSelector.resolve()` — probe et sélection automatique du backend |
-| `capture/dxcam_source.py` | Backend DXCam (Windows, DirectX — prioritaire)                         |
-| `capture/mss_source.py`   | Backend MMS                                                            |
-| `capture/cv2_source.py`   | Backend OpenCV VideoCapture (fallback OBS Virtual Camera)              |
-| `capture/wgc_source.py`   | Backend Windows Graphics Capture (WGC)                                 |
+| Fichier                     | Rôle                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------ |
+| `capture/base.py`           | Interface `CaptureSource` + exception `CaptureSourceNotFound`                        |
+| `capture/config.py`         | Snapshot immuable `CaptureConfig` (paramètres `capture.*`)                           |
+| `capture/selector.py`       | `SourceSelector.resolve()` — probe et sélection automatique du backend               |
+| `capture/dxcam_source.py`   | Backend DXCam (Windows, DirectX — prioritaire)                                       |
+| `capture/mss_source.py`     | Backend MSS                                                                          |
+| `capture/cv2_source.py`     | Backend OpenCV VideoCapture (fallback OBS Virtual Camera)                            |
+| `capture/wgc_source.py`     | Backend Windows Graphics Capture (WGC)                                               |
+| `threads/capture_thread.py` | `CaptureThread` — worker daemon, grab continu, frame_id monotone, accès non bloquant |
 
 ### Détection
 
-| Fichier                    | Rôle                                             |
-| -------------------------- | ------------------------------------------------ |
-| `detection/<TODO>.py`      | TODO — détection HSV des cartouches (full frame) |
-| `threads/<TODO>_thread.py` | TODO — worker Slow détection asynchrone          |
-| `threads/<TODO>_thread.py` | TODO — worker Fast (OF → NCC → stale fallback)   |
+| Fichier                    | Rôle                                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `detection/detect.py`      | Pipeline complet — resize, white mask, Sobel, refine, contours, remap + `ncc_match` (fast track)                                |
+| `detection/boxes.py`       | `process_channel` étapes principale : extract → geometry → split → bg/text validation → bands → alignment → gradient → template |
+| `detection/mask.py`        | Masques bas-niveau — variance saturation, masque blanc, Sobel interior, refine & merge                                          |
+| `threads/detect_thread.py` | `DetectThread` — worker Slow, latest-wins, déduplication par timestamp, double lock                                             |
 
 ### Tracker
 
-| Fichier             | Rôle                                                    |
-| ------------------- | ------------------------------------------------------- |
-| `tracker/<TODO>.py` | TODO — orchestrateur `tick()` + `get_confirmed_masks()` |
-| `tracker/<TODO>.py` | TODO — `TrackerConfig` (snapshot paramètres)            |
-| `tracker/<TODO>.py` | TODO — associator (gating + coût IoU+pHash + Hungarian) |
-| `tracker/<TODO>.py` | TODO — `MaskRegistry` (CRUD + TTL + éviction)           |
-| `tracker/<TODO>.py` | TODO — modèle de mouvement                              |
-| `core/<TODO>.py`    | TODO — dataclass `MaskState`                            |
+| Fichier                        | Rôle                                                                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `tracker/associator.py`        | `Associator` — gating géométrique (centre + vitesse), score composite IoU+pHash+continuity, Hungarian , filtres gated/min_score  |
+| `tracker/hasher.py`            | pHash 8×8 (resize+threshold mean+bit-packing) + Hamming similarity + `best_hash_similarity` mode legacy (max) ou top-k moyenné   |
+| `tracker/models.py`            | `TrackerConfig` (dataclass) + `MatchScore` (frozen+slots) + `Detection` (rect, phash, source, confidence, template, scores)      |
+| `tracker/motion.py`            | Fonctions pures`apply_detection` + `compute_predicted_rect` +`predict_position`(mute `mask.rect`)                                |
+| `tracker/registry.py`          | `MaskRegistry` —`mark_matched`, `tick_and_expire`, `_evict_one` (priorité LOST > PENDING > CONFIRMED, puis `last_seen_ts`)       |
+| `threads/fast_track_thread.py` | `FastTrackThread` — worker event-driven : OF (phase globale) → NCC sur ROI adaptive margin → fallback stale/lost                 |
+| `threads/fast_track_config.py` | `FastTrackConfig` — snapshot immuable(frozen) : écran, NCC, stale, timeout worker, adaptive margin + validations `__post_init__` |
 
 ### Sortie
 
-| Fichier                    | Rôle                                                   |
-| -------------------------- | ------------------------------------------------------ |
-| `core/<TODO>.py`           | TODO — `apply_blur` (pixelate / box / gaussian / fill) |
-| `threads/<TODO>_thread.py` | TODO — double buffer zéro-copie → OBS Virtual Camera   |
+| Fichier                  | Rôle                                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| `core/blur.py`           | `apply_blur` — 4 modes (pixelate / box / gaussian / fill), snap grille, merge rectangles |
+| `threads/send_thread.py` | `SendThread` — double buffer zéro-copie (swap pointeurs), envoi vers OBS Virtual Camera  |
 
-### Debug / Bench
+### Bench / Métriques
 
-| Fichier           | Rôle                                                |
-| ----------------- | --------------------------------------------------- |
-| `debug/<TODO>.py` | TODO — collecteur de sondes + export JSONL          |
-| `debug/<TODO>.py` | TODO — overlay visuel (rectangles, UIDs, métriques) |
+| Fichier                 | Rôle                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `bench/bench.py`        | `BenchRegistry` — singleton centralisé : probes, counts, gauges, snapshots multi-canaux                |
+| `bench/jsonl_writer.py` | `BenchJsonlWriter` — writer JSONL asynchrone (queue bornée, drain propre, 3 canaux agg / frame / fast) |
 
 #### Paramètres clés à tuner
 
