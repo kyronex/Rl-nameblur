@@ -7,6 +7,9 @@ comme cible, la compare à :
   - référence absolue : session la plus ancienne
   - référence relative : avant-dernière session (null si N == 2)
 
+Si une seule session est disponible (N == 1), le rapport est produit en mode
+single : comparisons.absolute et comparisons.relative valent null.
+
 Produit : logs/results/<session_id>/<session_id>.json
 """
 
@@ -29,8 +32,9 @@ ROUND_DIGITS = 3
 PERCENTILE_MIN_SAMPLES = 20
 PERCENTILES = [90, 95, 99]
 
-DIR_JSON = Path("logs/json")
-DIR_RESULTS = Path("logs/results")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DIR_JSON = _PROJECT_ROOT / "logs" / "json"
+DIR_RESULTS = _PROJECT_ROOT / "logs" / "results"
 
 FORMAT_VERSION = "1.0"
 
@@ -45,18 +49,15 @@ log = logging.getLogger(__name__)
 # Helpers — arrondi
 # ---------------------------------------------------------------------------
 
-
 def _r(val: float | None) -> float | None:
     """Arrondi à ROUND_DIGITS décimales, None passthrough."""
     if val is None:
         return None
     return round(val, ROUND_DIGITS)
 
-
 # ---------------------------------------------------------------------------
 # Helpers — JSONL
 # ---------------------------------------------------------------------------
-
 
 def _read_jsonl(path: Path) -> list[dict]:
     """Lit un fichier JSONL. Ignore les lignes malformées avec warning."""
@@ -72,11 +73,9 @@ def _read_jsonl(path: Path) -> list[dict]:
                 log.warning("Ligne ignorée — %s:%d — %s", path.name, lineno, exc)
     return rows
 
-
 # ---------------------------------------------------------------------------
 # Découverte des sessions
 # ---------------------------------------------------------------------------
-
 
 def _session_id_from_stem(stem: str) -> str | None:
     """
@@ -87,7 +86,6 @@ def _session_id_from_stem(stem: str) -> str | None:
     if len(parts) == 3:
         return parts[2]
     return None
-
 
 def _ingest_directory(directory: Path, priority: bool, candidates: dict) -> None:
     """
@@ -133,7 +131,6 @@ def _ingest_directory(directory: Path, priority: bool, candidates: dict) -> None
             "frame": files.get("frame"),
         }
 
-
 def _find_sessions() -> dict[str, dict[str, Path]]:
     """
     Retourne {session_id: {"agg": Path, "fast": Path|None, "frame": Path|None}}
@@ -145,11 +142,9 @@ def _find_sessions() -> dict[str, dict[str, Path]]:
     _ingest_directory(DIR_JSON, priority=True, candidates=candidates)
     return candidates
 
-
 # ---------------------------------------------------------------------------
 # Chargement d'une session
 # ---------------------------------------------------------------------------
-
 
 def _load_session(files: dict[str, Path]) -> tuple[list, list, list]:
     """
@@ -183,11 +178,9 @@ def _load_session(files: dict[str, Path]) -> tuple[list, list, list]:
 
     return agg_rows, frame_rows, fast_rows
 
-
 # ---------------------------------------------------------------------------
 # Agrégation — canal agg
 # ---------------------------------------------------------------------------
-
 
 def _agg_probes(rows: list[dict]) -> dict[str, dict]:
     """
@@ -233,7 +226,6 @@ def _agg_probes(rows: list[dict]) -> dict[str, dict]:
         }
     return result
 
-
 def _agg_rates(rows: list[dict]) -> dict[str, float]:
     """Moyenne arithmétique des valeurs rates sur toutes les lignes agg."""
     accum: dict[str, list[float]] = {}
@@ -245,7 +237,6 @@ def _agg_rates(rows: list[dict]) -> dict[str, float]:
             if isinstance(val, (int, float)):
                 accum.setdefault(name, []).append(float(val))
     return {name: sum(vals) / len(vals) for name, vals in accum.items()}
-
 
 def _agg_gauges(rows: list[dict]) -> dict[str, float]:
     """Moyenne arithmétique des valeurs gauges sur toutes les lignes agg."""
@@ -259,7 +250,6 @@ def _agg_gauges(rows: list[dict]) -> dict[str, float]:
                 accum.setdefault(name, []).append(float(val))
     return {name: sum(vals) / len(vals) for name, vals in accum.items()}
 
-
 def _session_duration(rows: list[dict]) -> float | None:
     """ts dernière ligne - ts première ligne du canal agg."""
     timestamps = [
@@ -269,11 +259,9 @@ def _session_duration(rows: list[dict]) -> float | None:
         return None
     return float(max(timestamps) - min(timestamps))
 
-
 # ---------------------------------------------------------------------------
 # Percentiles — canaux frame et fast
 # ---------------------------------------------------------------------------
-
 
 def _percentile_value(data: list[float], pct: int) -> float | None:
     """
@@ -285,10 +273,7 @@ def _percentile_value(data: list[float], pct: int) -> float | None:
     qs = quantiles(data, n=100, method="inclusive")
     return qs[pct - 1]
 
-
-def _collect_frame_samples(
-    frame_rows: list[dict],
-) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+def _collect_frame_samples(frame_rows: list[dict]) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
     """
     Depuis les lignes du canal frame, collecte :
       - exact_samples  : lignes où count == 1, valeur = avg
@@ -316,10 +301,7 @@ def _collect_frame_samples(
 
     return exact, approx
 
-
-def _collect_fast_approx_samples(
-    fast_rows: list[dict],
-) -> dict[str, list[float]]:
+def _collect_fast_approx_samples(fast_rows: list[dict]) -> dict[str, list[float]]:
     """
     Depuis les lignes du canal fast, collecte approx_samples par probe_name.
     *_exact toujours null pour les sondes fast_* (pas de données individuelles).
@@ -341,12 +323,7 @@ def _collect_fast_approx_samples(
 
     return approx
 
-
-def _build_percentile_block(
-    probe_name: str,
-    exact_samples: dict[str, list[float]],
-    approx_samples: dict[str, list[float]],
-) -> dict:
+def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]]) -> dict:
     """
     Construit le bloc percentiles pour une sonde.
     Sondes fast_* : samples_exact = 0 et tous *_exact = null.
@@ -367,17 +344,11 @@ def _build_percentile_block(
 
     return block
 
-
 # ---------------------------------------------------------------------------
 # Construction du bloc session
 # ---------------------------------------------------------------------------
 
-
-def _build_session_block(
-    agg_rows: list[dict],
-    frame_rows: list[dict],
-    fast_rows: list[dict],
-) -> dict:
+def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: list[dict]) -> dict:
     """
     Construit le bloc session complet : {duration_s, probes, rates, gauges}.
     """
@@ -409,18 +380,15 @@ def _build_session_block(
         "gauges": {k: _r(v) for k, v in gauges.items()},
     }
 
-
 # ---------------------------------------------------------------------------
 # Calcul des deltas
 # ---------------------------------------------------------------------------
-
 
 def _delta_pct(target: float | None, ref: float | None) -> float | None:
     """((target - ref) / ref) * 100. None si l'un ou l'autre est None ou ref == 0."""
     if target is None or ref is None or ref == 0:
         return None
     return _r((target - ref) / ref * 100)
-
 
 def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
     """
@@ -447,7 +415,6 @@ def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
 
     return deltas
 
-
 def _build_scalar_deltas(target: dict, ref: dict) -> dict:
     """Construit les deltas pour rates ou gauges (valeurs scalaires)."""
     all_keys = set(target) | set(ref)
@@ -456,25 +423,16 @@ def _build_scalar_deltas(target: dict, ref: dict) -> dict:
         for key in sorted(all_keys)
     }
 
-
-def _appeared_disappeared(
-    target_probes: dict, ref_probes: dict
-) -> tuple[list, list]:
+def _appeared_disappeared(target_probes: dict, ref_probes: dict) -> tuple[list, list]:
     """Retourne (appeared_in_target, disappeared_in_target)."""
     t_keys = set(target_probes)
     r_keys = set(ref_probes)
     return sorted(t_keys - r_keys), sorted(r_keys - t_keys)
 
 
-def _build_comparison(
-    ref_session_id: str,
-    ref_block: dict,
-    target_block: dict,
-) -> dict:
+def _build_comparison(ref_session_id: str,ref_block: dict,target_block: dict) -> dict:
     """Construit un bloc de comparaison complet target vs référence."""
-    appeared, disappeared = _appeared_disappeared(
-        target_block["probes"], ref_block["probes"]
-    )
+    appeared, disappeared = _appeared_disappeared(target_block["probes"], ref_block["probes"])
     return {
         "reference_session": ref_session_id,
         "reference": ref_block,
@@ -493,11 +451,9 @@ def _build_comparison(
         "disappeared_in_target": disappeared,
     }
 
-
 # ---------------------------------------------------------------------------
 # Déplacement des fichiers
 # ---------------------------------------------------------------------------
-
 
 def _move_session_to_results(session_id: str, files: dict[str, Path]) -> None:
     """
@@ -519,11 +475,9 @@ def _move_session_to_results(session_id: str, files: dict[str, Path]) -> None:
             shutil.move(str(path), dest_dir / path.name)
             log.info("Déplacé : %s → logs/results/%s/", path.name, session_id)
 
-
 # ---------------------------------------------------------------------------
 # Écriture du rapport
 # ---------------------------------------------------------------------------
-
 
 def _write_report(report: dict, report_path: Path) -> None:
     """
@@ -531,17 +485,13 @@ def _write_report(report: dict, report_path: Path) -> None:
     Lève OSError en cas d'échec.
     """
     tmp_path = report_path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    tmp_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp_path.replace(report_path)
     log.info("Rapport écrit : %s", report_path)
-
 
 # ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
-
 
 def main() -> None:
     sessions = _find_sessions()
@@ -550,24 +500,22 @@ def main() -> None:
         log.error("Aucune session disponible.")
         sys.exit(1)
 
-    if len(sessions) < 2:
-        log.error("Moins de 2 sessions disponibles — comparaison impossible.")
-        sys.exit(1)
-
     sorted_ids = sorted(sessions.keys())
     target_id = sorted_ids[-1]
-    absolute_id = sorted_ids[0]
+    absolute_id = sorted_ids[0] if len(sorted_ids) >= 2 else None
     relative_id = sorted_ids[-2] if len(sorted_ids) >= 3 else None
 
     log.info("Cible       : %s", target_id)
-    log.info("Abs. réf.   : %s", absolute_id)
-    log.info("Rel. réf.   : %s", relative_id if relative_id else "N/A (N==2)")
+    log.info("Abs. réf.   : %s", absolute_id if absolute_id else "N/A (N==1)")
+    log.info("Rel. réf.   : %s", relative_id if relative_id else "N/A (N<3)")
 
     target_agg, target_frame, target_fast = _load_session(sessions[target_id])
-    abs_agg, abs_frame, abs_fast = _load_session(sessions[absolute_id])
-
     target_block = _build_session_block(target_agg, target_frame, target_fast)
-    abs_block = _build_session_block(abs_agg, abs_frame, abs_fast)
+
+    abs_block = None
+    if absolute_id:
+        abs_agg, abs_frame, abs_fast = _load_session(sessions[absolute_id])
+        abs_block = _build_session_block(abs_agg, abs_frame, abs_fast)
 
     rel_block = None
     if relative_id:
@@ -580,7 +528,11 @@ def main() -> None:
         "target_session": target_id,
         "target": target_block,
         "comparisons": {
-            "absolute": _build_comparison(absolute_id, abs_block, target_block),
+            "absolute": (
+                _build_comparison(absolute_id, abs_block, target_block)
+                if abs_block is not None
+                else None
+            ),
             "relative": (
                 _build_comparison(relative_id, rel_block, target_block)
                 if rel_block is not None
@@ -590,18 +542,24 @@ def main() -> None:
     }
 
     target_in_json = sessions[target_id]["agg"].is_relative_to(DIR_JSON)
+
     report_dir = DIR_RESULTS / target_id
-    report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{target_id}.json"
+
+    if target_in_json:
+        try:
+            _move_session_to_results(target_id, sessions[target_id])
+        except OSError as exc:
+            log.error("Échec déplacement session — rapport non écrit. %s", exc)
+            sys.exit(1)
+    else:
+        report_dir.mkdir(parents=True, exist_ok=True)  # garantie explicite spec point 5
 
     try:
         _write_report(report, report_path)
     except OSError as exc:
-        log.error("Échec écriture rapport — aucun fichier déplacé. %s", exc)
+        log.error("Échec écriture rapport. %s", exc)
         sys.exit(1)
-
-    if target_in_json:
-        _move_session_to_results(target_id, sessions[target_id])
 
 
 if __name__ == "__main__":
