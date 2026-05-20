@@ -159,6 +159,9 @@ class BenchJsonlWriter:
         if self._mode != "frame":
             return
         snap = self._bench.snapshot_frame()
+        if not snap:
+            self._bench.count("bench_writer_frame_empty_snap")
+            return
         if snap:
             self._enqueue(snap)
 
@@ -215,16 +218,38 @@ class BenchJsonlWriter:
             )
 
     def _writer_loop(self):
-        """Consommateur : lit la queue et écrit dans le fichier."""
+        """Consommateur : lit la queue et écrit dans le fichier.
+        Deux causes de sortie de la boucle principale :
+        - timeout sur get() + stop_event positionné
+        - poison pill reçue (line is None)
+        Dans les deux cas, un drain unique vide la queue avant de retourner.
+        """
         while True:
             try:
                 line = self._q.get(timeout=0.5)
             except queue.Empty:
                 if self._stop_event.is_set():
-                    break
-                continue
+                    break          # → drain
+                continue           # pas encore arrêté, on reboucle
 
-            # Poison pill
+            if line is None:
+                break              # poison pill → drain
+
+            if self._fh is not None:
+                try:
+                    self._fh.write(line + "\n")
+                except OSError as e:
+                    log.error("[bench.writer.%s] erreur écriture : %s", self._mode, e)
+
+        # ── Drain unique ──────────────────────────────────────────────────────────
+        # Atteint depuis les deux chemins de sortie (stop_event ou poison pill).
+        # Vide les lignes restantes ; s'arrête sur Empty ou nouvelle poison pill.
+        while True:
+            try:
+                line = self._q.get_nowait()
+            except queue.Empty:
+                break
+
             if line is None:
                 break
 
@@ -233,3 +258,4 @@ class BenchJsonlWriter:
                     self._fh.write(line + "\n")
                 except OSError as e:
                     log.error("[bench.writer.%s] erreur écriture : %s", self._mode, e)
+

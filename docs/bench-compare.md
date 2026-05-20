@@ -21,7 +21,7 @@ les deux comparaisons valent `null`.
 
 - Python 3.10+
 - Dépendances : stdlib uniquement (`json`, `pathlib`, `datetime`, `statistics`,
-  `shutil`, `sys`)
+  `shutil`, `sys`, `logging`)
 - Fichiers JSONL produits par `core/bench.py` (canaux `frame`, `agg`, `fast`)
 
 ---
@@ -81,19 +81,18 @@ disponibles. La cible et les références peuvent provenir de l'un comme de l'au
 
 ### Cas de modification de `logs/results/`
 
-Deux cas — et deux seulement — où des fichiers de `logs/results/` sont modifiés :
+Trois cas — et trois seulement — où des fichiers de `logs/results/` sont modifiés :
 
 1. **Doublon de `session_id`** entre `logs/json/` et `logs/results/`
-   `logs/json/` est prioritaire (cas attendu uniquement après renommage manuel).
-   Un avertissement est émis. Le dossier `logs/results/<session_id>/` est
-   **vidé puis remplacé** par les fichiers venant de `logs/json/`.
+   `logs/json/` est prioritaire (cas attendu uniquement après renommage manuel ou rejeu).
+   Un avertissement est émis à l'ingestion.
+   Le dossier `logs/results/<session_id>/` est **intégralement vidé** (JSONL **et** rapport préexistant éventuel) avant déplacement des fichiers venant de `logs/json/`. Le rapport est ensuite régénéré.
 
 2. **Cible déjà présente dans `logs/results/`**
-   Si la session la plus récente se trouve dans `logs/results/` (aucune session
-   neuve dans `logs/json/`, ou cible exclusivement archivée), le rapport JSON
-   `<target_session>.json` est régénéré dans le dossier existant.
-   Tout rapport JSON préexistant du même nom est **écrasé** après validation
-   de l'écriture du nouveau.
+   Si la session la plus récente se trouve dans `logs/results/` (aucune session neuve dans `logs/json/` portant le même `session_id`), aucun JSONL n'est déplacé ni supprimé. Seul le rapport JSON `<target_session>.json` est (re)généré dans le dossier existant, écrasant atomiquement tout rapport préexistant du même nom (écriture `.tmp` + `replace`).
+
+3. **Création du dossier cible**
+   Si la cible vient de `logs/json/` et que `logs/results/<session_id>/` n'existe pas, il est créé.
 
 Dans tous les autres cas, `logs/results/` est en lecture seule.
 
@@ -116,7 +115,7 @@ Soit **N** = nombre total de sessions disponibles (union `logs/json/` + `logs/re
 - **Référence absolue** : session avec le `session_id` le plus ancien.
 - **Référence relative** : session immédiatement antérieure à la cible (avant-dernière dans l'ordre chronologique).
 - En mode N==1 : la cible est l'unique session disponible, aucune référence n'est attribuée.
-- En mode N==2 : référence absolue == avant-dernière. Pour éviter une comparaison redondante avec elle-même, `comparisons.relative` vaut `null`.
+- En mode N==2 : seule la référence absolue est attribuée (`sorted_ids[0]`).`comparisons.relative` vaut `null` car l'avant-dernière session coïnciderait avec la référence absolue — comparaison redondante évitée par construction (`relative_id` n'est attribué que si N >= 3).
 
 ---
 
@@ -350,12 +349,9 @@ Ces sondes peuvent être absentes (`null`) sans que ce soit une anomalie :
 | `<target_session>.json`      | `logs/results/<target_session>/` | Rapport comparatif complet |
 | `bench_*_<session_id>.jsonl` | `logs/results/<session_id>/`     | Sources archivées          |
 
-Les fichiers sources présents dans `logs/json/` sont **déplacés** (pas copiés)
-vers `logs/results/<session_id>/` à la fin du traitement.
-`logs/json/` est vidé des sessions traitées après chaque exécution.
+Les fichiers sources présents dans `logs/json/` sont **déplacés** (pas copiés) vers `logs/results/<session_id>/` **avant** l'écriture du rapport JSON. `logs/json/` est vidé des sessions traitées après chaque exécution.
 
-Si la cible provient déjà de `logs/results/`, aucun déplacement n'est effectué pour
-elle ; seul le rapport JSON est (re)généré dans son dossier existant.
+Si la cible provient déjà de `logs/results/`, aucun déplacement n'est effectué pour elle ; seul le rapport JSON est (re)généré dans son dossier existant.
 
 ---
 
@@ -365,12 +361,10 @@ elle ; seul le rapport JSON est (re)généré dans son dossier existant.
 - Une session sans fichier `frame` est traitée — tous les percentiles `*_exact` valent `null`.
 - Une session sans fichier `fast` est traitée — sondes `fast_*` absentes = `null`.
 - Si une seule session est disponible, le script produit un rapport en mode single
-  (`comparisons.absolute` et `comparisons.relative` valent `null`). Si aucune
-  session n'est disponible, le script s'arrête avec un message explicite.
-- Les fichiers sont déplacés **après** écriture réussie du JSON de sortie.
-  En cas d'erreur, aucun fichier source n'est déplacé.
-- `logs/results/` est en lecture seule, **sauf** dans les deux cas listés à la section
-  « Cas de modification de `logs/results/` » (doublon de `session_id`, ou cible déjà
-  archivée dont le rapport JSON est régénéré).
-- Le champ `format_version` au sommet du JSON identifie la version du schéma de sortie.
-  Toute évolution non rétro-compatible du format incrémente ce champ.
+  (`comparisons.absolute` et `comparisons.relative` valent `null`). Si aucune session n'est disponible, le script s'arrête avec un message explicite.
+- Les fichiers JSONL sont déplacés **avant** l'écriture du rapport JSON.
+  En cas d'échec de l'écriture du rapport (`OSError`), les JSONL sont déjà archivés dans `logs/results/<session_id>/` mais le rapport `.json` est absent.
+  Une nouvelle exécution traitera alors la session comme « cible déjà dans results » (cas 2 ci-dessus) et régénérera le rapport sans re-déplacement.
+- En cas d'échec du déplacement lui-même (`OSError` levée par `_move_session_to_results`),le rapport n'est pas écrit et l'état filesystem peut être partiellement modifié (déplacement non atomique fichier par fichier).
+- `logs/results/` est en lecture seule, **sauf** dans les deux cas listés à la section « Cas de modification de `logs/results/` » (doublon de `session_id`, ou cible déjà archivée dont le rapport JSON est régénéré).
+- Le champ `format_version` au sommet du JSON identifie la version du schéma de sortie. Toute évolution non rétro-compatible du format incrémente ce champ.

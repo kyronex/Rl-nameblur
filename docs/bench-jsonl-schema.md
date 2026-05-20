@@ -21,7 +21,9 @@ Trois canaux indépendants, un fichier par canal et par session :
 | `agg`   | `bench_agg_{session_id}.jsonl`   | 1 ligne / `agg_interval` (config)  |
 | `fast`  | `bench_fast_{session_id}.jsonl`  | 1 ligne / `fast_interval` (config) |
 
-Chaque ligne est un objet JSON autonome, sans dépendance inter-lignes.
+Chaque ligne est un objet JSON autonome pour les sections `probes` et `gauges`.
+La section `counts` (canal `frame`) contient des **deltas inter-frames** — une reconstruction
+cumulative nécessite l'ensemble des lignes ordonnées par `mono`.
 
 ---
 
@@ -122,16 +124,17 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
 
 ### 5.2 Sections de données
 
-| Section  | Obligatoire | Peut être vide `{}` | Description                                                                   |
-| -------- | ----------- | ------------------- | ----------------------------------------------------------------------------- |
-| `probes` | oui         | oui                 | Statistiques de la frame courante (timing, pixels, scores, etc.).             |
-| `gauges` | oui         | oui                 | Dernière valeur scalaire observée dans la frame (ex. nombre de masks actifs). |
-| `counts` | oui         | oui                 | Compteurs bruts cumulatifs par frame (ex. `main_frames_total`).               |
+| Section  | Obligatoire | Peut être vide `{}` | Description                                                                          |
+| -------- | ----------- | ------------------- | ------------------------------------------------------------------------------------ |
+| `probes` | oui         | oui                 | Statistiques de la frame courante (timing, pixels, scores, etc.).                    |
+| `gauges` | oui         | oui                 | Dernière valeur scalaire observée dans la frame (ex. nombre de masks actifs).        |
+| `counts` | oui         | oui                 | Compteurs différentiels par frame — événements survenus depuis le snapshot précédent |
 
-> ⚠️ **`counts` ≠ `rates`** : les valeurs de `counts` sont des entiers bruts cumulatifs depuis
-> le démarrage de la session, **pas** des taux normalisés par seconde. Cette sémantique diffère
-> volontairement des sections `rates` présentes sur les canaux `agg` et `fast`.
-> 📋 **Note d'évolution** : le canal `frame` n'expose pas de section `rates`. Si un besoin de
+> ⚠️ **`counts` ≠ `rates`** : les valeurs de `counts` sont des entiers différentiels depuis
+> le snapshot précédent (typiquement 1 frame). Ils ne sont pas cumulatifs depuis le démarrage
+> de session — un cumsum() pandas permet de les reconstruire en post-analyse. Cette sémantique
+> diffère volontairement des sections `rates` présentes sur les canaux `agg` et `fast`.
+> 📋 Note d'évolution : le canal frame n'expose pas de section `rates`. Si un besoin de
 > taux par frame émerge, il constitue un nouveau ticket avec bump `schema_version`.
 
 ---
@@ -181,8 +184,11 @@ Présent sur les canaux `agg` et `fast` uniquement.
 
 ### 6.4 `counts`
 
-Chaque entrée est un entier représentant un compteur brut cumulatif depuis le démarrage
-de la session. Présent sur le canal `frame` uniquement.
+Chaque entrée est un entier représentant un delta d'événements survenus depuis le snapshot
+précédent (typiquement une frame). Présent sur le canal `frame` uniquement.
+
+La valeur est remise à zéro après chaque appel à snapshot_frame() — elle n'est donc pas
+cumulative depuis le démarrage de session. Pour reconstituer un cumulatif en post-analyse
 
 ```json
 "<count_name>": <int>
