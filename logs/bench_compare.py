@@ -36,7 +36,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DIR_JSON = _PROJECT_ROOT / "logs" / "json"
 DIR_RESULTS = _PROJECT_ROOT / "logs" / "results"
 
-FORMAT_VERSION = "1.0"
+SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -186,35 +186,35 @@ def _agg_probes(rows: list[dict]) -> dict[str, dict]:
     """
     Agrège les sondes depuis les lignes du canal agg.
     Retourne {probe_name: {avg, min, max, count}}.
-    Ignore les clés non-domaine (ts, rates, gauges).
+    Lit uniquement la section `probes` (structure fixe documentée).
     """
     accum: dict[str, dict] = {}
 
     for row in rows:
-        for domain, probes in row.items():
-            if domain in ("ts", "rates", "gauges") or not isinstance(probes, dict):
+        probes = row.get("probes")
+        if not isinstance(probes, dict):
+            continue
+        for probe, stats in probes.items():
+            if not isinstance(stats, dict):
                 continue
-            for probe, stats in probes.items():
-                if not isinstance(stats, dict):
-                    continue
-                avg = stats.get("avg")
-                mn = stats.get("min")
-                mx = stats.get("max")
-                cnt = stats.get("count")
-                if None in (avg, mn, mx, cnt) or cnt == 0:
-                    continue
-                key = f"{domain}_{probe}"
-                if key not in accum:
-                    accum[key] = {
-                        "sum_weighted": 0.0,
-                        "min": mn,
-                        "max": mx,
-                        "count": 0,
-                    }
-                accum[key]["sum_weighted"] += avg * cnt
-                accum[key]["min"] = min(accum[key]["min"], mn)
-                accum[key]["max"] = max(accum[key]["max"], mx)
-                accum[key]["count"] += cnt
+            avg = stats.get("avg")
+            mn = stats.get("min")
+            mx = stats.get("max")
+            cnt = stats.get("count")
+            if None in (avg, mn, mx, cnt) or cnt == 0:
+                continue
+            key = probe
+            if key not in accum:
+                accum[key] = {
+                    "sum_weighted": 0.0,
+                    "min": mn,
+                    "max": mx,
+                    "count": 0,
+                }
+            accum[key]["sum_weighted"] += avg * cnt
+            accum[key]["min"] = min(accum[key]["min"], mn)
+            accum[key]["max"] = max(accum[key]["max"], mx)
+            accum[key]["count"] += cnt
 
     result: dict[str, dict] = {}
     for key, acc in accum.items():
@@ -279,25 +279,26 @@ def _collect_frame_samples(frame_rows: list[dict]) -> tuple[dict[str, list[float
       - exact_samples  : lignes où count == 1, valeur = avg
       - approx_samples : toutes les lignes, valeur = avg
     Retourne (exact_samples, approx_samples) indexés par probe_name.
+    Lit uniquement la section `probes` (structure fixe documentée).
     """
     exact: dict[str, list[float]] = {}
     approx: dict[str, list[float]] = {}
 
     for row in frame_rows:
-        for domain, probes in row.items():
-            if domain in ("ts", "rates", "gauges") or not isinstance(probes, dict):
+        probes = row.get("probes")
+        if not isinstance(probes, dict):
+            continue
+        for probe, stats in probes.items():
+            if not isinstance(stats, dict):
                 continue
-            for probe, stats in probes.items():
-                if not isinstance(stats, dict):
-                    continue
-                avg = stats.get("avg")
-                cnt = stats.get("count")
-                if avg is None or cnt is None:
-                    continue
-                key = f"{domain}_{probe}"
-                approx.setdefault(key, []).append(float(avg))
-                if cnt == 1:
-                    exact.setdefault(key, []).append(float(avg))
+            avg = stats.get("avg")
+            cnt = stats.get("count")
+            if avg is None or cnt is None:
+                continue
+            key = probe
+            approx.setdefault(key, []).append(float(avg))
+            if cnt == 1:
+                exact.setdefault(key, []).append(float(avg))
 
     return exact, approx
 
@@ -305,23 +306,25 @@ def _collect_fast_approx_samples(fast_rows: list[dict]) -> dict[str, list[float]
     """
     Depuis les lignes du canal fast, collecte approx_samples par probe_name.
     *_exact toujours null pour les sondes fast_* (pas de données individuelles).
+    Lit uniquement la section `probes` (structure fixe documentée).
     """
     approx: dict[str, list[float]] = {}
 
     for row in fast_rows:
-        for domain, probes in row.items():
-            if domain in ("ts", "rates", "gauges") or not isinstance(probes, dict):
+        probes = row.get("probes")
+        if not isinstance(probes, dict):
+            continue
+        for probe, stats in probes.items():
+            if not isinstance(stats, dict):
                 continue
-            for probe, stats in probes.items():
-                if not isinstance(stats, dict):
-                    continue
-                avg = stats.get("avg")
-                if avg is None:
-                    continue
-                key = f"{domain}_{probe}"
-                approx.setdefault(key, []).append(float(avg))
+            avg = stats.get("avg")
+            if avg is None:
+                continue
+            key = probe
+            approx.setdefault(key, []).append(float(avg))
 
     return approx
+
 
 def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]]) -> dict:
     """
@@ -523,8 +526,8 @@ def main() -> None:
         rel_block = _build_session_block(rel_agg, rel_frame, rel_fast)
 
     report = {
-        "format_version": FORMAT_VERSION,
-        "generated_at": datetime.now().isoformat(),
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": datetime.now().astimezone().isoformat(),
         "target_session": target_id,
         "target": target_block,
         "comparisons": {

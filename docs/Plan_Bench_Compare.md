@@ -25,25 +25,25 @@
 
 ## Tableau de synthèse
 
-| Id  | Critère                                       | `bench_fast.jsonl`    | `bench_agg.jsonl`     | `bench_frame.jsonl`           | `<session>.json` | Origine du manque                                     |
-| --- | --------------------------------------------- | --------------------- | --------------------- | ----------------------------- | ---------------- | ----------------------------------------------------- |
-| 1   | **Identification goulot principal**           | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🟡 5/10          | Traitement                                            |
-| 2   | **Statistiques robustes (percentiles)**       | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🟢 8/10          | RAS — `method='inclusive'` confirmé                   |
-| 3   | **Couverture canal fast**                     | 🟢 ✅ Source ok       | N/A                   | N/A                           | 🟡 5/10          | Traitement partiel — voir C1                          |
-| 4   | **Couverture canal agg**                      | N/A                   | 🟢 ✅ Source ok       | N/A                           | 🟢 9/10          | RAS                                                   |
-| 5   | **Couverture canal frame**                    | N/A                   | N/A                   | 🟢 ✅ Source ok               | 🟡 6/10          | Traitement (limite v1 documentée)                     |
-| 6   | **Détection anomalies**                       | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🔴 0/10          | Traitement (hors scope v1)                            |
-| 7   | **Analyse temporelle / drift**                | 🟢 ✅ Source ok       | 🟢 ✅ Source ok       | 🟢 ✅ Source ok               | 🔴 2/10          | Traitement — `mono` ignoré                            |
-| 8   | **Corrélations inter-probes**                 | 🟡 Source partielle   | 🟡 Source partielle   | 🟢 ✅ Source ok               | 🔴 1/10          | Traitement (hors scope v1)                            |
-| 9   | **Cohérence count vs samples**                | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🟡 4/10          | Traitement — voir C5                                  |
-| 10  | **Sémantique cumulative vs fenêtrée**         | 🟢 ✅ Source ok       | 🟢 ✅ Source ok       | 🟡 ✅ gauges instantanés §5.2 | 🟡 5/10          | Source documentée + Traitement                        |
-| 11  | **Classification probes/rates/gauges/counts** | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🟡 5/10          | Traitement — `counts` frame ignoré (C2)               |
-| 12  | **Conformité schéma documenté**               | 🟢 ✅ Source ok       | 🟢 ✅ Source ok       | 🟢 ✅ Source ok               | 🟡 5/10          | Traitement — ingestion permissive (C3)                |
-| 13  | **Budget frame / actionnabilité**             | ✅ Source ok          | ✅ Source ok          | ✅ Source ok                  | 🔴 2/10          | Traitement                                            |
-| 14  | **Métadonnées session**                       | 🟢 ✅ Source ok (5/5) | 🟢 ✅ Source ok (5/5) | 🟢 ✅ Source ok (5/5)         | 🔴 1/10          | Traitement — méta jamais lues                         |
-| 15  | **Validation `schema_version`**               | 🟢 ✅ émis = 1 (§2.1) | 🟢 ✅ émis = 1 (§2.1) | 🟢 ✅ émis = 1 (§2.1)         | 🔴 0/10          | Traitement — confirmé absent (C3)                     |
-| 16  | **Respect matrice §7 sections/canal**         | 🟢 ✅ vérifié §7      | 🟢 ✅ vérifié §7      | 🟢 ✅ vérifié §7              | 🔴 2/10          | Traitement — aucune validation (C3)                   |
-| 17  | **Inventaire sondes exhaustif**               | 🟢 ✅ 15 sondes fast  | 🟢 ✅ multi-domaines  | 🟢 ✅ multi-domaines          | 🟡 4/10          | Traitement — `motion`/`associator` non valorisés (C4) |
+| Id  | Critère                                 | `bench_fast.jsonl`   | `bench_agg.jsonl`    | `bench_frame.jsonl`  | `<id>.json` | Origine du manque                                |
+| --- | --------------------------------------- | -------------------- | -------------------- | -------------------- | ----------- | ------------------------------------------------ |
+| 1   | **Identification goulot principal**     | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🟡 5/10     | Traitement                                       |
+| 2   | **Statistiques robustes (percentiles)** | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🟢 8/10     | RAS — `method='inclusive'` confirmé              |
+| 3   | **Couverture canal fast**               | 🟢 ✅ Source ok      | N/A                  | N/A                  | 🟡 5/10     | Traitement partiel — voir C1                     |
+| 4   | **Couverture canal agg**                | N/A                  | 🟢 ✅ Source ok      | N/A                  | 🟢 9/10     | RAS                                              |
+| 5   | **Couverture canal frame**              | N/A                  | N/A                  | 🟢 ✅ Source ok      | 🟡 6/10     | Traitement (limite v1 documentée)                |
+| 6   | **Détection anomalies**                 | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🔴 0/10     | Traitement (hors scope v1)                       |
+| 7   | **Analyse temporelle / drift**          | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🔴 2/10     | Traitement — `mono` ignoré                       |
+| 8   | **Corrélations inter-probes**           | 🟡 Source partielle  | 🟡 Source partielle  | 🟢 ✅ Source ok      | 🔴 1/10     | Traitement (hors scope v1)                       |
+| 9   | **Cohérence count vs samples**          | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🟡 4/10     | Traitement — voir C5                             |
+| 10  | **Sémantique cumulative vs fenêtrée**   | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🟡 ✅ gauges inst    | 🟡 5/10     | Source documentée + Traitement                   |
+| 11  | **Classification sondes**               | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🟡 5/10     | Traitement — `counts` frame ignoré (C2)          |
+| 12  | **Conformité schéma documenté**         | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🟡 5/10     | Traitement — ingestion permissive (C3)           |
+| 13  | **Budget frame / actionnabilité**       | ✅ Source ok         | ✅ Source ok         | ✅ Source ok         | 🔴 2/10     | Traitement                                       |
+| 14  | **Métadonnées session**                 | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🟢 ✅ Source ok      | 🔴 1/10     | Traitement — méta jamais lues                    |
+| 15  | **Validation `schema_version`**         | 🟢 ✅ émis = 1       | 🟢 ✅ émis = 1       | 🟢 ✅ émis = 1       | 🔴 0/10     | Traitement — confirmé absent (C3)                |
+| 16  | **Respect matrice §7 sections/canal**   | 🟢 ✅ vérifié §7     | 🟢 ✅ vérifié §7     | 🟢 ✅ vérifié §7     | 🔴 2/10     | Traitement — aucune validation (C3)              |
+| 17  | **Inventaire sondes exhaustif**         | 🟢 ✅ 15 sondes fast | 🟢 ✅ multi-domaines | 🟢 ✅ multi-domaines | 🟡 4/10     | Traitement — `motion`/`associator` non valorisés |
 
 ---
 

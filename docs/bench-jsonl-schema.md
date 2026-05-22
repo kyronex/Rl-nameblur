@@ -57,7 +57,7 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": <int>,
   "ts": <float>,
   "mono": <float>,
   "session_id": <string>,
@@ -84,7 +84,7 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": <int>,
   "ts": <float>,
   "mono": <float>,
   "session_id": <string>,
@@ -111,7 +111,7 @@ Le schéma ne normalise **pas** les unités des sondes. La sémantique (secondes
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": <int>,
   "ts": <float>,
   "mono": <float>,
   "session_id": <string>,
