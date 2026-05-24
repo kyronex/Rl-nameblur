@@ -14,14 +14,14 @@
 
 ## 🪜 Séquencement par complexité croissante
 
-| #      | Chantier                                                   | Complexité  | Effort  | Critères impactés        | Dépendances                |
-| ------ | ---------------------------------------------------------- | ----------- | ------- | ------------------------ | -------------------------- |
-| **S1** | **P0-5** — Filtre §7 défensif `_enqueue()`                 | 🟢 Triviale | ~30 min | Robustesse source        | Aucune                     |
-| **S2** | **C2 / P1** — Lecture `mono` + `frame_idx` dans le rapport | 🟡 Faible   | ~2 h    | #7 (2→7/10)              | Aucune                     |
-| **S3** | **C1 / P1** — Ventilation fine canal `fast`                | 🟡 Moyenne  | ~2-3 h  | #3 (5→8/10), #5          | S2 recommandé (mono utile) |
-| **S4** | **Backlog v2.a** — Buckets temporels (early/mid/late)      | 🟠 Moyenne+ | ~3-4 h  | #7 (7→9/10)              | S2 obligatoire             |
-| **S5** | **Backlog v2.b** — Détection anomalies (spikes, drift)     | 🟠 Élevée   | ~4-5 h  | #6 (3→8/10)              | S2 + S4                    |
-| **S6** | **Backlog v2.c** — Budget frame & corrélations             | 🔴 Élevée   | ~5-6 h  | #8 (4→8/10), #1 (5→8/10) | S2 + S3 + S4               |
+| #   | Chantier                                                   | Complexité  | Effort  | Critères impactés      | Dépendances                | OK  |
+| --- | ---------------------------------------------------------- | ----------- | ------- | ---------------------- | -------------------------- | --- |
+| S1  | **P0-5** — Filtre §7 défensif `_enqueue()`                 | 🟢 Triviale | ~30 min | Robustesse source      | Aucune                     | ✅  |
+| S2  | **C2 / P1** — Lecture `mono` + `frame_idx` dans le rapport | 🟡 Faible   | ~2 h    | #7 (2→7/10)            | Aucune                     | ✅  |
+| S3  | **C1 / P1** — Ventilation fine canal `fast`                | 🟡 Moyenne  | ~2-3 h  | #3 (5→8/10), #5        | S2 recommandé (mono utile) | ⏳  |
+| S4  | **Backlog v2.a** — Buckets temporels (early/mid/late)      | 🟠 Moyenne+ | ~3-4 h  | #7 (7→9/10)            | S2 obligatoire             | ⏳  |
+| S5  | **Backlog v2.b** — Détection anomalies (spikes, drift)     | 🟠 Élevée   | ~4-5 h  | #6 (3→8/10)            | S2 + S4                    | ⏳  |
+| S6  | **Backlog v2.c** — Budget frame & corrélations             | 🔴 Élevée   | ~5-6 h  | #8 (4→8/10),#1(5→8/10) | S2 + S3 + S4               | ⏳  |
 
 **Logique** : chaque étape laisse le pipeline fonctionnel et le rapport exploitable. Pas d'effet tunnel. Possible d'arrêter à n'importe quelle étape.
 

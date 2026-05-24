@@ -144,6 +144,17 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
   "target_session": "session_id",
   "target": {
     "duration_s": "float",
+    "duration_mono_s": "float",
+    "frames": {
+      "agg": "int",
+      "frame": "int",
+      "fast": "int"
+    },
+    "temporal_events": {
+      "agg": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" },
+      "frame": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" },
+      "fast": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" }
+    },
     "probes": {
       "<probe_name>": {
         "avg": "float",
@@ -172,6 +183,17 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
       "reference_session": "session_id",
       "reference": {
         "duration_s": "float",
+        "duration_mono_s": "float",
+        "frames": {
+          "agg": "int",
+          "frame": "int",
+          "fast": "int"
+        },
+        "temporal_events": {
+          "agg": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" },
+          "frame": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" },
+          "fast": { "median_interval_s": "float | null", "gaps_stat": "int", "gaps_fixed": "int | null" }
+        },
         "probes": {
           "<probe_name>": {
             "avg": "float",
@@ -196,6 +218,28 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
         }
       },
       "deltas": {
+        "duration_s": { "delta_pct": "float | null" },
+        "duration_mono_s": { "delta_pct": "float | null" },
+        "temporal": {
+          "agg": {
+            "frames": { "delta_pct": "float | null" },
+            "median_interval_s": { "delta_pct": "float | null" },
+            "gaps_stat": { "delta_pct": "float | null" },
+            "gaps_fixed": { "delta_pct": "float | null" }
+          },
+          "frame": {
+            "frames": { "delta_pct": "float | null" },
+            "median_interval_s": { "delta_pct": "float | null" },
+            "gaps_stat": { "delta_pct": "float | null" },
+            "gaps_fixed": { "delta_pct": "float | null" }
+          },
+          "fast": {
+            "frames": { "delta_pct": "float | null" },
+            "median_interval_s": { "delta_pct": "float | null" },
+            "gaps_stat": { "delta_pct": "float | null" },
+            "gaps_fixed": { "delta_pct": "float | null" }
+          }
+        },
         "probes": {
           "<probe_name>": {
             "avg_delta_pct": "float | null",
@@ -330,7 +374,36 @@ Moyenne arithmétique simple de toutes les valeurs `gauges.<nom>` sur les lignes
 
 ### Durée session
 
-`ts` de la dernière ligne `agg` − `ts` de la première ligne `agg`.
+`duration_s` = timestamp de la dernière ligne du canal `agg` − timestamp de la première ligne (horloge wall, canal `agg` uniquement).
+
+`duration_mono_s` = `max(ts_mono)` − `min(ts_mono)` sur la timeline unifiée des trois canaux (`agg` + `frame` + `fast`), horloge monotone (`perf_counter`). Robuste aux décalages d'horloge système. Vaut `0.0` si aucune ligne ingérée.
+
+### Analyse temporelle
+
+Pour chaque canal (`agg`, `frame`, `fast`), trois métriques sont calculées à partir des timestamps monotones :
+
+| Champ               | Définition                                                                                    | Valeur si `frames < 2` |
+| ------------------- | --------------------------------------------------------------------------------------------- | ---------------------- |
+| `median_interval_s` | Médiane statistique des intervalles consécutifs `ts[i+1] − ts[i]`                             | `null`                 |
+| `gaps_stat`         | Nombre d'intervalles dépassant **2× la médiane** (seuil statistique relatif)                  | `0`                    |
+| `gaps_fixed`        | Nombre d'intervalles dépassant `2 × EXPECTED_PERIOD_S[canal]` (seuil relatif à `config.yaml`) | `null` si event-driven |
+
+**Constantes :**
+
+```python
+EXPECTED_PERIOD_S = {
+    "agg":   cfg.get("debug.bench.agg.interval_s",  1.0),  # configurable
+    "frame": None,                                         # event-driven
+    "fast":  cfg.get("debug.bench.fast.interval_s", 1.0),  # configurable
+}
+GAP_STAT_FACTOR  = 3.0  # figé en v1
+GAP_FIXED_FACTOR = 2.0  # figé en v1
+```
+
+> Les cadences attendues `agg` et `fast` sont lues depuis `config.yaml` (clés `debug.bench.agg.interval_s` et `debug.bench.fast.interval_s`, défaut `1.0`).
+> Le canal `frame` est **event-driven** : pas de cadence attendue, `gaps_fixed = null`.
+> Les facteurs `GAP_STAT_FACTOR` et `GAP_FIXED_FACTOR` sont figés en v1.
+> `frames.<canal>` = nombre de lignes ingérées sur le canal.
 
 ### Delta (%)
 
@@ -370,13 +443,17 @@ est sous le seuil statistique minimal.
 
 Certaines sondes ne sont émises que dans des conditions spécifiques. Leur absence dans un rapport est **normale** et ne constitue pas une régression.
 
-| Sonde                      | Condition d'émission                              |
-| -------------------------- | ------------------------------------------------- |
-| `mask_lost_latency_ms`     | Uniquement si un mask passe en état LOST          |
-| `mask_revive_latency_ms`   | Uniquement si un mask est revitalisé              |
-| `motion_staleness_slow_ms` | Uniquement si staleness dépasse le seuil          |
-| `fast_stale_used`          | Uniquement si fallback stale déclenché            |
-| `selector_source_<name>`   | Émise une fois — présente dans `frame` uniquement |
+| Sonde                                       | Condition d'émission                              |
+| ------------------------------------------- | ------------------------------------------------- |
+| `mask_lost_latency_ms`                      | Uniquement si un mask passe en état LOST          |
+| `mask_revive_latency_ms`                    | Uniquement si un mask est revitalisé              |
+| `motion_staleness_slow_ms`                  | Uniquement si staleness dépasse le seuil          |
+| `fast_stale_used`                           | Uniquement si fallback stale déclenché            |
+| `selector_source_<name>`                    | Émise une fois — présente dans `frame` uniquement |
+| `selector_source_<name>`                    | Émise une fois — présente dans `frame` uniquement |
+| `temporal_events.<canal>.median_interval_s` | Canal avec moins de 2 lignes ingérées             |
+| `temporal_events.frame.gaps_fixed`          | Canal `frame` event-driven — toujours `null`      |
+| `deltas.temporal.*.delta_pct`               | Référence à `0` ou `null` (division impossible)   |
 
 ---
 
@@ -391,6 +468,8 @@ Certaines sondes ne sont émises que dans des conditions spécifiques. Leur abse
 | Seuils de régression configurables                  | Hors scope                                         |
 | Détection statistique (p-values)                    | Hors scope                                         |
 | Seuil minimal d'échantillons percentiles            | Figé à `20` en v1 — non configurable               |
+| Facteurs de `GAP_STAT_FACTOR`                       | Figés à `3.0` en v1 — non configurables            |
+| Facteurs de `GAP_FIXED_FACTOR`                      | Figés à `2.0` en v1 — non configurables            |
 
 ---
 
@@ -421,3 +500,6 @@ Si la cible provient déjà de `logs/results/`, aucun déplacement n'est effectu
 - `logs/results/` est en lecture seule, **sauf** dans les deux cas listés à la section « Cas de modification de `logs/results/` » (doublon de `session_id`, ou cible déjà archivée dont le rapport JSON est régénéré).
 - Le champ `schema_version` au sommet du JSON identifie la version du schéma de sortie. Toute évolution non rétro-compatible du format incrémente ce champ.
 - Le champ `generated_at` au sommet du JSON est un timestamp ISO 8601 **avec fuseau horaire local** (offset UTC inclus, ex. `2026-05-19T09:15:40.123456+02:00`). Produit par `datetime.now().astimezone().isoformat()`.
+- Une session sans fichier `frame` est traitée — tous les percentiles `*_exact` valent `null`, `frames.frame` vaut `0`, et `temporal_events.frame.{median_interval_s, gaps_stat, gaps_fixed}` valent respectivement `null`, `0`, `null`.
+- Le même principe s'applique aux canaux `agg` et `fast` absents (cohérence de la timeline par canal).
+- Les constantes `EXPECTED_PERIOD_S`, `GAP_STAT_FACTOR` et `GAP_FIXED_FACTOR` sont figées en v1 (cf. section « Analyse temporelle »). Toute modification fait évoluer la sémantique de `gaps_stat` / `gaps_fixed`.

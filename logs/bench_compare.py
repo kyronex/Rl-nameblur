@@ -21,7 +21,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from statistics import quantiles
+from statistics import quantiles, median
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,8 +36,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DIR_JSON = _PROJECT_ROOT / "logs" / "json"
 DIR_RESULTS = _PROJECT_ROOT / "logs" / "results"
 
-SCHEMA_VERSION = 1
+# Préserve `python logs/bench_compare.py` depuis racine projet
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
+from config import cfg
+
+SCHEMA_VERSION = 1
+EXPECTED_PERIOD_S = {
+    "agg":   cfg.get("debug.bench.agg.interval_s",  1.0),
+    "frame": None,
+    "fast":  cfg.get("debug.bench.fast.interval_s", 1.0),
+}
+
+# Seuils détection des gaps temporels
+GAPS_STAT_FACTOR  = 3   # gap statistique : interval > median × 3
+GAPS_FIXED_FACTOR = 2   # gap fixe       : interval > expected_period × 2
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -263,6 +277,129 @@ def _session_duration(rows: list[dict]) -> float | None:
     return float(max(timestamps) - min(timestamps))
 
 # ---------------------------------------------------------------------------
+# Helpers — analyse temporelle (timeline, frames, gaps)
+# ---------------------------------------------------------------------------
+
+def _extract_timeline(rows: list[dict]) -> list[dict]:
+    """
+    Extrait la timeline (ts wall-clock + mono) depuis les lignes d'un canal.
+    Ignore les lignes sans `ts` ou `mono` exploitables.
+    Trie par mono croissant pour garantir l'ordre temporel.
+    """
+    timeline: list[dict] = []
+    for row in rows:
+        ts = row.get("ts")
+        mono = row.get("mono")
+        if isinstance(ts, (int, float)) and isinstance(mono, (int, float)):
+            timeline.append({"ts": float(ts), "mono": float(mono)})
+    timeline.sort(key=lambda e: e["mono"])
+    return timeline
+
+def _compute_frames(timeline: list[dict]) -> int:
+    """Nombre d'événements (lignes JSONL) sur le canal."""
+    return len(timeline)
+
+def _compute_duration_mono(timeline: list[dict]) -> float | None:
+    """
+    Durée effective basée sur l'horloge monotone : max(mono) − min(mono).
+    Retourne None si moins de 2 événements.
+    """
+    if len(timeline) < 2:
+        return None
+    monos = [e["mono"] for e in timeline]
+    return float(max(monos) - min(monos))
+
+def _compute_temporal_events(timeline: list[dict], canal: str) -> dict:
+    """
+    Calcule statistiques temporelles sur les intervalles entre événements
+    consécutifs (basés sur `mono`).
+
+    Retourne :
+      - median_interval_s : médiane des intervalles
+      - gaps_stat         : nombre d'intervalles > median × GAPS_STAT_FACTOR
+      - gaps_fixed        : nombre d'intervalles > expected × GAPS_FIXED_FACTOR
+                            (None si EXPECTED_PERIOD_S[canal] is None — canal event-driven)
+
+    Retourne dict avec valeurs None si moins de 2 événements.
+    """
+    if len(timeline) < 2:
+        return {
+            "median_interval_s": None,
+            "gaps_stat": None,
+            "gaps_fixed": None,
+        }
+
+    monos = [e["mono"] for e in timeline]
+    intervals = [monos[i + 1] - monos[i] for i in range(len(monos) - 1)]
+
+    med = median(intervals)
+    gaps_stat = sum(1 for itv in intervals if itv > med * GAPS_STAT_FACTOR)
+
+    expected = EXPECTED_PERIOD_S.get(canal)
+    if expected is None:
+        gaps_fixed = None
+    else:
+        gaps_fixed = sum(1 for itv in intervals if itv > expected * GAPS_FIXED_FACTOR)
+
+    return {
+        "median_interval_s": med,
+        "gaps_stat": gaps_stat,
+        "gaps_fixed": gaps_fixed,
+    }
+
+def _build_temporal_deltas(ref_block: dict, target_block: dict) -> dict:
+    """
+    Construit les deltas temporels entre target et référence.
+    Couvre duration_mono_s, frames, et les sous-clés temporal_events par canal.
+
+    Structure retournée :
+      {
+        "duration_mono_s": {"delta_pct": float|None},
+        "agg":   {"frames": {...}, "median_interval_s": {...}, "gaps_stat": {...}, "gaps_fixed": {...}},
+        "frame": {...},
+        "fast":  {...},
+      }
+    """
+    deltas: dict = {
+        "duration_mono_s": {
+            "delta_pct": _delta_pct(
+                target_block.get("duration_mono_s"),
+                ref_block.get("duration_mono_s"),
+            )
+        }
+    }
+
+    target_events = target_block.get("temporal_events", {})
+    ref_events = ref_block.get("temporal_events", {})
+    target_frames = target_block.get("frames", {})
+    ref_frames = ref_block.get("frames", {})
+
+    for canal in ("agg", "frame", "fast"):
+        t_canal = target_events.get(canal, {})
+        r_canal = ref_events.get(canal, {})
+        deltas[canal] = {
+            "frames": {
+                "delta_pct": _delta_pct(
+                    target_frames.get(canal), ref_frames.get(canal)
+                )
+            },
+            "median_interval_s": {
+                "delta_pct": _delta_pct(
+                    t_canal.get("median_interval_s"),
+                    r_canal.get("median_interval_s"),
+                )
+            },
+            "gaps_stat": {
+                "delta_pct": _delta_pct(t_canal.get("gaps_stat"), r_canal.get("gaps_stat"))
+            },
+            "gaps_fixed": {
+                "delta_pct": _delta_pct(t_canal.get("gaps_fixed"), r_canal.get("gaps_fixed"))
+            },
+        }
+
+    return deltas
+
+# ---------------------------------------------------------------------------
 # Percentiles — canaux frame et fast
 # ---------------------------------------------------------------------------
 
@@ -356,7 +493,11 @@ def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]
 
 def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: list[dict]) -> dict:
     """
-    Construit le bloc session complet : {duration_s, probes, rates, gauges}.
+    Construit le bloc session complet :
+      {duration_s, duration_mono_s, frames, temporal_events, probes, rates, gauges}.
+
+    Les clés temporelles (duration_mono_s, frames, temporal_events) sont
+    placées avant probes/rates/gauges pour faciliter la lecture des rapports.
     """
     base_probes = _agg_probes(agg_rows)
     rates = _agg_rates(agg_rows)
@@ -379,12 +520,44 @@ def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: 
             **{k: _r(v) for k, v in pct_block.items()},
         }
 
+    # ── Analyse temporelle (3 canaux) ──
+    timeline_agg = _extract_timeline(agg_rows)
+    timeline_frame = _extract_timeline(frame_rows)
+    timeline_fast = _extract_timeline(fast_rows)
+
+    duration_mono = _compute_duration_mono(timeline_agg)
+
+    frames = {
+        "agg":   _compute_frames(timeline_agg),
+        "frame": _compute_frames(timeline_frame),
+        "fast":  _compute_frames(timeline_fast),
+    }
+
+    temporal_events = {
+        "agg":   _compute_temporal_events(timeline_agg, "agg"),
+        "frame": _compute_temporal_events(timeline_frame, "frame"),
+        "fast":  _compute_temporal_events(timeline_fast, "fast"),
+    }
+
+    # Arrondi des valeurs numériques dans temporal_events
+    temporal_events_rounded: dict[str, dict] = {}
+    for canal, events in temporal_events.items():
+        temporal_events_rounded[canal] = {
+            "median_interval_s": _r(events["median_interval_s"]),
+            "gaps_stat":  events["gaps_stat"],
+            "gaps_fixed": events["gaps_fixed"],
+        }
+
     return {
         "duration_s": _r(duration),
+        "duration_mono_s": _r(duration_mono),
+        "frames": frames,
+        "temporal_events": temporal_events_rounded,
         "probes": probes,
         "rates": {k: _r(v) for k, v in rates.items()},
         "gauges": {k: _r(v) for k, v in gauges.items()},
     }
+
 
 # ---------------------------------------------------------------------------
 # Calcul des deltas
@@ -457,6 +630,7 @@ def _build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) 
         "reference_session": ref_session_id,
         "reference": ref_block,
         "deltas": {
+            "temporal": _build_temporal_deltas(ref_block, target_block),
             "probes": _build_probe_deltas(
                 target_block["probes"], ref_block["probes"]
             ),
