@@ -17,6 +17,17 @@ log = logging.getLogger("bench.jsonl_writer")
 # ── Modes de snapshot supportés ──────────────────────────────────────────────
 _VALID_MODES = ("agg", "frame", "fast")
 
+# ── Sections autorisées par canal (cf. docs/bench-jsonl-schema.md §7) ────────
+# Matrice de validation défensive : toute section présente dans le snap mais
+# absente de cet ensemble pour un mode donné sera rejetée par _validate_snap().
+# Note : §7 décrit les sections AUTORISÉES (pas obligatoires) — l'absence
+# d'une section autorisée est légitime (pas de donnée sur la fenêtre).
+_ALLOWED_SECTIONS: dict[str, frozenset[str]] = {
+    "agg":   frozenset({"probes", "gauges", "rates"}),
+    "frame": frozenset({"probes", "gauges", "counts"}),
+    "fast":  frozenset({"probes", "gauges", "rates"}),
+}
+
 class BenchJsonlWriter:
     """Thread daemon qui écrit périodiquement un snapshot bench en JSONL.
 
@@ -64,6 +75,7 @@ class BenchJsonlWriter:
         self._fh = None
         self._q: queue.Queue[str | None] = queue.Queue(maxsize=queue_maxsize)
 
+        self._logged_violations: set[tuple[str, str]] = set()
         self._tick_thread: threading.Thread | None = None   # producteur périodique (agg / fast)
         self._writer_thread: threading.Thread | None = None # consommateur queue → fichier
         self._stop_event = threading.Event()
@@ -188,8 +200,83 @@ class BenchJsonlWriter:
         if snap:
             self._enqueue(snap)
 
+    def _validate_snap(self, snap) -> bool:
+        """Filtre défensif §7 — valide la structure du snap AVANT enrichissement.
+        En cas de rejet :
+          - Incrémente le compteur bench dédié (auto-exclu via _is_writer_probe).
+          - Émet un warning UNIQUE par (mode, motif) — déduplication via
+            self._logged_violations.
+
+        Returns:
+            True si le snap est valide et peut être écrit.
+            False si le snap doit être rejeté (early return dans _enqueue).
+        """
+        # Règle 1a : snap doit être un dict
+        if not isinstance(snap, dict):
+            self._bench.count(f"bench_writer_{self._mode}_rejected_invalid_type")
+            key = (self._mode, "__non_dict__")
+            if key not in self._logged_violations:
+                self._logged_violations.add(key)
+                log.warning(
+                    "[bench.writer.%s] snap rejeté : type %s (attendu : dict) — warning unique",
+                    self._mode,
+                    type(snap).__name__,
+                )
+            return False
+
+        # Règle 1b : snap doit être non vide
+        if not snap:
+            self._bench.count(f"bench_writer_{self._mode}_rejected_empty")
+            key = (self._mode, "__empty__")
+            if key not in self._logged_violations:
+                self._logged_violations.add(key)
+                log.warning(
+                    "[bench.writer.%s] snap rejeté : dict vide — warning unique",
+                    self._mode,
+                )
+            return False
+
+        allowed = _ALLOWED_SECTIONS[self._mode]
+
+        # Règle 2 : sections autorisées uniquement
+        for section in snap.keys():
+            if section not in allowed:
+                self._bench.count(f"bench_writer_{self._mode}_rejected_forbidden_section")
+                key = (self._mode, section)
+                if key not in self._logged_violations:
+                    self._logged_violations.add(key)
+                    log.warning(
+                        "[bench.writer.%s] section interdite %r rejetée (autorisées : %s) — "
+                        "warning unique par section",
+                        self._mode,
+                        section,
+                        sorted(allowed),
+                    )
+                return False
+
+        # Règle 3 : chaque section présente doit être un dict
+        for section, value in snap.items():
+            if not isinstance(value, dict):
+                self._bench.count(f"bench_writer_{self._mode}_rejected_invalid_type")
+                key = (self._mode, f"__section_type__:{section}")
+                if key not in self._logged_violations:
+                    self._logged_violations.add(key)
+                    log.warning(
+                        "[bench.writer.%s] section %r de type %s rejetée (attendu : dict) — "
+                        "warning unique par section",
+                        self._mode,
+                        section,
+                        type(value).__name__,
+                    )
+                return False
+
+        return True
+
     def _enqueue(self, snap: dict):
         """Sérialise + enqueue. Drop + sonde si queue pleine."""
+        if not self._validate_snap(snap):
+            return
+
         line = json.dumps(
             {
                 "schema_version": 1,
