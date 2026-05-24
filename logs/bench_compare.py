@@ -466,23 +466,30 @@ def _collect_fast_approx_samples(fast_rows: list[dict]) -> dict[str, list[float]
     return approx
 
 
-def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]]) -> dict:
+def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]],*,channel: str) -> dict:
     """
     Construit le bloc percentiles pour une sonde.
-    Sondes fast_* : samples_exact = 0 et tous *_exact = null.
+    Args:
+        probe_name: nom de la sonde.
+        exact_samples: échantillons exacts (count==1) issus du canal frame.
+        approx_samples: échantillons approximés issus du canal agrégé concerné.
+        channel: "agg" → exact calculable depuis frame_rows.
+                 "fast" → pas d'exact (samples_exact=0, *_exact=null).
+    Returns:
+        dict avec samples_exact, samples_approx, et p{pct}_exact / p{pct}_approx.
     """
-    is_fast = probe_name.startswith("fast_")
+    has_exact = (channel == "agg")
 
-    exact_data = [] if is_fast else exact_samples.get(probe_name, [])
+    exact_data = exact_samples.get(probe_name, []) if has_exact else []
     approx_data = approx_samples.get(probe_name, [])
 
     block: dict = {
-        "samples_exact": 0 if is_fast else len(exact_data),
+        "samples_exact": len(exact_data) if has_exact else 0,
         "samples_approx": len(approx_data),
     }
 
     for pct in PERCENTILES:
-        block[f"p{pct}_exact"] = None if is_fast else _percentile_value(exact_data, pct)
+        block[f"p{pct}_exact"] = _percentile_value(exact_data, pct) if has_exact else None
         block[f"p{pct}_approx"] = _percentile_value(approx_data, pct)
 
     return block
@@ -491,27 +498,46 @@ def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]
 # Construction du bloc session
 # ---------------------------------------------------------------------------
 
-def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: list[dict]) -> dict:
+def _build_session_block(agg_rows: list[dict],
+                         frame_rows: list[dict],
+                         fast_rows: list[dict]) -> dict:
     """
     Construit le bloc session complet :
-      {duration_s, duration_mono_s, frames, temporal_events, probes, rates, gauges}.
+      {
+        duration_s, duration_mono_s, frames, temporal_events,
+        probes, rates, gauges,
+        fast_probes, fast_rates, fast_gauges
+      }
 
-    Les clés temporelles (duration_mono_s, frames, temporal_events) sont
-    placées avant probes/rates/gauges pour faciliter la lecture des rapports.
+    Les blocs `probes`, `rates`, `gauges` agrègent UNIQUEMENT le canal agg.
+    Les blocs `fast_probes`, `fast_rates`, `fast_gauges` agrègent UNIQUEMENT
+    le canal fast. Les blocs fast_* sont toujours présents (éventuellement {}).
+
+    Les sondes des deux canaux reçoivent un bloc percentiles complet
+    (samples_exact, p*_exact, samples_approx, p*_approx) via
+    `_build_percentile_block(channel=...)`.
     """
-    base_probes = _agg_probes(agg_rows)
-    rates = _agg_rates(agg_rows)
-    gauges = _agg_gauges(agg_rows)
+    # ── Agrégations brutes par canal ──
+    base_probes_agg  = _agg_probes(agg_rows)
+    base_probes_fast = _agg_probes(fast_rows)
+    rates_agg   = _agg_rates(agg_rows)
+    rates_fast  = _agg_rates(fast_rows)
+    gauges_agg  = _agg_gauges(agg_rows)
+    gauges_fast = _agg_gauges(fast_rows)
+
     duration = _session_duration(agg_rows)
 
+    # ── Samples pour percentiles ──
     exact_samples, frame_approx = _collect_frame_samples(frame_rows)
     fast_approx = _collect_fast_approx_samples(fast_rows)
-
     approx_samples: dict[str, list[float]] = {**frame_approx, **fast_approx}
 
+    # ── Construction probes (canal agg) ──
     probes: dict[str, dict] = {}
-    for probe_name, stats in base_probes.items():
-        pct_block = _build_percentile_block(probe_name, exact_samples, approx_samples)
+    for probe_name, stats in base_probes_agg.items():
+        pct_block = _build_percentile_block(
+            probe_name, exact_samples, approx_samples, channel="agg"
+        )
         probes[probe_name] = {
             "avg": _r(stats["avg"]),
             "min": _r(stats["min"]),
@@ -520,10 +546,24 @@ def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: 
             **{k: _r(v) for k, v in pct_block.items()},
         }
 
+    # ── Construction fast_probes (canal fast) ──
+    fast_probes: dict[str, dict] = {}
+    for probe_name, stats in base_probes_fast.items():
+        pct_block = _build_percentile_block(
+            probe_name, exact_samples, approx_samples, channel="fast"
+        )
+        fast_probes[probe_name] = {
+            "avg": _r(stats["avg"]),
+            "min": _r(stats["min"]),
+            "max": _r(stats["max"]),
+            "count_fast": stats["count_agg"],
+            **{k: _r(v) for k, v in pct_block.items()},
+        }
+
     # ── Analyse temporelle (3 canaux) ──
-    timeline_agg = _extract_timeline(agg_rows)
+    timeline_agg   = _extract_timeline(agg_rows)
     timeline_frame = _extract_timeline(frame_rows)
-    timeline_fast = _extract_timeline(fast_rows)
+    timeline_fast  = _extract_timeline(fast_rows)
 
     duration_mono = _compute_duration_mono(timeline_agg)
 
@@ -534,12 +574,11 @@ def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: 
     }
 
     temporal_events = {
-        "agg":   _compute_temporal_events(timeline_agg, "agg"),
+        "agg":   _compute_temporal_events(timeline_agg,   "agg"),
         "frame": _compute_temporal_events(timeline_frame, "frame"),
-        "fast":  _compute_temporal_events(timeline_fast, "fast"),
+        "fast":  _compute_temporal_events(timeline_fast,  "fast"),
     }
 
-    # Arrondi des valeurs numériques dans temporal_events
     temporal_events_rounded: dict[str, dict] = {}
     for canal, events in temporal_events.items():
         temporal_events_rounded[canal] = {
@@ -554,8 +593,11 @@ def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: 
         "frames": frames,
         "temporal_events": temporal_events_rounded,
         "probes": probes,
-        "rates": {k: _r(v) for k, v in rates.items()},
-        "gauges": {k: _r(v) for k, v in gauges.items()},
+        "rates":  {k: _r(v) for k, v in rates_agg.items()},
+        "gauges": {k: _r(v) for k, v in gauges_agg.items()},
+        "fast_probes": fast_probes,
+        "fast_rates":  {k: _r(v) for k, v in rates_fast.items()},
+        "fast_gauges": {k: _r(v) for k, v in gauges_fast.items()},
     }
 
 
@@ -616,7 +658,13 @@ def _appeared_disappeared(target_map: dict, ref_map: dict) -> tuple[list, list]:
 
 
 def _build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) -> dict:
-    """Construit un bloc de comparaison complet target vs référence."""
+    """Construit un bloc de comparaison complet target vs référence.
+
+    Ventilation par canal :
+      - agg  : probes / rates / gauges (clés top-level non préfixées)
+      - fast : fast_probes / fast_rates / fast_gauges (clés top-level préfixées 'fast_')
+    """
+    # ── Canal agg ──
     appeared_probes, disappeared_probes = _appeared_disappeared(
         target_block["probes"], ref_block["probes"]
     )
@@ -626,11 +674,24 @@ def _build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) 
     appeared_gauges, disappeared_gauges = _appeared_disappeared(
         target_block["gauges"], ref_block["gauges"]
     )
+
+    # ── Canal fast ──
+    appeared_fast_probes, disappeared_fast_probes = _appeared_disappeared(
+        target_block["fast_probes"], ref_block["fast_probes"]
+    )
+    appeared_fast_rates, disappeared_fast_rates = _appeared_disappeared(
+        target_block["fast_rates"], ref_block["fast_rates"]
+    )
+    appeared_fast_gauges, disappeared_fast_gauges = _appeared_disappeared(
+        target_block["fast_gauges"], ref_block["fast_gauges"]
+    )
+
     return {
         "reference_session": ref_session_id,
         "reference": ref_block,
         "deltas": {
             "temporal": _build_temporal_deltas(ref_block, target_block),
+            # Canal agg
             "probes": _build_probe_deltas(
                 target_block["probes"], ref_block["probes"]
             ),
@@ -640,14 +701,33 @@ def _build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) 
             "gauges": _build_scalar_deltas(
                 target_block["gauges"], ref_block["gauges"]
             ),
+            # Canal fast
+            "fast_probes": _build_probe_deltas(
+                target_block["fast_probes"], ref_block["fast_probes"]
+            ),
+            "fast_rates": _build_scalar_deltas(
+                target_block["fast_rates"], ref_block["fast_rates"]
+            ),
+            "fast_gauges": _build_scalar_deltas(
+                target_block["fast_gauges"], ref_block["fast_gauges"]
+            ),
         },
+        # Canal agg
         "appeared_probes": appeared_probes,
         "disappeared_probes": disappeared_probes,
         "appeared_rates": appeared_rates,
         "disappeared_rates": disappeared_rates,
         "appeared_gauges": appeared_gauges,
         "disappeared_gauges": disappeared_gauges,
+        # Canal fast
+        "appeared_fast_probes": appeared_fast_probes,
+        "disappeared_fast_probes": disappeared_fast_probes,
+        "appeared_fast_rates": appeared_fast_rates,
+        "disappeared_fast_rates": disappeared_fast_rates,
+        "appeared_fast_gauges": appeared_fast_gauges,
+        "disappeared_fast_gauges": disappeared_fast_gauges,
     }
+
 
 # ---------------------------------------------------------------------------
 # Déplacement des fichiers

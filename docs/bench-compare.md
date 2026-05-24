@@ -176,6 +176,28 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
     },
     "gauges": {
       "<gauge_name>": "float"
+    },
+    "fast_probes": {
+      "<probe_name>": {
+        "avg": "float",
+        "min": "float",
+        "max": "float",
+        "count_fast": "int",
+        "samples_exact": "int",
+        "samples_approx": "int",
+        "p90_exact": "float | null",
+        "p95_exact": "float | null",
+        "p99_exact": "float | null",
+        "p90_approx": "float | null",
+        "p95_approx": "float | null",
+        "p99_approx": "float | null"
+      }
+    },
+    "fast_rates": {
+      "<rate_name>": "float"
+    },
+    "fast_gauges": {
+      "<gauge_name>": "float"
     }
   },
   "comparisons": {
@@ -214,6 +236,28 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
           "<rate_name>": "float"
         },
         "gauges": {
+          "<gauge_name>": "float"
+        },
+        "fast_probes": {
+          "<probe_name>": {
+            "avg": "float",
+            "min": "float",
+            "max": "float",
+            "count_fast": "int",
+            "samples_exact": "int",
+            "samples_approx": "int",
+            "p90_exact": "float | null",
+            "p95_exact": "float | null",
+            "p99_exact": "float | null",
+            "p90_approx": "float | null",
+            "p95_approx": "float | null",
+            "p99_approx": "float | null"
+          }
+        },
+        "fast_rates": {
+          "<rate_name>": "float"
+        },
+        "fast_gauges": {
           "<gauge_name>": "float"
         }
       },
@@ -262,6 +306,29 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
           "<gauge_name>": {
             "delta_pct": "float | null"
           }
+        },
+        "fast_probes": {
+          "<probe_name>": {
+            "avg_delta_pct": "float | null",
+            "min_delta_pct": "float | null",
+            "max_delta_pct": "float | null",
+            "p90_exact_delta_pct": "float | null",
+            "p95_exact_delta_pct": "float | null",
+            "p99_exact_delta_pct": "float | null",
+            "p90_approx_delta_pct": "float | null",
+            "p95_approx_delta_pct": "float | null",
+            "p99_approx_delta_pct": "float | null"
+          }
+        },
+        "fast_rates": {
+          "<rate_name>": {
+            "delta_pct": "float | null"
+          }
+        },
+        "fast_gauges": {
+          "<gauge_name>": {
+            "delta_pct": "float | null"
+          }
         }
       },
       "appeared_probes": ["string"],
@@ -269,7 +336,13 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
       "appeared_rates": ["string"],
       "disappeared_rates": ["string"],
       "appeared_gauges": ["string"],
-      "disappeared_gauges": ["string"]
+      "disappeared_gauges": ["string"],
+      "appeared_fast_probes": ["string"],
+      "disappeared_fast_probes": ["string"],
+      "appeared_fast_rates": ["string"],
+      "disappeared_fast_rates": ["string"],
+      "appeared_fast_gauges": ["string"],
+      "disappeared_fast_gauges": ["string"]
     }
   }
 }
@@ -314,38 +387,65 @@ Les noms de sondes exposés dans le rapport JSON correspondent **exactement** au
 
 **Rationale** : correspondance 1:1 stricte avec les clés JSONL d'entrée. Une sonde peut être tracée sans ambiguïté de son point d'émission (`bench.timer("main_blur_ms")`) jusqu'au rapport final, sans renommage intermédiaire par `bench_compare.py`.
 
+### Convention de préfixage des canaux
+
+Le rapport JSON sépare strictement les sondes selon leur canal d'origine. Cette séparation s'exprime par une **convention de préfixage asymétrique** : le canal `fast` est préfixé `fast_*`, le canal `agg` ne l'est pas.
+
+| Canal source | Préfixage des noms de sondes                                        | Sections du rapport JSON                   | Champ de comptage                           |
+| ------------ | ------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------- |
+| `agg`        | Non préfixé (`main_blur_ms`)                                        | `probes`, `rates`, `gauges`                | `count_agg`                                 |
+| `fast`       | Préfixé `fast_*` (`fast_ncc_ms`)                                    | `fast_probes`, `fast_rates`, `fast_gauges` | `count_fast`                                |
+| `frame`      | Hérité de la sonde émettrice (préfixé ou non selon son canal cible) | `probes` ou `fast_probes` selon la sonde   | — (canal frame ne produit pas de `count_*`) |
+
+**Règles induites** :
+
+- Une sonde dont le nom commence par `fast_` est **toujours** rattachée au canal `fast` (production via `bench.timer("fast_*")`, lecture côté `fast_probes` du rapport).
+- Une sonde dont le nom ne commence pas par `fast_` est **toujours** rattachée au canal `agg` (lecture côté `probes` du rapport).
+- Les listes `appeared_*` / `disappeared_*` suivent la même ventilation : `appeared_probes` liste les sondes agg apparues, `appeared_fast_probes` liste les sondes fast apparues. Aucun chevauchement possible.
+- Le canal `frame` n'introduit pas de préfixe propre : il alimente uniquement les percentiles (`*_exact` / `*_approx`) des sondes déjà classées par leur préfixe d'origine.
+
+**Rationale** : la convention de préfixage rend la classification d'une sonde **déterministe par lecture du nom seul**, sans avoir à consulter le code émetteur ou le schéma JSONL. Elle reflète la séparation physique des fichiers (`bench_agg.jsonl` vs `bench_fast.jsonl`) au niveau du rapport final.
+
+> ⚠️ **Conséquence pour l'ajout d'une nouvelle sonde** — le choix du préfixe (`fast_` ou non) à l'émission (`bench.timer("...")`) détermine **irréversiblement** le canal de destination et la section du rapport où elle apparaîtra. Renommer une sonde existante en ajoutant/retirant `fast_` la fait migrer entre canaux et apparaîtra comme `disappeared_*` côté ancien canal et `appeared_*` côté nouveau canal lors de la prochaine comparaison.
+
 ### Probes (canaux `agg` et `fast`)
 
 Chaque ligne JSONL du canal `agg` expose `{avg, min, max, count}` par sonde.
 Chaque ligne JSONL du canal `fast` expose `{avg, min, max, count}` par sonde.
 Chaque ligne JSONL du canal `frame` expose `{avg, max, min, count}` par sonde (cf. bench-jsonl-schema.md §6.1). Sur ce canal, chaque ligne agrège exactement 1 échantillon (1 ligne = 1 frame), donc min == max == avg par construction. `bench_compare.py` ne lit que `avg` et `count` pour calculer les percentiles exacts (cf. règle d'éligibilité samples_exact plus bas).
 
-**Agrégats de base** (depuis canal `agg`, ou `fast` pour sondes `fast_*`) :
+**Agrégats de base** :
 
-| Champ produit | Calcul                                               |
-| ------------- | ---------------------------------------------------- |
-| `avg`         | Moyenne pondérée des `avg` par `count`               |
-| `min`         | Minimum des `min` sur toutes les lignes              |
-| `max`         | Maximum des `max` sur toutes les lignes              |
-| `count_agg`   | Somme des `count` JSONL (échantillons agrégés bruts) |
+Le champ de comptage est nommé différemment selon le canal source, pour refléter la séparation stricte entre sondes agg et sondes `fast_*` :
 
-#### Sémantique de count_agg, samples_exact, samples_approx
+- Sondes hors `fast_*` → agrégées depuis le canal `agg` → champ produit `count_agg`
+- Sondes `fast_*` → agrégées depuis le canal `fast` → champ produit `count_fast`
 
-Ces trois champs **ne sont pas redondants** : ils mesurent des grandeurs distinctes et répondent à des questions différentes.
+| Champ produit              | Calcul                                                |
+| -------------------------- | ----------------------------------------------------- |
+| `avg`                      | Moyenne pondérée des `avg` par `count`                |
+| `min`                      | Minimum des `min` sur toutes les lignes               |
+| `max`                      | Maximum des `max` sur toutes les lignes               |
+| `count_agg` / `count_fast` | Somme des `count` JSONL du canal source (agg ou fast) |
 
-| Champ            | Question à laquelle il répond                                        | Source (canal JSONL) | Règle d'éligibilité d'une ligne               |
-| ---------------- | -------------------------------------------------------------------- | -------------------- | --------------------------------------------- |
-| `count_agg`      | Cb samples bruts ont alimenté `avg`/`min`/`max`(canaux agg + fast) ? | `agg` + `fast`       | Toute ligne contenant la sonde                |
-| `samples_exact`  | Sur cb samples reposent les percentiles `*_exact` ?                  | `frame`              | Ligne avec `probes.<name>.count == 1`         |
-| `samples_approx` | Sur cb de lignes agrégées reposent les percentiles `*_approx` ?      | `agg` + `fast`       | Toute ligne contenant la sonde (idem `count`) |
+#### Sémantique de count_agg / count_fast, samples_exact, samples_approx
+
+Ces champs **ne sont pas redondants** : ils mesurent des grandeurs distinctes et répondent à des questions différentes. `count_agg` et `count_fast` sont mutuellement exclusifs : une sonde produit l'un **ou** l'autre selon son canal source, jamais les deux.
+
+| Champ            | Question à laquelle il répond                                                          | Source (canal JSONL)                                | Règle d'éligibilité d'une ligne       |
+| ---------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------- |
+| `count_agg`      | Combien d'échantillons bruts alimentent `avg` / `min` / `max` (sondes hors `fast_*`) ? | `agg`                                               | Toute ligne contenant la sonde        |
+| `count_fast`     | Combien d'échantillons bruts alimentent `avg` / `min` / `max` (sondes `fast_*`) ?      | `fast`                                              | Toute ligne contenant la sonde        |
+| `samples_exact`  | Sur combien d'échantillons reposent les percentiles `*_exact` ?                        | `frame`                                             | Ligne avec `probes.<name>.count == 1` |
+| `samples_approx` | Sur combien de lignes agrégées reposent les percentiles `*_approx` ?                   | `frame` (hors `fast_*`) ou `fast` (sondes `fast_*`) | Toute ligne contenant la sonde        |
 
 **Conséquences directes** :
 
-- `count_agg` et `samples_approx` ne sont pas comparables : `count_agg` agrège les canaux `agg` + `fast` (somme des count JSONL = total d'échantillons bruts), tandis que `samples_approx` compte les lignes du canal `frame` (sondes hors `fast_*`) ou `fast` (sondes `fast_*`). Les domaines de canaux diffèrent ; aucune égalité n'est attendue, même par construction.
-- `samples_exact` est **indépendant** des deux autres : il dépend exclusivement de la présence du canal `frame` et du filtre `count == 1`. Une sonde présente uniquement dans `agg`/`fast` aura `samples_exact = 0` et tous ses `p*_exact = null`.
-- Aucune relation arithmétique n'est garantie entre les trois — voir `bench-jsonl-schema.md` §6.1 pour la sémantique amont.
+- `count_agg` / `count_fast` et `samples_approx` ne sont pas comparables : les champs de comptage agg/fast somment les `count` JSONL bruts (= total d'échantillons), tandis que `samples_approx` compte les lignes du canal source. Les unités diffèrent (échantillons vs lignes) ; aucune égalité n'est attendue, même par construction.
+- `samples_exact` est **indépendant** des autres : il dépend exclusivement de la présence du canal `frame` et du filtre `count == 1`. Une sonde présente uniquement dans `agg` ou `fast` aura `samples_exact = 0` et tous ses `p*_exact = null`.
+- Aucune relation arithmétique n'est garantie entre ces champs — voir `bench-jsonl-schema.md` §6.1 pour la sémantique amont.
 
-> ⚠️ **Note terminologique** — le champ `count_agg` est un total d'échantillons agrégés issus des canaux `agg` + `fast`, pas un nombre de lignes JSONL ni un nombre de frames. Il n'est pas directement comparable à `samples_approx` (qui agrège les canaux frame / fast selon la sonde). Pour le nombre de frames consommées par la sonde, voir samples_exact (canal frame uniquement).
+> ⚠️ **Note terminologique** — les champs `count_agg` (sondes hors `fast_*`) et `count_fast` (sondes `fast_*`) sont des totaux d'échantillons agrégés issus de leur canal source respectif, pas des nombres de lignes JSONL ni de frames. Ils ne sont pas directement comparables à `samples_approx` (qui compte les lignes du canal source). Pour le nombre de frames consommées par la sonde, voir `samples_exact` (canal `frame` uniquement, jamais peuplé pour les sondes `fast_*`).
 
 - **Méthode `exact`** : collecte des valeurs des lignes du canal `frame` (sondes hors `fast_*`) où `count == 1`.
   Chaque ligne retenue contribue 1 échantillon = sa valeur `avg`. Percentile calculé via `statistics.quantiles(data, n=100, method='inclusive')`.
@@ -354,8 +454,8 @@ Ces trois champs **ne sont pas redondants** : ils mesurent des grandeurs distinc
 
 **Champs de comptage associés** :
 
-- `samples_exact` : nombre d'échantillons utilisés par la méthode exact.Toujours `0` pour les sondes `fast_*` (canal `frame` ne les expose pas).
-- `samples_approx` : nombre total d'échantillons utilisés par la méthode approx (= nombre de lignes du canal source contenant la sonde).
+- `samples_exact` : nombre d'échantillons utilisés par la méthode exact. Toujours `0` pour les sondes `fast_*` (canal `frame` ne les expose pas).
+- `samples_approx` : nombre de lignes du canal source contenant la sonde, utilisées comme échantillons par la méthode `approx` (chaque ligne contribue sa valeur `avg` comme 1 point de donnée, indépendamment du `count` JSONL sous-jacent).
 
 **Seuil minimal** : un percentile (`exact` ou `approx`) n'est calculé que si **`samples >= 20`** pour la méthode considérée. Sinon → `null`.
 
@@ -422,6 +522,31 @@ Règles de nullité :
 
 ---
 
+### Deltas temporels (`deltas.temporal`)
+
+Le bloc `deltas.temporal` est ventilé par **canal source** (`agg`, `frame`, `fast`), reflétant la structure de `target.temporal_events` et `reference.temporal_events`. Chaque canal expose les mêmes 4 sous-clés :
+
+| Sous-clé            | Source comparée                             | Calcul du delta                                                                      |
+| ------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `frames`            | `temporal_events.<canal>.frames`            | `(target − reference) / reference × 100`                                             |
+| `median_interval_s` | `temporal_events.<canal>.median_interval_s` | Idem                                                                                 |
+| `gaps_stat`         | `temporal_events.<canal>.gaps_stat`         | Idem                                                                                 |
+| `gaps_fixed`        | `temporal_events.<canal>.gaps_fixed`        | Idem — toujours `null` pour le canal `frame` (event-driven, cf. §Analyse temporelle) |
+
+**Règle de nullité spécifique** : `gaps_fixed.delta_pct` vaut systématiquement `null` pour le canal `frame`, car la grandeur source est `null` côté target ET reference (canal event-driven, pas de cadence attendue). Pour les canaux `agg` et `fast`, le delta suit la règle générale (`null` si référence vaut `0` ou `null`).
+
+**Structure JSON** :
+
+```json
+"deltas": {
+  "temporal": {
+    "agg":   { "frames": {...}, "median_interval_s": {...}, "gaps_stat": {...}, "gaps_fixed": {...} },
+    "frame": { "frames": {...}, "median_interval_s": {...}, "gaps_stat": {...}, "gaps_fixed": {...} },
+    "fast":  { "frames": {...}, "median_interval_s": {...}, "gaps_stat": {...}, "gaps_fixed": {...} }
+  }
+}
+```
+
 ## Sémantique des valeurs `null`
 
 | Contexte                                        | Signification                                                                |
@@ -443,17 +568,17 @@ est sous le seuil statistique minimal.
 
 Certaines sondes ne sont émises que dans des conditions spécifiques. Leur absence dans un rapport est **normale** et ne constitue pas une régression.
 
-| Sonde                                       | Condition d'émission                              |
-| ------------------------------------------- | ------------------------------------------------- |
-| `mask_lost_latency_ms`                      | Uniquement si un mask passe en état LOST          |
-| `mask_revive_latency_ms`                    | Uniquement si un mask est revitalisé              |
-| `motion_staleness_slow_ms`                  | Uniquement si staleness dépasse le seuil          |
-| `fast_stale_used`                           | Uniquement si fallback stale déclenché            |
-| `selector_source_<name>`                    | Émise une fois — présente dans `frame` uniquement |
-| `selector_source_<name>`                    | Émise une fois — présente dans `frame` uniquement |
-| `temporal_events.<canal>.median_interval_s` | Canal avec moins de 2 lignes ingérées             |
-| `temporal_events.frame.gaps_fixed`          | Canal `frame` event-driven — toujours `null`      |
-| `deltas.temporal.*.delta_pct`               | Référence à `0` ou `null` (division impossible)   |
+| Sonde                                       | Condition d'émission                                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `mask_lost_latency_ms`                      | Uniquement si un mask passe en état LOST                                                              |
+| `mask_revive_latency_ms`                    | Uniquement si un mask est revitalisé                                                                  |
+| `motion_staleness_slow_ms`                  | Uniquement si staleness dépasse le seuil                                                              |
+| `fast_stale_used`                           | Uniquement si fallback stale déclenché                                                                |
+| `selector_source_<name>`                    | Émise une fois — présente dans `frame` uniquement                                                     |
+| `temporal_events.<canal>.median_interval_s` | Canal avec moins de 2 lignes ingérées                                                                 |
+| `temporal_events.frame.gaps_fixed`          | Canal `frame` event-driven (`EXPECTED_PERIOD_S["frame"] = None`) — toujours `null`.                   |
+|                                             | Les canaux `agg` et `fast` ont une cadence attendue configurée et calculent normalement `gaps_fixed`. |
+| `deltas.temporal.*.delta_pct`               | Référence à `0` ou `null` (division impossible)                                                       |
 
 ---
 
@@ -500,6 +625,6 @@ Si la cible provient déjà de `logs/results/`, aucun déplacement n'est effectu
 - `logs/results/` est en lecture seule, **sauf** dans les deux cas listés à la section « Cas de modification de `logs/results/` » (doublon de `session_id`, ou cible déjà archivée dont le rapport JSON est régénéré).
 - Le champ `schema_version` au sommet du JSON identifie la version du schéma de sortie. Toute évolution non rétro-compatible du format incrémente ce champ.
 - Le champ `generated_at` au sommet du JSON est un timestamp ISO 8601 **avec fuseau horaire local** (offset UTC inclus, ex. `2026-05-19T09:15:40.123456+02:00`). Produit par `datetime.now().astimezone().isoformat()`.
-- Une session sans fichier `frame` est traitée — tous les percentiles `*_exact` valent `null`, `frames.frame` vaut `0`, et `temporal_events.frame.{median_interval_s, gaps_stat, gaps_fixed}` valent respectivement `null`, `0`, `null`.
-- Le même principe s'applique aux canaux `agg` et `fast` absents (cohérence de la timeline par canal).
+- Une session sans fichier `frame` est traitée — tous les percentiles `*_exact` valent `null`, `frames.frame` vaut `0`, et `temporal_events.frame.{median_interval_s, gaps_stat, gaps_fixed}` valent respectivement `null`, `null`, `null` (timeline vide → `_compute_temporal_events` retourne `None` pour les trois champs, cf. branche `len(timeline) < 2`).
+- Le même principe s'applique aux canaux `agg` et `fast` absents : `frames.<canal>` vaut `0` et `temporal_events.<canal>.{median_interval_s, gaps_stat, gaps_fixed}` valent tous `null` (timeline vide → branche `len(timeline) < 2` de `_compute_temporal_events`). Note : pour le canal `frame`, `gaps_fixed` vaut `null` **dans tous les cas** (event-driven), indépendamment de la présence du fichier ; pour `agg` et `fast`, `gaps_fixed` est calculable dès que la timeline contient ≥ 2 événements.
 - Les constantes `EXPECTED_PERIOD_S`, `GAP_STAT_FACTOR` et `GAP_FIXED_FACTOR` sont figées en v1 (cf. section « Analyse temporelle »). Toute modification fait évoluer la sémantique de `gaps_stat` / `gaps_fixed`.
