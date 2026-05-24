@@ -149,7 +149,7 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
         "avg": "float",
         "min": "float",
         "max": "float",
-        "count": "int",
+        "count_agg": "int",
         "samples_exact": "int",
         "samples_approx": "int",
         "p90_exact": "float | null",
@@ -177,7 +177,7 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
             "avg": "float",
             "min": "float",
             "max": "float",
-            "count": "int",
+            "count_agg": "int",
             "samples_exact": "int",
             "samples_approx": "int",
             "p90_exact": "float | null",
@@ -220,8 +220,12 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
           }
         }
       },
-      "appeared_in_target": ["string"],
-      "disappeared_in_target": ["string"]
+      "appeared_probes": ["string"],
+      "disappeared_probes": ["string"],
+      "appeared_rates": ["string"],
+      "disappeared_rates": ["string"],
+      "appeared_gauges": ["string"],
+      "disappeared_gauges": ["string"]
     }
   }
 }
@@ -274,30 +278,30 @@ Chaque ligne JSONL du canal `frame` expose `{avg, max, min, count}` par sonde (c
 
 **Agrégats de base** (depuis canal `agg`, ou `fast` pour sondes `fast_*`) :
 
-| Champ produit | Calcul                                  |
-| ------------- | --------------------------------------- |
-| `avg`         | Moyenne pondérée des `avg` par `count`  |
-| `min`         | Minimum des `min` sur toutes les lignes |
-| `max`         | Maximum des `max` sur toutes les lignes |
-| `count`       | Somme des `count`                       |
+| Champ produit | Calcul                                               |
+| ------------- | ---------------------------------------------------- |
+| `avg`         | Moyenne pondérée des `avg` par `count`               |
+| `min`         | Minimum des `min` sur toutes les lignes              |
+| `max`         | Maximum des `max` sur toutes les lignes              |
+| `count_agg`   | Somme des `count` JSONL (échantillons agrégés bruts) |
 
-#### Sémantique de `count`, `samples_exact`, `samples_approx`
+#### Sémantique de count_agg, samples_exact, samples_approx
 
 Ces trois champs **ne sont pas redondants** : ils mesurent des grandeurs distinctes et répondent à des questions différentes.
 
 | Champ            | Question à laquelle il répond                                        | Source (canal JSONL) | Règle d'éligibilité d'une ligne               |
 | ---------------- | -------------------------------------------------------------------- | -------------------- | --------------------------------------------- |
-| `count`          | Combien d'échantillons bruts ont alimenté `avg` / `min` / `max` ?    | `agg` + `fast`       | Toute ligne contenant la sonde                |
-| `samples_exact`  | Sur combien d'échantillons reposent les percentiles `*_exact` ?      | `frame`              | Ligne avec `probes.<name>.count == 1`         |
-| `samples_approx` | Sur combien de lignes agrégées reposent les percentiles `*_approx` ? | `agg` + `fast`       | Toute ligne contenant la sonde (idem `count`) |
+| `count_agg`      | Cb samples bruts ont alimenté `avg`/`min`/`max`(canaux agg + fast) ? | `agg` + `fast`       | Toute ligne contenant la sonde                |
+| `samples_exact`  | Sur cb samples reposent les percentiles `*_exact` ?                  | `frame`              | Ligne avec `probes.<name>.count == 1`         |
+| `samples_approx` | Sur cb de lignes agrégées reposent les percentiles `*_approx` ?      | `agg` + `fast`       | Toute ligne contenant la sonde (idem `count`) |
 
 **Conséquences directes** :
 
-- `samples_approx == count` **par construction** — les deux comptent les mêmes lignes, mais `count` somme les `count` JSONL (échantillons agrégés) alors que `samples_approx` compte les lignes (unités d'agrégation). Égaux **si et seulement si** chaque ligne JSONL contient exactement un échantillon ; sinon `count > samples_approx`.
+- `count_agg` et `samples_approx` ne sont pas comparables : `count_agg` agrège les canaux `agg` + `fast` (somme des count JSONL = total d'échantillons bruts), tandis que `samples_approx` compte les lignes du canal `frame` (sondes hors `fast_*`) ou `fast` (sondes `fast_*`). Les domaines de canaux diffèrent ; aucune égalité n'est attendue, même par construction.
 - `samples_exact` est **indépendant** des deux autres : il dépend exclusivement de la présence du canal `frame` et du filtre `count == 1`. Une sonde présente uniquement dans `agg`/`fast` aura `samples_exact = 0` et tous ses `p*_exact = null`.
 - Aucune relation arithmétique n'est garantie entre les trois — voir `bench-jsonl-schema.md` §6.1 pour la sémantique amont.
 
-> ⚠️ **Note terminologique** — le champ `count` est un **total d'échantillons agrégés**, pas un nombre de lignes JSONL ni un nombre de frames. Pour le nombre de frames consommées par la sonde, voir `samples_exact` (canal `frame` uniquement).
+> ⚠️ **Note terminologique** — le champ `count_agg` est un total d'échantillons agrégés issus des canaux `agg` + `fast`, pas un nombre de lignes JSONL ni un nombre de frames. Il n'est pas directement comparable à `samples_approx` (qui agrège les canaux frame / fast selon la sonde). Pour le nombre de frames consommées par la sonde, voir samples_exact (canal frame uniquement).
 
 - **Méthode `exact`** : collecte des valeurs des lignes du canal `frame` (sondes hors `fast_*`) où `count == 1`.
   Chaque ligne retenue contribue 1 échantillon = sa valeur `avg`. Percentile calculé via `statistics.quantiles(data, n=100, method='inclusive')`.

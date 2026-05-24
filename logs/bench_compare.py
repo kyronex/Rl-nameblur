@@ -181,12 +181,15 @@ def _load_session(files: dict[str, Path]) -> tuple[list, list, list]:
 # ---------------------------------------------------------------------------
 # Agrégation — canal agg
 # ---------------------------------------------------------------------------
-
 def _agg_probes(rows: list[dict]) -> dict[str, dict]:
     """
     Agrège les sondes depuis les lignes du canal agg.
-    Retourne {probe_name: {avg, min, max, count}}.
+    Retourne {probe_name: {avg, min, max, count_agg}}.
     Lit uniquement la section `probes` (structure fixe documentée).
+
+    Note : `count_agg` est la somme des `count` lus dans les lignes du canal
+    agg. Il n'est PAS comparable à `samples_approx` (nombre de lignes du
+    canal frame). Voir docs/bench-compare.md §5.3.
     """
     accum: dict[str, dict] = {}
 
@@ -209,20 +212,20 @@ def _agg_probes(rows: list[dict]) -> dict[str, dict]:
                     "sum_weighted": 0.0,
                     "min": mn,
                     "max": mx,
-                    "count": 0,
+                    "count_agg": 0,
                 }
             accum[key]["sum_weighted"] += avg * cnt
             accum[key]["min"] = min(accum[key]["min"], mn)
             accum[key]["max"] = max(accum[key]["max"], mx)
-            accum[key]["count"] += cnt
+            accum[key]["count_agg"] += cnt
 
     result: dict[str, dict] = {}
     for key, acc in accum.items():
         result[key] = {
-            "avg": acc["sum_weighted"] / acc["count"],
+            "avg": acc["sum_weighted"] / acc["count_agg"],
             "min": acc["min"],
             "max": acc["max"],
-            "count": acc["count"],
+            "count_agg": acc["count_agg"],
         }
     return result
 
@@ -372,7 +375,7 @@ def _build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: 
             "avg": _r(stats["avg"]),
             "min": _r(stats["min"]),
             "max": _r(stats["max"]),
-            "count": stats["count"],
+            "count_agg": stats["count_agg"],
             **{k: _r(v) for k, v in pct_block.items()},
         }
 
@@ -426,16 +429,30 @@ def _build_scalar_deltas(target: dict, ref: dict) -> dict:
         for key in sorted(all_keys)
     }
 
-def _appeared_disappeared(target_probes: dict, ref_probes: dict) -> tuple[list, list]:
-    """Retourne (appeared_in_target, disappeared_in_target)."""
-    t_keys = set(target_probes)
-    r_keys = set(ref_probes)
+def _appeared_disappeared(target_map: dict, ref_map: dict) -> tuple[list, list]:
+    """
+    Retourne (appeared_in_target, disappeared_in_target).
+
+    Générique : opère sur n'importe quel mapping {clé: ...} — utilisé pour
+    les sondes (`probes`), les rates (`rates`) et les gauges (`gauges`).
+    Seules les clés sont comparées ; les valeurs sont ignorées.
+    """
+    t_keys = set(target_map)
+    r_keys = set(ref_map)
     return sorted(t_keys - r_keys), sorted(r_keys - t_keys)
 
 
-def _build_comparison(ref_session_id: str,ref_block: dict,target_block: dict) -> dict:
+def _build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) -> dict:
     """Construit un bloc de comparaison complet target vs référence."""
-    appeared, disappeared = _appeared_disappeared(target_block["probes"], ref_block["probes"])
+    appeared_probes, disappeared_probes = _appeared_disappeared(
+        target_block["probes"], ref_block["probes"]
+    )
+    appeared_rates, disappeared_rates = _appeared_disappeared(
+        target_block["rates"], ref_block["rates"]
+    )
+    appeared_gauges, disappeared_gauges = _appeared_disappeared(
+        target_block["gauges"], ref_block["gauges"]
+    )
     return {
         "reference_session": ref_session_id,
         "reference": ref_block,
@@ -450,8 +467,12 @@ def _build_comparison(ref_session_id: str,ref_block: dict,target_block: dict) ->
                 target_block["gauges"], ref_block["gauges"]
             ),
         },
-        "appeared_in_target": appeared,
-        "disappeared_in_target": disappeared,
+        "appeared_probes": appeared_probes,
+        "disappeared_probes": disappeared_probes,
+        "appeared_rates": appeared_rates,
+        "disappeared_rates": disappeared_rates,
+        "appeared_gauges": appeared_gauges,
+        "disappeared_gauges": disappeared_gauges,
     }
 
 # ---------------------------------------------------------------------------
