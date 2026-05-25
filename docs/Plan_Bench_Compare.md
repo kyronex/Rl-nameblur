@@ -14,16 +14,21 @@
 
 ## 🪜 Séquencement par complexité croissante
 
-| #   | Chantier                                                 | Complexité  | Effort  | Critères impactés      | Dépendances                | OK  |
-| --- | -------------------------------------------------------- | ----------- | ------- | ---------------------- | -------------------------- | --- |
-| S1  | **P0-5** — Filtre §7 défensif `_enqueue()`               | 🟢 Triviale | ~30 min | Robustesse source      | Aucune                     | ✅  |
-| S2  | **C2 / P1** — Lecture `mono`+`frame_idx` dans le rapport | 🟡 Faible   | ~2 h    | #7 (2→7/10)            | Aucune                     | ✅  |
-| S3  | **C1 / P1** — Ventilation fine canal `fast`              | 🟡 Moyenne  | ~2-3 h  | #3 (5→8/10), #5        | S2 recommandé (mono utile) | ✅  |
-| S4  | **Backlog v2.a** — Buckets temporels (early/mid/late)    | 🟠 Moyenne+ | ~3-4 h  | #7 (7→9/10)            | S2 obligatoire             | ⏳  |
-| S5  | **Backlog v2.b** — Détection anomalies (spikes, drift)   | 🟠 Élevée   | ~4-5 h  | #6 (3→8/10)            | S2 + S4                    | ⏳  |
-| S6  | **Backlog v2.c** — Budget frame & corrélations           | 🔴 Élevée   | ~5-6 h  | #8 (4→8/10),#1(5→8/10) | S2 + S3 + S4               | ⏳  |
+| #     | Chantier                                                          | Complexité  | Effort  | Critères impactés      | Dépendances                | OK  |
+| ----- | ----------------------------------------------------------------- | ----------- | ------- | ---------------------- | -------------------------- | --- |
+| S1    | **P0-5** — Filtre §7 défensif `_enqueue()`                        | 🟢 Triviale | ~30 min | Robustesse source      | Aucune                     | ✅  |
+| S2    | **C2 / P1** — Lecture `mono`+`frame_idx` dans le rapport          | 🟡 Faible   | ~2 h    | #7 (2→7/10)            | Aucune                     | ✅  |
+| S3    | **C1 / P1** — Ventilation fine canal `fast`                       | 🟡 Moyenne  | ~2-3 h  | #3 (5→8/10), #5        | S2 recommandé (mono utile) | ✅  |
+| S4    | **Backlog v2.a** — Bucketing adaptatif cold/hot                   | 🟠 Moyenne+ | ~4-5 h  | #7 (7→9/10)            | S2 obligatoire             | ⏳  |
+| S4bis | **Stats dispersion** — Ajout IQR (Q1/Q3) par bucket               | 🟢 Triviale | ~15 min | #5 (6→8/10)            | S4 obligatoire             | ⏳  |
+| S5    | **Backlog v2.b** — Anomalies (spikes, drift, Skewness + Kurtosis) | 🟠 Élevée   | ~5-6 h  | #5 (8→9/10),#6(3→8/10) | S2 + S4 + S4bis            | ⏳  |
+| S6    | **Backlog v2.c** — Budget frame & corrélations                    | 🔴 Élevée   | ~5-6 h  | #8 (4→8/10),#1(5→8/10) | S2 + S3 + S4               | ⏳  |
 
 **Logique** : chaque étape laisse le pipeline fonctionnel et le rapport exploitable. Pas d'effet tunnel. Possible d'arrêter à n'importe quelle étape.
+
+> **Note S4** : le périmètre initial (buckets temporels fixes early/mid/late) a évolué vers un **bucketing adaptatif cold/hot avec synchro coulante et snap pivot**. Spécification complète, décisions verrouillées et plan d'implémentation détaillé dans le document de référence **« Plan séquentiel autoporté S4 — Bucketing adaptatif cold/hot avec synchro coulante »** (à consulter avant démarrage S4). Questionnements subsistants : Q-Cadrage-1 (granularité deltas inter-sessions), Q-Détail-1 (génération candidats pivot), Q-Détail-2 (comportement `cold_end_real > t_max`).
+> **Note S4bis** : extension mineure greffée sur S4 — ajout des champs `iqr`, `q1`, `q3` dans le bloc stats descriptives de chaque bucket (cold / hot_i / tail). Coût ~10 lignes (`numpy.percentile`), zéro nouvelle dépendance. **À intégrer au doc autoporté S4** dès validation pour éviter oubli au moment du patch.
+> **Note S5** : intègre désormais les stats de **forme de distribution** (Skewness + Kurtosis via `scipy.stats`, déjà en deps) en plus de la détection spikes/drift. Skew/Kurt sont la matière première native des détecteurs d'anomalies (queues lourdes, distributions bimodales). Prérequis dur : S4 (buckets homogènes) + S4bis (cohérence du bloc stats). Questionnements à trancher au démarrage S5 : Q-Stats-2 (valeurs brutes seules ou flags interprétatifs type `heavy_right_tail`), seuil minimal d'échantillons (recommandation : 50 pour skew, 100 pour kurt, flag `low_sample_warning` sinon), définition kurtosis (recommandation : kurtosis excess via `scipy.stats.kurtosis` défaut, à documenter dans `bench-compare.md`).
 
 ---
 
@@ -59,11 +64,3 @@ Pour chaque étape S1 → S6 :
 → Cadence courte, pas de big-bang, chaque étape clôt proprement avant la suivante.
 
 ---
-
-## ❓ Question de démarrage
-
-**Confirmes-tu qu'on attaque S1 maintenant ?**
-
-Si oui → fournis les zones listées ci-dessus (`jsonl_writer.py` intégral + §7 de `bench-jsonl-schema.md`) et je produis le patch.
-
-Si tu préfères d'abord une **vue d'ensemble plus précise** (spec détaillée de S1 → S6 avec exemples de structure JSON cible pour chacun), dis-le et je produis ce document de référence avant tout patch.
