@@ -11,6 +11,8 @@ def setup_logging():
         format="%(name)s | %(levelname)s | %(message)s"
     )
 setup_logging()
+if cfg.get("debug.bench.enabled", False):
+    bench.enable()
 
 import sys
 import time

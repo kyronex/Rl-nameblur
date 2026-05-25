@@ -475,5 +475,3 @@ class _BenchTimer:
 
 # ── singleton global ──
 bench = BenchRegistry()
-if cfg.get("debug.bench.enabled", False):
-    bench.enable()
