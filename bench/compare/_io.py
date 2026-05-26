@@ -1,4 +1,5 @@
 # bench/compare/_io.py
+
 """
 I/O JSONL, découverte des sessions, déplacement FS, écriture rapport.
 

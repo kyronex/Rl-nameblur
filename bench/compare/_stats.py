@@ -1,3 +1,5 @@
+# bench/compare/_stats.py
+
 from statistics import median , quantiles
 from bench.compare._config import (
     EXPECTED_PERIOD_S,

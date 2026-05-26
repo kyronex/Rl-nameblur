@@ -1,3 +1,4 @@
+# bench/compare/_builder.py
 
 from bench.compare._config import (PERCENTILES,_r)
 from bench.compare._stats import (_agg_probes,_agg_rates,_agg_gauges,_session_duration,_extract_timeline,_compute_frames,_compute_duration_mono,_compute_temporal_events,_collect_frame_samples,_collect_fast_approx_samples,_percentile_value,_delta_pct)

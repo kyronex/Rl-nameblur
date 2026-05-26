@@ -174,15 +174,11 @@ debug:
       noir: [0, 0, 0]
   bench:
     enabled: true # Active BenchRegistry + démarre les writers si writer.enabled=true
-
     history_window_s: 60 # Fenêtre glissante conservée en mémoire pour summary_window() (s)
-
     # ── Writers JSONL ────────────────────────────────────────────
     writer:
       enabled: true # Maître : false = aucun writer démarré, quelles que soient les clés fille
-      queue_maxsize:
-        10000 # Taille max de la queue bornée partagée entre writers.
-        # Au-delà : ligne droppée + bench.count("bench_writer_dropped") incrémenté
+      queue_maxsize: 10000 # Taille max de la queue bornée partagée entre writers. Au-delà : ligne droppée + bench.count("bench_writer_dropped") incrémenté
       shutdown_timeout_s: 2.0 # Délai max (s) accordé à chaque writer pour vider sa queue à l'arrêt
       session_id_format:
         "%Y%m%d_%H%M%S"
