@@ -19,7 +19,7 @@
 | S1    | **P0-5** — Filtre §7 défensif `_enqueue()`                        | 🟢 Triviale | ~30 min | Robustesse source      | Aucune                     | ✅  |
 | S2    | **C2 / P1** — Lecture `mono`+`frame_idx` dans le rapport          | 🟡 Faible   | ~2 h    | #7 (2→7/10)            | Aucune                     | ✅  |
 | S3    | **C1 / P1** — Ventilation fine canal `fast`                       | 🟡 Moyenne  | ~2-3 h  | #3 (5→8/10), #5        | S2 recommandé (mono utile) | ✅  |
-| S4    | **Backlog v2.a** — Bucketing adaptatif cold/hot                   | 🟠 Moyenne+ | ~4-5 h  | #7 (7→9/10)            | S2 obligatoire             | ⏳  |
+| S4    | **Backlog v2.a** — Bucketing adaptatif cold/hot                   | 🟠 Moyenne+ | ~4-5 h  | #7 (7→9/10)            | S2 obligatoire             | ✅  |
 | S4bis | **Stats dispersion** — Ajout IQR (Q1/Q3) par bucket               | 🟢 Triviale | ~15 min | #5 (6→8/10)            | S4 obligatoire             | ⏳  |
 | S5    | **Backlog v2.b** — Anomalies (spikes, drift, Skewness + Kurtosis) | 🟠 Élevée   | ~5-6 h  | #5 (8→9/10),#6(3→8/10) | S2 + S4 + S4bis            | ⏳  |
 | S6    | **Backlog v2.c** — Budget frame & corrélations                    | 🔴 Élevée   | ~5-6 h  | #8 (4→8/10),#1(5→8/10) | S2 + S3 + S4               | ⏳  |

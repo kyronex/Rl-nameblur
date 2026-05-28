@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 import yaml
 
-
 LOG_FORMAT = "%(levelname)s — %(message)s"
 
 # ---------------------------------------------------------------------------
@@ -83,3 +82,22 @@ def _r(val: float | None) -> float | None:
     if val is None:
         return None
     return round(val, ROUND_DIGITS)
+
+# ---------------------------------------------------------------------------
+# Bucketing adaptatif cold/hot (S4)
+# ---------------------------------------------------------------------------
+
+BUCKET_COLD_TARGET_S    = _get("debug.bench.compare.buckets.cold_target_s",    5.0)
+BUCKET_HOT_DURATION_S   = _get("debug.bench.compare.buckets.hot_duration_s",  10.0)
+BUCKET_MAX_COLD_DRIFT_S = _get("debug.bench.compare.buckets.max_cold_drift_s", 3.0)
+BUCKET_BOUNDARY_GUARD_S = _get("debug.bench.compare.buckets.boundary_guard_s", 0.5)
+BUCKET_MIN_GAP_S        = _get("debug.bench.compare.buckets.min_gap_s",        0.1)
+BUCKET_EPSILON_S        = _get("debug.bench.compare.buckets.epsilon_s",        0.001)
+
+assert BUCKET_COLD_TARGET_S > 0,     "cold_target_s doit être > 0"
+assert BUCKET_HOT_DURATION_S > 0,    "hot_duration_s doit être > 0"
+assert BUCKET_MAX_COLD_DRIFT_S >= 0, "max_cold_drift_s doit être >= 0"
+assert BUCKET_BOUNDARY_GUARD_S >= 0, "boundary_guard_s doit être >= 0"
+assert 0 <= BUCKET_MIN_GAP_S < BUCKET_BOUNDARY_GUARD_S, \
+    "min_gap_s doit être dans [0, boundary_guard_s["
+assert BUCKET_EPSILON_S >= 0,        "epsilon_s doit être >= 0"

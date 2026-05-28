@@ -201,3 +201,12 @@ debug:
       enabled: true
       path: "logs/json/bench_fast.jsonl"
       interval_s: 1.0 # Période entre deux snapshots fast (s)
+    # ── Analyse comparative (bench_compare.py) ───────────────────
+    compare:
+      buckets:
+        cold_target_s: 3.0 # Cible théorique fin de phase cold (s)
+        hot_duration_s: 5.0 # Durée nominale d'un bucket hot_i (s)
+        max_cold_drift_s: 3.0 # Seuil warning si cold_end_real dépasse cold_target_s de plus de N s
+        boundary_guard_s: 0.5 # Demi-largeur fenêtre recherche pivot hot_i (s)
+        min_gap_s: 0.1 # Écart minimal entre un événement et la frontière pour être pivot valide (s)
+        epsilon_s: 0.001 # ε de sécurité synchro wait-for-all (s)
