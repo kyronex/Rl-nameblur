@@ -1,20 +1,22 @@
 # bench/compare/_builder.py
 
 from bench.compare._config import (PERCENTILES,_r)
-from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,percentile_value,delta_pct,filter_rows_by_mono)
+from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,percentile_value, quartile_values,delta_pct,filter_rows_by_mono)
 from bench.compare._bucketing import BucketsResult, compute_buckets
 
 def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]],*,channel: str) -> dict:
     """
-    Construit le bloc percentiles pour une sonde.
+    Construit le bloc stats descriptives (percentiles + quartiles S4bis) pour une sonde.
     Args:
         probe_name: nom de la sonde.
         exact_samples: échantillons exacts (count==1) issus du canal frame.
         approx_samples: échantillons approximés issus du canal agrégé concerné.
-        channel: "agg" → exact calculable depuis frame_rows.
+        channel: "agg"  → exact calculable depuis frame_rows.
                  "fast" → pas d'exact (samples_exact=0, *_exact=null).
     Returns:
-        dict avec samples_exact, samples_approx, et p{pct}_exact / p{pct}_approx.
+        dict avec samples_exact, samples_approx,
+        p{pct}_exact / p{pct}_approx pour pct ∈ PERCENTILES,
+        et q1/q3/iqr déclinés _exact / _approx (S4bis).
     """
     has_exact = (channel == "agg")
     exact_data = exact_samples.get(probe_name, []) if has_exact else []
@@ -26,7 +28,17 @@ def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]
     for pct in PERCENTILES:
         block[f"p{pct}_exact"] = percentile_value(exact_data, pct) if has_exact else None
         block[f"p{pct}_approx"] = percentile_value(approx_data, pct)
+    # S4bis — quartiles + IQR
+    q1_e, q3_e, iqr_e = quartile_values(exact_data) if has_exact else (None, None, None)
+    q1_a, q3_a, iqr_a = quartile_values(approx_data)
+    block["q1_exact"]   = q1_e
+    block["q1_approx"]  = q1_a
+    block["q3_exact"]   = q3_e
+    block["q3_approx"]  = q3_a
+    block["iqr_exact"]  = iqr_e
+    block["iqr_approx"] = iqr_a
     return block
+
 
 def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows:  list[dict]) -> dict:
     """
@@ -268,7 +280,8 @@ def _build_temporal_deltas(ref_block: dict, target_block: dict) -> dict:
 def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
     """
     Construit les deltas pour toutes les sondes présentes dans target ou ref.
-    Couvre avg, min, max et tous les percentiles (exact + approx).
+    Couvre avg, min, max, tous les percentiles (exact + approx),
+    et les quartiles q1/q3/iqr (exact + approx) — S4bis.
     """
     all_keys = set(target_probes) | set(ref_probes)
     deltas: dict[str, dict] = {}
@@ -282,8 +295,14 @@ def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
             for method in ("exact", "approx"):
                 fname = f"p{pct}_{method}"
                 entry[f"{fname}_delta_pct"] = delta_pct(t.get(fname), r.get(fname))
+        # S4bis — quartiles + IQR
+        for stat in ("q1", "q3", "iqr"):
+            for method in ("exact", "approx"):
+                fname = f"{stat}_{method}"
+                entry[f"{fname}_delta_pct"] = delta_pct(t.get(fname), r.get(fname))
         deltas[key] = entry
     return deltas
+
 
 def _build_scalar_deltas(target: dict, ref: dict) -> dict:
     """Construit les deltas pour rates ou gauges (valeurs scalaires)."""
@@ -314,7 +333,7 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
         return None
     # Cold
     cold_delta = {
-        "duration_delta_pct ": delta_pct(target_buckets["cold"].get("duration_s"),ref_buckets["cold"].get("duration_s")),
+        "duration_delta_pct": delta_pct(target_buckets["cold"].get("duration_s"),ref_buckets["cold"].get("duration_s")),
         "probes":      _build_probe_deltas(target_buckets["cold"].get("probes", {}),ref_buckets["cold"].get("probes", {})),
         "rates":       _build_scalar_deltas(target_buckets["cold"].get("rates", {}),ref_buckets["cold"].get("rates", {})),
         "gauges":      _build_scalar_deltas(target_buckets["cold"].get("gauges", {}),ref_buckets["cold"].get("gauges", {})),
@@ -345,7 +364,7 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
     r_tail = ref_buckets.get("tail")
     if t_tail is not None and r_tail is not None:
         tail_status = "aligned"
-        tail_delta = {"duration_delta_pct ": delta_pct(t_tail.get("duration_s"), r_tail.get("duration_s"))}
+        tail_delta = {"duration_delta_pct": delta_pct(t_tail.get("duration_s"), r_tail.get("duration_s"))}
     elif t_tail is None and r_tail is None:
         tail_status = "both_absent"
         tail_delta = None

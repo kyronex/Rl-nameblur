@@ -168,7 +168,13 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
         "p99_exact": "float | null",
         "p90_approx": "float | null",
         "p95_approx": "float | null",
-        "p99_approx": "float | null"
+        "p99_approx": "float | null",
+        "q1_exact":   "float | null",
+        "q1_approx":  "float | null",
+        "q3_exact":   "float | null",
+        "q3_approx":  "float | null",
+        "iqr_exact":  "float | null",
+        "iqr_approx": "float | null"
       }
     },
     "rates": {"<rate_name>": "float"},
@@ -186,7 +192,13 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
         "p99_exact": "float | null",
         "p90_approx": "float | null",
         "p95_approx": "float | null",
-        "p99_approx": "float | null"
+        "p99_approx": "float | null",
+        "q1_exact":   "float | null",
+        "q1_approx":  "float | null",
+        "q3_exact":   "float | null",
+        "q3_approx":  "float | null",
+        "iqr_exact":  "float | null",
+        "iqr_approx": "float | null"
       }
     },
     "fast_rates": {"<rate_name>": "float"},
@@ -253,16 +265,16 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
           "frame": { "frames": {}, "median_interval_s": {}, "gaps_stat": {}, "gaps_fixed": {} },
           "fast":  { "frames": {}, "median_interval_s": {}, "gaps_stat": {}, "gaps_fixed": {} }
         },
-        "probes":      { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct..." } },
+        "probes":      { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct...", "...quartile_delta_pct..." } },
         "rates":       { "<rate_name>":  { "delta_pct": "float | null" } },
         "gauges":      { "<gauge_name>": { "delta_pct": "float | null" } },
-        "fast_probes": { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct..." } },
+        "fast_probes": { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct..." , "...quartile_delta_pct..." } },
         "fast_rates":  { "<rate_name>":  { "delta_pct": "float | null" } },
         "fast_gauges": { "<gauge_name>": { "delta_pct": "float | null" } },
         "buckets": {
           "cold": {
             "duration_delta_pct": "float | null",
-            "probes":      { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct..." } },
+            "probes":      { "<probe_name>": { "avg_delta_pct": "float | null", "...percentile_delta_pct...", "...quartile_delta_pct..."  } },
             "rates":       { "<rate_name>":  { "delta_pct": "float | null" } },
             "gauges":      { "<gauge_name>": { "delta_pct": "float | null" } },
             "fast_probes": { "<probe_name>": { "..." } },
@@ -391,6 +403,20 @@ Chaque ligne JSONL du canal `frame` expose `{avg, max, min, count}` par sonde (c
 **Seuil minimal** : percentile calculé uniquement si **`samples >= 20`**. Sinon → `null`.
 
 **Cas particulier `fast_*`** : `p90_exact` / `p95_exact` / `p99_exact` toujours `null`.
+
+**Quartiles & IQR (S4bis)** :
+
+Pour chaque sonde, en complément des percentiles, sont calculés :
+
+| Champ produit              | Définition                                           |
+| -------------------------- | ---------------------------------------------------- |
+| `q1_exact` / `q1_approx`   | Premier quartile (25e percentile)                    |
+| `q3_exact` / `q3_approx`   | Troisième quartile (75e percentile)                  |
+| `iqr_exact` / `iqr_approx` | Écart interquartile `q3 - q1` — mesure de dispersion |
+
+Calcul via `statistics.quantiles(data, n=4, method="inclusive")`. Même seuil minimal que les percentiles : si `samples < 20` → les trois champs (`q1`, `q3`, `iqr`) valent `null`.
+
+**Cas particulier `fast_*`** : `q1_exact` / `q3_exact` / `iqr_exact` toujours `null` (pas d'échantillons exacts disponibles sur le canal fast).
 
 ### Rates
 
@@ -574,7 +600,7 @@ Les deltas entre sessions sont calculés **par bucket aligné** (P1) :
 | Détection statistique (p-values)                    | Hors scope                                         |
 | Seuil minimal d'échantillons percentiles            | Figé à `20` en v1 — non configurable               |
 | Facteurs `GAP_STAT_FACTOR` / `GAP_FIXED_FACTOR`     | Figés à `3.0` / `2.0` en v1 — non configurables    |
-| IQR                                                 | Prévu S4-bis — non implémenté en v1                |
+| IQR (Q1 / Q3 / IQR par sonde)                       | Prévu S4-bis — non implémenté en v1                |
 | Skewness / Kurtosis par bucket                      | Prévu S5 — non implémenté en v1                    |
 
 ---

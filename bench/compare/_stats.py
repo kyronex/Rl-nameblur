@@ -163,6 +163,19 @@ def percentile_value(data: list[float], pct: int) -> float | None:
     qs = quantiles(data, n=100, method="inclusive")
     return qs[pct - 1]
 
+def quartile_values(data: list[float]) -> tuple[float | None, float | None, float | None]:
+    """
+    Calcule (Q1, Q3, IQR) via statistics.quantiles (method='inclusive', n=4).
+    Retourne (None, None, None) si len(data) < PERCENTILE_MIN_SAMPLES.
+    Cohérent avec percentile_value (même seuil, même méthode quantile).
+    IQR = Q3 - Q1.
+    """
+    if len(data) < PERCENTILE_MIN_SAMPLES:
+        return None, None, None
+    qs = quantiles(data, n=4, method="inclusive")
+    q1, q3 = qs[0], qs[2]
+    return q1, q3, q3 - q1
+
 def collect_frame_samples(frame_rows: list[dict]) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
     """
     Depuis les lignes du canal frame, collecte :
