@@ -210,3 +210,12 @@ debug:
         boundary_guard_s: 0.5 # Demi-largeur fenêtre recherche pivot hot_i (s)
         min_gap_s: 0.1 # Écart minimal entre un événement et la frontière pour être pivot valide (s)
         epsilon_s: 0.001 # ε de sécurité synchro wait-for-all (s)
+      # ── Stats forme de distribution (S5a) ──────────────────────
+      shape:
+        skewness_min_samples: 50 # Seuil min échantillons pour calculer skewness (D2)
+        kurtosis_min_samples: 100 # Seuil min échantillons pour calculer kurtosis excess (D3)
+      # ── Détection anomalies (S5b) ──────────────────────────────
+      anomalies:
+        spike_min_samples: 20 # Seuil min échantillons pour détection spikes via MAD
+        spike_mad_factor: 3.5 # Multiplicateur MAD : |v - median| > factor * MAD ⇒ spike
+        drift_min_samples: 30 # Seuil min échantillons pour régression OLS (drift)

@@ -10,7 +10,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import logging
 from datetime import datetime
 
-from bench.compare._config import (LOG_FORMAT,SCHEMA_VERSION,DIR_JSON,DIR_RESULTS,_r)
+from bench.compare._config import (LOG_FORMAT,SCHEMA_VERSION,DIR_JSON,DIR_RESULTS)
 from bench.compare._io import (find_sessions,load_session,write_report,move_session_to_results)
 from bench.compare._builder import (build_session_block,build_comparison)
 

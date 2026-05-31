@@ -101,3 +101,27 @@ assert BUCKET_BOUNDARY_GUARD_S >= 0, "boundary_guard_s doit être >= 0"
 assert 0 <= BUCKET_MIN_GAP_S < BUCKET_BOUNDARY_GUARD_S, \
     "min_gap_s doit être dans [0, boundary_guard_s["
 assert BUCKET_EPSILON_S >= 0,        "epsilon_s doit être >= 0"
+
+# ---------------------------------------------------------------------------
+# Stats forme de distribution (S5a)
+# ---------------------------------------------------------------------------
+
+SKEWNESS_MIN_SAMPLES = _get("debug.bench.compare.shape.skewness_min_samples", 50)
+KURTOSIS_MIN_SAMPLES = _get("debug.bench.compare.shape.kurtosis_min_samples", 100)
+
+assert SKEWNESS_MIN_SAMPLES > 0, "SKEWNESS_MIN_SAMPLES doit être > 0"
+assert KURTOSIS_MIN_SAMPLES > 0, "KURTOSIS_MIN_SAMPLES doit être > 0"
+
+# ---------------------------------------------------------------------------
+# Anomalies S5b — Spikes (MAD) + Drift (OLS)
+# ---------------------------------------------------------------------------
+SPIKE_MIN_SAMPLES = _get("debug.bench.compare.anomalies.spike_min_samples", 20)
+SPIKE_MAD_FACTOR  = _get("debug.bench.compare.anomalies.spike_mad_factor",  3.5)
+DRIFT_MIN_SAMPLES = _get("debug.bench.compare.anomalies.drift_min_samples", 30)
+
+assert isinstance(SPIKE_MIN_SAMPLES, int) and SPIKE_MIN_SAMPLES >= 2, \
+    "SPIKE_MIN_SAMPLES doit être un int >= 2"
+assert isinstance(SPIKE_MAD_FACTOR, (int, float)) and SPIKE_MAD_FACTOR > 0, \
+    "SPIKE_MAD_FACTOR doit être > 0"
+assert isinstance(DRIFT_MIN_SAMPLES, int) and DRIFT_MIN_SAMPLES >= 2, \
+    "DRIFT_MIN_SAMPLES doit être un int >= 2"

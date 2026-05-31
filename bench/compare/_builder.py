@@ -1,7 +1,7 @@
 # bench/compare/_builder.py
 
 from bench.compare._config import (PERCENTILES,_r)
-from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,percentile_value, quartile_values,delta_pct,filter_rows_by_mono)
+from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,collect_frame_exact_pairs,compute_anomalies,_empty_anomalies,percentile_value, quartile_values,delta_pct,delta_abs,safe_skewness,safe_kurtosis_excess,filter_rows_by_mono)
 from bench.compare._bucketing import BucketsResult, compute_buckets
 
 def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]],*,channel: str) -> dict:
@@ -37,6 +37,10 @@ def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]
     block["q3_approx"]  = q3_a
     block["iqr_exact"]  = iqr_e
     block["iqr_approx"] = iqr_a
+    block["skewness_exact"]         = safe_skewness(exact_data) if has_exact else None
+    block["skewness_approx"]        = safe_skewness(approx_data)
+    block["kurtosis_excess_exact"]  = safe_kurtosis_excess(exact_data) if has_exact else None
+    block["kurtosis_excess_approx"] = safe_kurtosis_excess(approx_data)
     return block
 
 
@@ -54,15 +58,23 @@ def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows
     exact_samples, frame_approx = collect_frame_samples(frame_rows)
     fast_approx = collect_fast_approx_samples(fast_rows)
     approx_samples: dict[str, list[float]] = {**frame_approx, **fast_approx}
+    # ── S5b : extraction des paires (value, mono) triées par mono ──
+    exact_pairs = collect_frame_exact_pairs(frame_rows)
+    anomalies_by_probe: dict[str, dict] = {}
+    for probe_name, pairs in exact_pairs.items():
+        pairs_sorted = sorted(pairs, key=lambda p: p[1])
+        anomalies_by_probe[probe_name] = compute_anomalies(pairs_sorted)
     probes: dict[str, dict] = {}
     for probe_name, stats in base_probes_agg.items():
         pct_block = _build_percentile_block(probe_name, exact_samples, approx_samples, channel="agg")
+        anomalies = anomalies_by_probe.get(probe_name, _empty_anomalies())
         probes[probe_name] = {
             "avg": _r(stats["avg"]),
             "min": _r(stats["min"]),
             "max": _r(stats["max"]),
             "count_agg": stats["count_agg"],
             **{k: _r(v) for k, v in pct_block.items()},
+            **{k: _r(v) for k, v in anomalies.items()},
         }
     fast_probes: dict[str, dict] = {}
     for probe_name, stats in base_probes_fast.items():
@@ -73,6 +85,7 @@ def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows
             "max": _r(stats["max"]),
             "count_fast": stats["count_agg"],
             **{k: _r(v) for k, v in pct_block.items()},
+            **_empty_anomalies(),
         }
     return {
         "probes":      probes,
@@ -277,7 +290,7 @@ def _build_temporal_deltas(ref_block: dict, target_block: dict) -> dict:
         }
     return deltas
 
-def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
+def _build_probe_deltas(target_probes: dict, ref_probes: dict, *, include_anomalies: bool = False) -> dict:
     """
     Construit les deltas pour toutes les sondes présentes dans target ou ref.
     Couvre avg, min, max, tous les percentiles (exact + approx),
@@ -300,6 +313,16 @@ def _build_probe_deltas(target_probes: dict, ref_probes: dict) -> dict:
             for method in ("exact", "approx"):
                 fname = f"{stat}_{method}"
                 entry[f"{fname}_delta_pct"] = delta_pct(t.get(fname), r.get(fname))
+         # S5a — Skewness + Kurtosis excess (deltas absolus, D8)
+        for stat in ("skewness", "kurtosis_excess"):
+            for method in ("exact", "approx"):
+                fname = f"{stat}_{method}"
+                entry[f"{fname}_delta"] = delta_abs(t.get(fname), r.get(fname))
+        # S5b — Spikes + Drift (deltas absolus, E13)
+        # spike_max_value et drift_intercept exclus (Q-Patch-3 A)
+        if include_anomalies:
+            for fname in ("spike_count", "spike_max_deviation", "drift_slope", "drift_r2"):
+                entry[f"{fname}_delta"] = delta_abs(t.get(fname), r.get(fname))
         deltas[key] = entry
     return deltas
 
@@ -334,10 +357,10 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
     # Cold
     cold_delta = {
         "duration_delta_pct": delta_pct(target_buckets["cold"].get("duration_s"),ref_buckets["cold"].get("duration_s")),
-        "probes":      _build_probe_deltas(target_buckets["cold"].get("probes", {}),ref_buckets["cold"].get("probes", {})),
+        "probes":      _build_probe_deltas(target_buckets["cold"].get("probes", {}),ref_buckets["cold"].get("probes", {}), include_anomalies=True),
         "rates":       _build_scalar_deltas(target_buckets["cold"].get("rates", {}),ref_buckets["cold"].get("rates", {})),
         "gauges":      _build_scalar_deltas(target_buckets["cold"].get("gauges", {}),ref_buckets["cold"].get("gauges", {})),
-        "fast_probes": _build_probe_deltas(target_buckets["cold"].get("fast_probes", {}),ref_buckets["cold"].get("fast_probes", {})),
+        "fast_probes": _build_probe_deltas(target_buckets["cold"].get("fast_probes", {}),ref_buckets["cold"].get("fast_probes", {}), include_anomalies=True),
         "fast_rates":  _build_scalar_deltas(target_buckets["cold"].get("fast_rates", {}),ref_buckets["cold"].get("fast_rates", {})),
         "fast_gauges": _build_scalar_deltas(target_buckets["cold"].get("fast_gauges", {}),ref_buckets["cold"].get("fast_gauges", {})),
     }
@@ -351,10 +374,10 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
         hot_deltas.append({
             "index": i,
             "duration_delta_pct": delta_pct(th.get("duration_s"), rh.get("duration_s")),
-            "probes":      _build_probe_deltas(th.get("probes",{}), rh.get("probes",{})),
+            "probes":      _build_probe_deltas(th.get("probes",{}), rh.get("probes",{}), include_anomalies=True),
             "rates":       _build_scalar_deltas(th.get("rates",{}), rh.get("rates",{})),
             "gauges":      _build_scalar_deltas(th.get("gauges",{}), rh.get("gauges",{})),
-            "fast_probes": _build_probe_deltas(th.get("fast_probes",{}), rh.get("fast_probes",{})),
+            "fast_probes": _build_probe_deltas(th.get("fast_probes",{}), rh.get("fast_probes",{}), include_anomalies=True),
             "fast_rates":  _build_scalar_deltas(th.get("fast_rates",{}), rh.get("fast_rates",{})),
             "fast_gauges": _build_scalar_deltas(th.get("fast_gauges",{}), rh.get("fast_gauges",{})),
         })
