@@ -30,11 +30,11 @@ Le fichier est un objet JSON autonome et auto-descriptif. Il contient :
 
 ### 2.1 Méta-champs obligatoires (racine)
 
-| Champ            | Type   | Description                                                         |
-| ---------------- | ------ | ------------------------------------------------------------------- |
-| `schema_version` | int    | Version du contrat (valeur courante : `1`).                         |
-| `generated_at`   | string | Timestamp de génération ISO 8601 (`datetime.utcnow().isoformat()`). |
-| `target_session` | string | Identifiant de la session analysée (session cible).                 |
+| Champ            | Type   | Description                                                                                |
+| ---------------- | ------ | ------------------------------------------------------------------------------------------ |
+| `schema_version` | int    | Version du contrat (valeur courante : `1`).                                                |
+| `generated_at`   | string | Timestamp ISO 8601 avec offset timezone local (`datetime.now().astimezone().isoformat()`). |
+| `target_session` | string | Identifiant de la session analysée (session cible).                                        |
 
 ### 2.2 Valeurs nulles
 
@@ -54,18 +54,49 @@ delta_pct = (target − reference) / abs(reference) × 100
 
 ### 2.4 Seuils statistiques minimaux
 
-| Statistique       | Seuil minimum                | Comportement sous seuil |
-| ----------------- | ---------------------------- | ----------------------- |
-| `skewness`        | 50 échantillons              | `null` silencieux       |
-| `kurtosis_excess` | 100 échantillons             | `null` silencieux       |
-| `spike_*`         | `SPIKE_MIN_SAMPLES` (config) | `null` silencieux       |
-| `drift_*`         | `DRIFT_MIN_SAMPLES` (config) | `null` silencieux       |
+En-dessous des seuils ci-dessous, les champs concernés valent `null` (silencieux, sans warning).
 
-### 2.5 Source des échantillons exacts
+| Statistique                 | Seuil minimum       | Constante              | Source de configuration                  |
+| --------------------------- | ------------------- | ---------------------- | ---------------------------------------- |
+| `p90_*` / `p95_*` / `p99_*` | 20 échantillons     | _(figé v1)_            | —                                        |
+| `q1_*` / `q3_*` / `iqr_*`   | 20 échantillons     | _(figé v1)_            | —                                        |
+| `skewness_*`                | 50 échantillons     | `SKEWNESS_MIN_SAMPLES` | `debug.bench.shape.skewness_min_samples` |
+| `kurtosis_excess_*`         | 100 échantillons    | `KURTOSIS_MIN_SAMPLES` | `debug.bench.shape.kurtosis_min_samples` |
+| `spike_*`                   | `SPIKE_MIN_SAMPLES` | `SPIKE_MIN_SAMPLES`    | `config.yaml` (cf. `bench-compare.md`)   |
+| `drift_*`                   | `DRIFT_MIN_SAMPLES` | `DRIFT_MIN_SAMPLES`    | `config.yaml` (cf. `bench-compare.md`)   |
 
-Les champs `samples_exact`, `p90_exact`, `p95_exact`, `p99_exact`, `q1_exact`, `q3_exact`,
-`iqr_exact`, `skewness`, `kurtosis_excess`, `spike_*`, `drift_*` sont calculés
-**exclusivement** depuis le canal `frame` (lignes `count == 1`).
+**Garde défensive supplémentaire** : `skewness_*` et `kurtosis_excess_*` valent également `null` si la variance des échantillons est nulle (toutes valeurs identiques), pour éviter une division par zéro dans `scipy.stats`.
+
+### 2.5 Source des échantillons
+
+Les statistiques se déclinent en deux variantes selon le canal source des échantillons :
+
+| Suffixe   | Canal source                                  | Nature des échantillons                       |
+| --------- | --------------------------------------------- | --------------------------------------------- |
+| `_exact`  | Canal `frame` (lignes `count == 1`)           | Valeurs individuelles par frame               |
+| `_approx` | Canal d'origine de la sonde (`agg` ou `fast`) | Moyennes pré-agrégées (`avg` de chaque ligne) |
+
+**Champs concernés par cette dichotomie** :
+
+`p90_*`, `p95_*`, `p99_*`, `q1_*`, `q3_*`, `iqr_*`, `skewness_*`, `kurtosis_excess_*`.
+
+**Cas particulier `samples_exact` / `samples_approx`** : nombre d'échantillons effectivement collectés par variante (sert au contrôle des seuils §2.4).
+
+**Cas particulier `fast_*`** : les variantes `_exact` valent **toujours** `null` , le canal `fast` ne produit pas de lignes `count == 1` exploitables. Seules les variantes `_approx` sont calculées si le seuil est atteint.
+
+**Champs sans variante (frame uniquement)** : `spike_*` et `drift_*` sont calculés **exclusivement** depuis le canal `frame` et n'ont pas de variante
+`_approx`.
+
+**Périmètre d'application** :
+
+| Famille de champs                  | Session (`target.probes`) | Buckets `cold` / `hot[i]` | Bucket `tail` |
+| ---------------------------------- | ------------------------- | ------------------------- | ------------- |
+| Percentiles, quartiles, IQR        | ✅                        | ✅                        | ✅            |
+| `skewness_*` / `kurtosis_excess_*` | ✅                        | ✅                        | ✅            |
+| `spike_*` / `drift_*`              | ❌                        | ✅                        | ❌            |
+
+> Le périmètre phase-only des indicateurs d'anomalie (`spike_*` / `drift_*`) est
+> volontaire — cf. `bench-compare.md` section « Détection d'anomalies ».
 
 ---
 
@@ -149,8 +180,10 @@ Statistiques sur la régularité temporelle des lignes JSONL par canal.
   "q3_approx":       <float | null>,
   "iqr_exact":       <float | null>,
   "iqr_approx":      <float | null>,
-  "skewness":        <float | null>,
-  "kurtosis_excess": <float | null>
+  "skewness_exact":        <float | null>,
+  "skewness_approx":        <float | null>,
+  "kurtosis_excess_exact": <float | null>,
+  "kurtosis_excess_approx": <float | null>,
 }
 ```
 
@@ -316,6 +349,7 @@ Métadonnées de synchronisation cold/hot entre sessions.
     "reference_session": <string>,
     "reference": { ... },
     "deltas":    { ... },
+    "buckets":    { ... },
     "appeared_probes":         [<string>, ...],
     "disappeared_probes":      [<string>, ...],
     "appeared_rates":          [<string>, ...],
@@ -336,7 +370,8 @@ Métadonnées de synchronisation cold/hot entre sessions.
 | ------------------- | ------ | ---------------------------------------------------------------------- |
 | `reference_session` | string | Identifiant de la session de référence.                                |
 | `reference`         | object | Même structure que `target` — statistiques de la session de référence. |
-| `deltas`            | object | Différences calculées (voir §7.2).                                     |
+| `deltas`            | object | Différences calculées scalaires (voir §7.2).                           |
+| `buckets`           | object | Deltas ventilés par bucket cold/hot/tail (voir §7.3).                  |
 | `appeared_*`        | array  | Sondes/rates/gauges présentes dans target, absentes de reference.      |
 | `disappeared_*`     | array  | Sondes/rates/gauges présentes dans reference, absentes de target.      |
 
@@ -350,8 +385,7 @@ Métadonnées de synchronisation cold/hot entre sessions.
   "gauges":      { "<gauge_name>": { "delta_pct": <float | null> }, ... },
   "fast_probes": { "<probe_name>": <delta_probe_global>, ... },
   "fast_rates":  { "<rate_name>":  { "delta_pct": <float | null> }, ... },
-  "fast_gauges": { "<gauge_name>": { "delta_pct": <float | null> }, ... },
-  "buckets":     { ... }
+  "fast_gauges": { "<gauge_name>": { "delta_pct": <float | null> }, ... }
 }
 ```
 
@@ -359,6 +393,7 @@ Métadonnées de synchronisation cold/hot entre sessions.
 
 ```json
 "temporal": {
+  "duration_mono_s": { "delta_pct": <float | null> },
   "agg":   {
     "frames":             { "reference": <int>, "target": <int>, "delta": <int> },
     "median_interval_s":  { "reference": <float | null>, "target": <float | null>, "delta": <float | null> },
@@ -374,13 +409,25 @@ Métadonnées de synchronisation cold/hot entre sessions.
 
 ```json
 "<probe_name>": {
-  "avg_delta_pct":   <float | null>,
-  "p90_delta_pct":   <float | null>,
-  "p95_delta_pct":   <float | null>,
-  "p99_delta_pct":   <float | null>,
-  "q1_delta_pct":    <float | null>,
-  "q3_delta_pct":    <float | null>,
-  "iqr_delta_pct":   <float | null>
+  "avg_delta_pct":                <float | null>,
+  "min_delta_pct":                <float | null>,
+  "max_delta_pct":                <float | null>,
+  "p90_exact_delta_pct":          <float | null>,
+  "p90_approx_delta_pct":         <float | null>,
+  "p95_exact_delta_pct":          <float | null>,
+  "p95_approx_delta_pct":         <float | null>,
+  "p99_exact_delta_pct":          <float | null>,
+  "p99_approx_delta_pct":         <float | null>,
+  "q1_exact_delta_pct":           <float | null>,
+  "q1_approx_delta_pct":          <float | null>,
+  "q3_exact_delta_pct":           <float | null>,
+  "q3_approx_delta_pct":          <float | null>,
+  "iqr_exact_delta_pct":          <float | null>,
+  "iqr_approx_delta_pct":         <float | null>,
+  "skewness_exact_delta":         <float | null>,
+  "skewness_approx_delta":        <float | null>,
+  "kurtosis_excess_exact_delta":  <float | null>,
+  "kurtosis_excess_approx_delta": <float | null>
 }
 ```
 
@@ -393,28 +440,36 @@ Hérite de `delta_probe_global` et ajoute :
 
 ```json
 "<probe_name>": {
-  "avg_delta_pct":   <float | null>,
-  "p90_delta_pct":   <float | null>,
-  "p95_delta_pct":   <float | null>,
-  "p99_delta_pct":   <float | null>,
-  "q1_delta_pct":    <float | null>,
-  "q3_delta_pct":    <float | null>,
-  "iqr_delta_pct":   <float | null>,
-  "skewness":        { "reference": <float | null>, "target": <float | null>, "delta": <float | null> },
-  "kurtosis_excess": { "reference": <float | null>, "target": <float | null>, "delta": <float | null> },
-  "spike_count":         { "reference": <int | null>,   "target": <int | null>,   "delta": <int | null> },
-  "spike_max_value":     { "reference": <float | null>, "target": <float | null> },
-  "spike_max_deviation": { "reference": <float | null>, "target": <float | null>, "delta": <float | null> },
-  "drift_slope":         { "reference": <float | null>, "target": <float | null>, "delta": <float | null> },
-  "drift_intercept":     { "reference": <float | null>, "target": <float | null> },
-  "drift_r2":            { "reference": <float | null>, "target": <float | null>, "delta": <float | null> }
+  "avg_delta_pct":                <float | null>,
+  "min_delta_pct":                <float | null>,
+  "max_delta_pct":                <float | null>,
+  "p90_exact_delta_pct":          <float | null>,
+  "p90_approx_delta_pct":         <float | null>,
+  "p95_exact_delta_pct":          <float | null>,
+  "p95_approx_delta_pct":         <float | null>,
+  "p99_exact_delta_pct":          <float | null>,
+  "p99_approx_delta_pct":         <float | null>,
+  "q1_exact_delta_pct":           <float | null>,
+  "q1_approx_delta_pct":          <float | null>,
+  "q3_exact_delta_pct":           <float | null>,
+  "q3_approx_delta_pct":          <float | null>,
+  "iqr_exact_delta_pct":          <float | null>,
+  "iqr_approx_delta_pct":         <float | null>,
+  "skewness_exact_delta":         <float | null>,
+  "skewness_approx_delta":        <float | null>,
+  "kurtosis_excess_exact_delta":  <float | null>,
+  "kurtosis_excess_approx_delta": <float | null>,
+  "spike_count_delta":            <int | null>,
+  "spike_max_deviation_delta":    <float | null>,
+  "drift_slope_delta":            <float | null>,
+  "drift_r2_delta":               <float | null>
 }
 ```
 
 > **Sémantique delta** : si l'une des deux valeurs source est `null` → delta `null`.
 > `spike_max_value` et `drift_intercept` n'ont **jamais** de clé `delta` — valeurs brutes seules.
 
-#### 7.2.4 `deltas.buckets`
+### 7.3 Bloc `buckets`
 
 ```json
 "buckets": {
@@ -431,7 +486,6 @@ Hérite de `delta_probe_global` et ajoute :
     {
       "index":                <int>,
       "duration_delta_pct":   <float | null>,
-      "is_pivot_snapped_ref": <bool | null>,
       "probes":      { "<probe_name>": <delta_probe_bucket>, ... },
       "rates":       { "<rate_name>":  { "delta_pct": <float | null> }, ... },
       "gauges":      { "<gauge_name>": { "delta_pct": <float | null> }, ... },
@@ -454,14 +508,13 @@ Hérite de `delta_probe_global` et ajoute :
 }
 ```
 
-| Champ                  | Type          | Description                                                              |
-| ---------------------- | ------------- | ------------------------------------------------------------------------ |
-| `duration_delta_pct`   | float \| null | Delta de durée en % (target − reference) / \|reference\| × 100.          |
-| `is_pivot_snapped_ref` | bool \| null  | Valeur `is_pivot_snapped` du bucket hot de référence (`null` si absent). |
-| `unaligned_hot`        | array\[int\]  | Indices des buckets hot sans correspondance dans la session opposée.     |
-| `tail_status`          | string        | Statut d'alignement du tail entre les deux sessions.                     |
+| Champ                | Type          | Description                                                          |
+| -------------------- | ------------- | -------------------------------------------------------------------- |
+| `duration_delta_pct` | float \| null | Delta de durée en % (target − reference) / \|reference\| × 100.      |
+| `unaligned_hot`      | array\[int\]  | Indices des buckets hot sans correspondance dans la session opposée. |
+| `tail_status`        | string        | Statut d'alignement du tail entre les deux sessions.                 |
 
-##### Valeurs de `tail_status`
+#### Valeurs de `tail_status`
 
 | Valeur          | Signification                                             |
 | --------------- | --------------------------------------------------------- |
@@ -470,7 +523,7 @@ Hérite de `delta_probe_global` et ajoute :
 | `target_absent` | Le tail est absent de la session cible uniquement.        |
 | `ref_absent`    | Le tail est absent de la session de référence uniquement. |
 
-> Quand `tail_status != "aligned"`, le bloc `tail` dans `deltas.buckets` est **absent** du JSON.
+> Quand `tail_status != "aligned"`, le bloc `tail` dans `comparisons.<comparison_type>.buckets` est **absent** du JSON.
 
 ---
 

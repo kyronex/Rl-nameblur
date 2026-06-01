@@ -142,22 +142,22 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
 
 ### Légende des types
 
-| Placeholder         | Signification                                                                       |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `session_id`        | Identifiant de session, format `YYYYMMDD_HHmmss`                                    |
-| `datetime_iso8601`  | Horodatage ISO 8601 avec microsecondes et offset UTC local                          |
-| `<probe_name>`      | Clé dynamique — nom d'une sonde (cf. `bench-probes.md`)                             |
-| `<rate_name>`       | Clé dynamique — nom d'un compteur de taux                                           |
-| `<gauge_name>`      | Clé dynamique — nom d'une jauge                                                     |
-| `<comparison_type>` | Clé dynamique — `absolute` ou `relative`                                            |
-| `float`             | Nombre décimal signé                                                                |
-| `int`               | Entier ≥ 0                                                                          |
-| `string`            | Chaîne de caractères                                                                |
-| `["string"]`        | Tableau de chaînes (peut être vide `[]`)                                            |
-| `["int"]`           | Tableau d'entiers (peut être vide `[]`)                                             |
-| `bool`              | Booléen `true` / `false`                                                            |
-| `bool \| null`      | Booléen pouvant valoir `null` — ex. `is_pivot_snapped_ref` absent en session unique |
-| `T \| null`         | Champ pouvant valoir `null` — conditions détaillées section « Sémantique `null` »   |
+| Placeholder         | Signification                                                                     |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `session_id`        | Identifiant de session, format `YYYYMMDD_HHmmss`                                  |
+| `datetime_iso8601`  | Horodatage ISO 8601 avec microsecondes et offset UTC local                        |
+| `<probe_name>`      | Clé dynamique — nom d'une sonde (cf. `bench-probes.md`)                           |
+| `<rate_name>`       | Clé dynamique — nom d'un compteur de taux                                         |
+| `<gauge_name>`      | Clé dynamique — nom d'une jauge                                                   |
+| `<comparison_type>` | Clé dynamique — `absolute` ou `relative`                                          |
+| `float`             | Nombre décimal signé                                                              |
+| `int`               | Entier ≥ 0                                                                        |
+| `string`            | Chaîne de caractères                                                              |
+| `["string"]`        | Tableau de chaînes (peut être vide `[]`)                                          |
+| `["int"]`           | Tableau d'entiers (peut être vide `[]`)                                           |
+| `bool`              | Booléen `true` / `false`                                                          |
+| `bool \| null`      | Booléen pouvant valoir `null`                                                     |
+| `T \| null`         | Champ pouvant valoir `null` — conditions détaillées section « Sémantique `null` » |
 
 Si N == 2, `comparisons.relative` vaut `null`.
 Si N == 1, `comparisons.absolute` et `comparisons.relative` valent `null`.
@@ -219,7 +219,7 @@ Chaque ligne JSONL du canal `frame` expose `{avg, max, min, count}` par sonde (c
 
 **Cas particulier `fast_*`** : `p90_exact` / `p95_exact` / `p99_exact` toujours `null`.
 
-**Quartiles & IQR (S4bis)** :
+**Quartiles & IQR** :
 
 Pour chaque sonde, en complément des percentiles, sont calculés :
 
