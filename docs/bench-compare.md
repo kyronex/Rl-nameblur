@@ -17,12 +17,32 @@ les deux comparaisons valent `null`.
 
 ---
 
+## Sommaire
+
+- [Prérequis](#prérequis)
+- [Structure des dossiers](#structure-des-dossiers)
+  - [Avant exécution](#avant-exécution)
+  - [Après exécution](#après-exécution)
+- [Sources de sessions](#sources-de-sessions)
+  - [Cas de modification de `logs/results/`](#cas-de-modification-de-logsresults)
+- [Logique de sélection](#logique-de-sélection)
+  - [Rôles attribués](#rôles-attribués)
+- [Utilisation](#utilisation)
+- [Format du rapport JSON](#format-du-rapport-json)
+- [Forme de distribution](#forme-de-distribution)
+- [Détection d'anomalies](#détection-danomalies)
+- [Configuration (`config.yaml`)](#configuration-configyaml)
+- [Invariants garantis](#invariants-garantis)
+- [Limites v1](#limites-v1)
+
+---
+
 ## Prérequis
 
 - Python 3.10+
 - Dépendances :
   - **stdlib** : `json`, `pathlib`, `datetime`, `statistics`, `shutil`, `sys`, `logging`
-  - **tiers** : `numpy` (régression linéaire pour la détection de drift), `PyYAML` (lecture `config.yaml`)
+  - **tiers** : `numpy` (régression linéaire pour la détection de drift), `scipy` (skewness / kurtosis excess), `PyYAML` (lecture `config.yaml`)
 - Fichiers JSONL produits par `core/bench.py` (canaux `frame`, `agg`, `fast`)
 
 ---
@@ -89,7 +109,7 @@ Trois cas — et trois seulement — où des fichiers de `logs/results/` sont mo
    Un avertissement est émis à l'ingestion.
    Le dossier `logs/results/<session_id>/` est **vidé de ses fichiers de premier niveau** (JSONL **et** rapport préexistant éventuel) avant déplacement des fichiers venant de `logs/json/`. Le rapport est ensuite régénéré.
 
-   > **Note d'implémentation (v1)** : le vidage est non récursif (`Path.iterdir()` + `unlink()`). Le dossier n'est pas censé contenir de sous-dossier ; si tel était le cas, l'opération échouerait avec `OSError`. Aucun sous-dossier n'est créé par le pipeline actuel.
+   > **Note d'implémentation (v1)** : le vidage est non récursif (`Path.iterdir()` + `Path.unlink()`). Le dossier n'est pas censé contenir de sous-dossier ; si tel était le cas, `unlink()` lèverait `IsADirectoryError` (Linux) / `PermissionError` (Windows) **non catchée**, interrompant le déplacement. Aucun sous-dossier n'est créé par le pipeline actuel — cette limite est documentée mais non bloquante en exploitation normale.
 
 2. **Cible déjà présente dans `logs/results/`**
    Si la session la plus récente se trouve dans `logs/results/` (aucune session neuve dans `logs/json/` portant le même `session_id`), aucun JSONL n'est déplacé ni supprimé. Seul le rapport JSON `<target_session>.json` est (re)généré dans le dossier existant, écrasant atomiquement tout rapport préexistant du même nom (écriture `.tmp` + `replace`).
@@ -114,7 +134,7 @@ Soit **N** = nombre total de sessions disponibles (union `logs/json/` + `logs/re
 
 ### Rôles attribués
 
-- **Cible** : session avec le `session_id` le plus récent (tri lexicographique sur le format `YYYYMMDD_HHMMSS`).
+- **Cible** : session avec le `session_id` le plus récent (tri lexicographique sur le format `YYYYMMDD_HHMMSS`, équivalent au strftime Python `%Y%m%d_%H%M%S`).
 - **Référence absolue** : session avec le `session_id` le plus ancien.
 - **Référence relative** : session immédiatement antérieure à la cible (avant-dernière dans l'ordre chronologique).
 - En mode N==1 : la cible est l'unique session disponible, aucune référence n'est attribuée.
@@ -132,7 +152,7 @@ Exécution non interactive. Aucune option CLI en v1.
 
 ---
 
-## Format du JSON de sortie
+## Format du rapport JSON
 
 Fichier : `logs/results/<target_session>/<target_session>.json`
 
@@ -144,8 +164,8 @@ Fichier : `logs/results/<target_session>/<target_session>.json`
 
 | Placeholder         | Signification                                                                     |
 | ------------------- | --------------------------------------------------------------------------------- |
-| `session_id`        | Identifiant de session, format `YYYYMMDD_HHmmss`                                  |
-| `datetime_iso8601`  | Horodatage ISO 8601 avec microsecondes et offset UTC local                        |
+| `session_id`        | Identifiant de session, format `YYYYMMDD_HHMMSS` (strftime `%Y%m%d_%H%M%S`)       |
+| `datetime_iso8601`  | Horodatage ISO 8601 avec microsecondes et offset timezone local                   |
 | `<probe_name>`      | Clé dynamique — nom d'une sonde (cf. `bench-probes.md`)                           |
 | `<rate_name>`       | Clé dynamique — nom d'un compteur de taux                                         |
 | `<gauge_name>`      | Clé dynamique — nom d'une jauge                                                   |
@@ -233,7 +253,7 @@ Calcul via `statistics.quantiles(data, n=4, method="inclusive")`. Même seuil mi
 
 **Cas particulier `fast_*`** : `q1_exact` / `q3_exact` / `iqr_exact` toujours `null` (pas d'échantillons exacts disponibles sur le canal fast).
 
-**Forme de distribution** :
+### Forme de distribution
 
 Pour chaque sonde, en complément des quartiles, sont calculés les indicateurs de forme de distribution. Ils permettent de détecter des distributions asymétriques (queue de latence longue) ou à queues lourdes (pics récurrents), invisibles dans les agrégats `avg` / `min` / `max`.
 
@@ -244,8 +264,10 @@ Pour chaque sonde, en complément des quartiles, sont calculés les indicateurs 
 | `kurtosis_excess_exact`  | Kurtosis excess calculé sur échantillons exacts (`scipy.stats.kurtosis`, `fisher=True`, `bias=False`). |
 | `kurtosis_excess_approx` | Même calcul sur échantillons approchés (moyennes agrégées des lignes `agg`).                           |
 
-Interpretation `skewness_exact` : Valeur de référence : 0 (distribution symétrique). Positif = queue droite longue (latences hautes rares).
-Interpretation `kurtosis_excess_exact` : Valeur de référence : 0 (normale). Positif = queues plus lourdes que la normale (pics extrêmes fréquents).
+**Interprétation** :
+
+- `skewness_*` — valeur de référence : 0 (distribution symétrique). Positif = queue droite longue (latences hautes rares).
+- `kurtosis_excess_*` — valeur de référence : 0 (loi normale). Positif = queues plus lourdes que la normale (pics extrêmes fréquents).
 
 **Seuils minimaux distincts** :
 
@@ -325,13 +347,13 @@ Si `MAD == 0` (toutes les valeurs identiques à la médiane), `spike_count` vaut
 
 **Périmètre d'application** :
 
-| Niveau                              | Calculé ?       | Rationale                                                                             |
-| ----------------------------------- | --------------- | ------------------------------------------------------------------------------------- |
-| `target.probes` (session globale)   | ❌ Non          | Anomalies utile qu'en phase stable — cold mélange warm-up et stabilisation.           |
-| `target.buckets.cold.probes`        | ✅ Oui          | Phase de warm-up — détecte les pics initiaux et les dérives de stabilisation.         |
-| `target.buckets.hot[i].probes`      | ✅ Oui          | Régime nominal — détecte les anomalies en charge.                                     |
-| `target.buckets.tail.probes`        | ✅ Oui          | Fin de session — détecte les dérives de fin (fuite mémoire, dégradation progressive). |
-| `target.fast_probes` (tous niveaux) | ❌ Forcé `null` | Pas d'échantillons exacts disponibles sur le canal fast.                              |
+| Niveau                              | Calculé ?       | Rationale                                                                                |
+| ----------------------------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `target.probes` (session globale)   | ❌ Non          | Anomalies utiles only en phase stable,session globale mélange warm-up et régime nominal. |
+| `target.buckets.cold.probes`        | ✅ Oui          | Phase de warm-up, détecte les pics initiaux et les dérives de stabilisation.             |
+| `target.buckets.hot[i].probes`      | ✅ Oui          | Régime nominal, détecte les anomalies en charge.                                         |
+| `target.buckets.tail.probes`        | ✅ Oui          | Fin de session, détecte les dérives de fin (fuite mémoire, dégradation progressive).     |
+| `target.fast_probes` (tous niveaux) | ❌ Forcé `null` | Pas d'échantillons exacts disponibles sur le canal fast.                                 |
 
 **Périmètre deltas (mode comparaison)** :
 
@@ -389,7 +411,7 @@ Deux champs exposés au niveau `target` :
 
 ### Analyse temporelle
 
-Pour chaque canal (`agg`, `frame`, `fast`), trois indicateurs caractérisent la régularité temporelle du flux ingéré :
+Pour chaque canal (`agg`, `frame`, `fast`), trois indicateurs caractérisent la régularité temporelle du flux ingéré. Ces indicateurs sont exposés sous **`target.temporal_events.<canal>`** (le nombre de frames brutes par canal étant exposé séparément sous `target.frames.<canal>`).
 
 | Champ               | Définition                                                                   | Valeur si `frames < 2`       |
 | ------------------- | ---------------------------------------------------------------------------- | ---------------------------- |
@@ -414,6 +436,11 @@ GAP_STAT_FACTOR  = 3.0  # figé en v1 — gap statistique si > 3× médiane obse
 GAP_FIXED_FACTOR = 2.0  # figé en v1 — gap absolu si > 2× période théorique
 ```
 
+**Exposition dans le rapport** :
+
+- `target.frames.<canal>` — compteur brut de lignes ingérées par canal (clé top-level distincte).
+- `target.temporal_events.<canal>.{median_interval_s, gaps_stat, gaps_fixed}` — indicateurs de régularité.
+
 ### Delta (%)
 
 Mode comparaison uniquement (option `--reference`). Pour chaque indicateur scalaire des blocs `target.probes`, `target.rates`, `target.gauges`, la doc expose un **delta relatif** :
@@ -433,10 +460,10 @@ delta_pct = ((target - reference) / reference) × 100
 
 **Champs concernés (delta relatif `_delta_pct`)** :
 
-- Bloc `target.probes` : `avg`, `min`, `max`, percentiles (`p50`/`p90`/`p99` × `_exact`/`_approx`), quartiles (`q1`/`q3`/`iqr` × `_exact`/`_approx`).
-- Bloc `target.rates` : chaque rate.
-- Bloc `target.gauges` : chaque gauge.
-- Bloc `target.buckets.<phase>` : `duration_s`, plus tous les champs probes ci-dessus.
+- Bloc `deltas.probes` : `avg`, `min`, `max`, percentiles (`p90`/`p95`/`p99` × `_exact`/`_approx`), quartiles (`q1`/`q3`/`iqr` × `_exact`/`_approx`).
+- Bloc `deltas.rates` : chaque rate.
+- Bloc `deltas.gauges` : chaque gauge.
+- Bloc `deltas.buckets.<phase>` : `duration_s`, plus tous les champs probes ci-dessus.
 
 ### Exception sondes — Deltas absolus
 
@@ -482,18 +509,20 @@ delta = target − reference
 
 **Cas `tail`** : aucun delta de forme ou d'anomalie n'est exposé. Les valeurs brutes restent disponibles dans `reference.buckets.tail` / `target.buckets.tail` pour analyse manuelle. Rationale : la `tail` représente un échantillon non synchronisé entre sessions (durée variable post-`hot`), une comparaison directe serait peu fiable.
 
+> ℹ️ **Cohérence avec (forme de distribution)** : sur le bucket `tail`, les **valeurs brutes** `skewness_*` et `kurtosis_excess_*` sont calculées et exposées côté `target.buckets.tail.probes` (cf. section « Forme de distribution (S5a) », périmètre d'application). Seuls leurs **deltas** sont supprimés du bloc `deltas.buckets.tail`, pour la raison de non-synchronisation évoquée ci-dessus.
+
 ---
 
 ## Deltas temporels (`deltas.temporal`)
 
 Ventilation par canal (`agg`, `frame`, `fast`). Chaque canal expose les 4 sous-clés issues de l'analyse temporelle :
 
-| Champ                         | Type delta       | Cas `null`                                                 |
-| ----------------------------- | ---------------- | ---------------------------------------------------------- |
-| `frames_delta_pct`            | Relatif (`_pct`) | `reference.frames == 0`                                    |
-| `median_interval_s_delta_pct` | Relatif (`_pct`) | `reference.median_interval_s == null` ou `0`               |
-| `gaps_stat_delta_pct`         | Relatif (`_pct`) | `reference.gaps_stat == 0`                                 |
-| `gaps_fixed_delta_pct`        | Relatif (`_pct`) | `reference.gaps_fixed == null` (canal event-driven) ou `0` |
+| Champ                         | Type delta       | Source brute                     | Cas `null`                                                 |
+| ----------------------------- | ---------------- | -------------------------------- | ---------------------------------------------------------- |
+| `frames_delta_pct`            | Relatif (`_pct`) | `target.frames.<canal>`          | `reference.frames == 0`                                    |
+| `median_interval_s_delta_pct` | Relatif (`_pct`) | `target.temporal_events.<canal>` | `reference.median_interval_s == null` ou `0`               |
+| `gaps_stat_delta_pct`         | Relatif (`_pct`) | `target.temporal_events.<canal>` | `reference.gaps_stat == 0`                                 |
+| `gaps_fixed_delta_pct`        | Relatif (`_pct`) | `target.temporal_events.<canal>` | `reference.gaps_fixed == null` (canal event-driven) ou `0` |
 
 **Cas particulier `frame` event-driven** : `gaps_fixed_delta_pct` vaut `null` constant (la valeur brute est `null` des deux côtés par construction — cf. section « Analyse temporelle »).
 
@@ -684,5 +713,6 @@ Dans toute la sortie JSON, `null` signifie **« donnée non disponible ou non ca
 - `target.buckets` vaut `null` si la session contient moins de 2 événements agg (bucketing impossible).
 - `cold_truncated: true` est émis si `cold_end_real > t_max` (session trop courte).
 - `cold_drift_warning: true` est émis si `cold_drift_s > max_cold_drift_s` — le bucketing continue sans interruption.
+- `tail_status` est **toujours présent** dans la sortie ; le bloc `tail` est absent quand `tail_status != "aligned"`.
 - Le champ `schema_version` identifie la version du schéma. Toute évolution non rétro-compatible incrémente ce champ.
 - Le champ `generated_at` est un timestamp ISO 8601 avec fuseau horaire local (`datetime.now().astimezone().isoformat()`).

@@ -9,6 +9,36 @@
 
 ---
 
+## Sommaire
+
+1. [Portée](#1-portée)
+2. [Conventions communes](#2-conventions-communes)
+   - 2.1 [Méta-champs obligatoires (racine)](#21-méta-champs-obligatoires-racine)
+   - 2.2 [Valeurs nulles](#22-valeurs-nulles)
+   - 2.3 [Unités et formule delta](#23-unités-et-formule-delta)
+   - 2.4 [Seuils statistiques minimaux](#24-seuils-statistiques-minimaux)
+   - 2.5 [Source des échantillons (`_exact` / `_approx`)](#25-source-des-échantillons-_exact--_approx)
+3. [Structure racine](#3-structure-racine)
+4. [Bloc `target`](#4-bloc-target)
+   - 4.1 [Structure](#41-structure)
+   - 4.2 [`temporal_events`](#42-temporal_events)
+5. [Contrat des blocs `probe_stats`](#5-contrat-des-blocs-probe_stats)
+   - 5.1 [`probe_stats_global`](#51-probe_stats_global--sondes-globales-probes-fast_probes-hors-buckets)
+   - 5.2 [`probe_stats_bucket`](#52-probe_stats_bucket--sondes-dans-un-bucket-cold-hoti-tail)
+   - 5.3 [`probe_stats_fast_bucket`](#53-probe_stats_fast_bucket--fast_probes-dans-un-bucket)
+6. [Bloc `buckets`](#6-bloc-buckets)
+   - 6.1 [`sync_metadata`](#61-sync_metadata)
+   - 6.2 [Bucket `cold`](#62-bucket-cold)
+   - 6.3 [Bucket `hot` (tableau)](#63-bucket-hot-tableau)
+   - 6.4 [Bucket `tail`](#64-bucket-tail)
+7. [Bloc `comparisons`](#7-bloc-comparisons)
+   - 7.1 [Structure](#71-structure)
+   - 7.2 [Bloc `deltas`](#72-bloc-deltas)
+   - 7.3 [Bloc `buckets` (deltas par bucket)](#73-bloc-buckets-deltas-par-bucket)
+8. [Matrice des sections par zone](#8-matrice-des-sections-par-zone)
+9. [Règles d'évolution](#9-règles-dévolution)
+10. [Référence d'implémentation](#10-référence-dimplémentation)
+
 ## 1. Portée
 
 Ce document décrit le format du fichier JSON produit par `bench/bench_compare.py`.
@@ -41,7 +71,7 @@ Le fichier est un objet JSON autonome et auto-descriptif. Il contient :
 Un champ marqué `float | null` ou `int | null` vaut `null` (JSON) lorsque le calcul
 est impossible (échantillons insuffisants, division par zéro, données absentes).
 
-### 2.3 Unités
+### 2.3 Unités et formule delta
 
 Le schéma ne normalise **pas** les unités des sondes. La sémantique relève du producteur
 de la sonde. Les deltas en pourcentage (`_delta_pct`) sont calculés comme :
@@ -56,18 +86,18 @@ delta_pct = (target − reference) / abs(reference) × 100
 
 En-dessous des seuils ci-dessous, les champs concernés valent `null` (silencieux, sans warning).
 
-| Statistique                 | Seuil minimum       | Constante              | Source de configuration                  |
-| --------------------------- | ------------------- | ---------------------- | ---------------------------------------- |
-| `p90_*` / `p95_*` / `p99_*` | 20 échantillons     | _(figé v1)_            | —                                        |
-| `q1_*` / `q3_*` / `iqr_*`   | 20 échantillons     | _(figé v1)_            | —                                        |
-| `skewness_*`                | 50 échantillons     | `SKEWNESS_MIN_SAMPLES` | `debug.bench.shape.skewness_min_samples` |
-| `kurtosis_excess_*`         | 100 échantillons    | `KURTOSIS_MIN_SAMPLES` | `debug.bench.shape.kurtosis_min_samples` |
-| `spike_*`                   | `SPIKE_MIN_SAMPLES` | `SPIKE_MIN_SAMPLES`    | `config.yaml` (cf. `bench-compare.md`)   |
-| `drift_*`                   | `DRIFT_MIN_SAMPLES` | `DRIFT_MIN_SAMPLES`    | `config.yaml` (cf. `bench-compare.md`)   |
+| Statistique                 | Seuil minimum       | Constante              | Source de configuration                           |
+| --------------------------- | ------------------- | ---------------------- | ------------------------------------------------- |
+| `p90_*` / `p95_*` / `p99_*` | 20 échantillons     | _(figé v1)_            | —                                                 |
+| `q1_*` / `q3_*` / `iqr_*`   | 20 échantillons     | _(figé v1)_            | —                                                 |
+| `skewness_*`                | 50 échantillons     | `SKEWNESS_MIN_SAMPLES` | `debug.bench.compare.shape.skewness_min_samples`  |
+| `kurtosis_excess_*`         | 100 échantillons    | `KURTOSIS_MIN_SAMPLES` | `debug.bench.compare.shape.kurtosis_min_samples`  |
+| `spike_*`                   | `SPIKE_MIN_SAMPLES` | `SPIKE_MIN_SAMPLES`    | `debug.bench.compare.anomalies.spike_min_samples` |
+| `drift_*`                   | `DRIFT_MIN_SAMPLES` | `DRIFT_MIN_SAMPLES`    | `debug.bench.compare.anomalies.drift_min_samples` |
 
 **Garde défensive supplémentaire** : `skewness_*` et `kurtosis_excess_*` valent également `null` si la variance des échantillons est nulle (toutes valeurs identiques), pour éviter une division par zéro dans `scipy.stats`.
 
-### 2.5 Source des échantillons
+### 2.5 Source des échantillons (`_exact` / `_approx`)
 
 Les statistiques se déclinent en deux variantes selon le canal source des échantillons :
 
@@ -82,10 +112,9 @@ Les statistiques se déclinent en deux variantes selon le canal source des écha
 
 **Cas particulier `samples_exact` / `samples_approx`** : nombre d'échantillons effectivement collectés par variante (sert au contrôle des seuils §2.4).
 
-**Cas particulier `fast_*`** : les variantes `_exact` valent **toujours** `null` , le canal `fast` ne produit pas de lignes `count == 1` exploitables. Seules les variantes `_approx` sont calculées si le seuil est atteint.
+**Cas particulier `fast_*`** : les variantes `_exact` valent **toujours** `null` — le canal `fast` ne produit pas de lignes `count == 1` exploitables, et `samples_exact` vaut systématiquement `0`. Seules les variantes `_approx` sont calculées si le seuil est atteint ; en pratique, elles sont fréquemment `null` sur sessions courtes faute d'échantillons suffisants (comportement émergent, pas de forçage côté code).
 
-**Champs sans variante (frame uniquement)** : `spike_*` et `drift_*` sont calculés **exclusivement** depuis le canal `frame` et n'ont pas de variante
-`_approx`.
+**Champs sans variante (frame uniquement)** : `spike_*` et `drift_*` sont calculés **exclusivement** depuis le canal `frame` et n'ont pas de variante `_approx`.
 
 **Périmètre d'application** :
 
@@ -93,7 +122,7 @@ Les statistiques se déclinent en deux variantes selon le canal source des écha
 | ---------------------------------- | ------------------------- | ------------------------- | ------------- |
 | Percentiles, quartiles, IQR        | ✅                        | ✅                        | ✅            |
 | `skewness_*` / `kurtosis_excess_*` | ✅                        | ✅                        | ✅            |
-| `spike_*` / `drift_*`              | ❌                        | ✅                        | ❌            |
+| `spike_*` / `drift_*`              | ❌                        | ✅                        | ✅            |
 
 > Le périmètre phase-only des indicateurs d'anomalie (`spike_*` / `drift_*`) est
 > volontaire — cf. `bench-compare.md` section « Détection d'anomalies ».
@@ -132,9 +161,11 @@ Contient l'intégralité des statistiques de la session cible.
   "fast_probes":      { "<probe_name>": <probe_stats_fast_global>, ... },
   "fast_rates":       { "<rate_name>":  <float>, ... },
   "fast_gauges":      { "<gauge_name>": <float>, ... },
-  "buckets":          { ... }
+  "buckets":          { ... } | null
 }
 ```
+
+> `target.buckets` peut valoir `null` si la session contient moins de 2 lignes `agg` (bucketing impossible — cf. `bench-compare.md` invariants).
 
 ### 4.2 `temporal_events`
 
@@ -153,6 +184,8 @@ Statistiques sur la régularité temporelle des lignes JSONL par canal.
 | `median_interval_s` | float \| null | Médiane des intervalles entre lignes consécutives (secondes).       |
 | `gaps_stat`         | int           | Nombre de gaps détectés (intervalles > seuil configurable).         |
 | `gaps_fixed`        | int \| null   | Nombre de gaps corrigés par interpolation (null si non applicable). |
+
+> **Note canal `frame`** : `gaps_fixed` vaut systématiquement `null` sur le canal `frame` (canal event-driven sans interpolation possible).
 
 ---
 
@@ -181,15 +214,17 @@ Statistiques sur la régularité temporelle des lignes JSONL par canal.
   "iqr_exact":       <float | null>,
   "iqr_approx":      <float | null>,
   "skewness_exact":        <float | null>,
-  "skewness_approx":        <float | null>,
+  "skewness_approx":       <float | null>,
   "kurtosis_excess_exact": <float | null>,
   "kurtosis_excess_approx": <float | null>,
 }
 ```
 
-> Pour `fast_probes` globaux : `count_agg` est remplacé par `count_fast`. Les champs
-> `skewness` et `kurtosis_excess` sont forcés à `null` (source exacte non disponible
-> sur le canal `fast`).
+> **Pour `fast_probes` globaux (`probe_stats_fast_global`)** :
+> `count_agg` est remplacé par `count_fast`.
+> `samples_exact` vaut toujours `0`.
+> Toutes les variantes `_exact` (percentiles, quartiles, IQR, skewness, kurtosis_excess) valent toujours `null`.
+> Les variantes `_approx` de `skewness` et `kurtosis_excess` sont calculées si le seuil §2.4 est atteint (pas de forçage `null`).
 
 ### 5.2 `probe_stats_bucket` — sondes dans un bucket (`cold`, `hot[i]`, `tail`)
 
@@ -215,8 +250,10 @@ Hérite de `probe_stats_global` et ajoute les champs d'anomalies S5b :
   "q3_approx":       <float | null>,
   "iqr_exact":       <float | null>,
   "iqr_approx":      <float | null>,
-  "skewness":        <float | null>,
-  "kurtosis_excess": <float | null>,
+  "skewness_exact":         <float | null>,
+  "skewness_approx":        <float | null>,
+  "kurtosis_excess_exact":  <float | null>,
+  "kurtosis_excess_approx": <float | null>,
   "spike_count":         <int | null>,
   "spike_max_value":     <float | null>,
   "spike_max_deviation": <float | null>,
@@ -230,19 +267,26 @@ Hérite de `probe_stats_global` et ajoute les champs d'anomalies S5b :
 
 Identique à `probe_stats_bucket` avec les restrictions suivantes :
 
-| Champ                 | Valeur forcée |
-| --------------------- | ------------- |
-| `skewness`            | `null`        |
-| `kurtosis_excess`     | `null`        |
-| `spike_count`         | `null`        |
-| `spike_max_value`     | `null`        |
-| `spike_max_deviation` | `null`        |
-| `drift_slope`         | `null`        |
-| `drift_intercept`     | `null`        |
-| `drift_r2`            | `null`        |
+| Champ                                   | Valeur produite                                        |
+| --------------------------------------- | ------------------------------------------------------ |
+| `samples_exact`                         | `0` (constant)                                         |
+| `p90_exact` / `p95_exact` / `p99_exact` | `null` (constant)                                      |
+| `q1_exact` / `q3_exact` / `iqr_exact`   | `null` (constant)                                      |
+| `skewness_exact`                        | `null` (constant)                                      |
+| `skewness_approx`                       | calculé si seuil §2.4 atteint, sinon `null` (émergent) |
+| `kurtosis_excess_exact`                 | `null` (constant)                                      |
+| `kurtosis_excess_approx`                | calculé si seuil §2.4 atteint, sinon `null` (émergent) |
+| `spike_count`                           | `null` forcé (pas de source `frame` côté fast)         |
+| `spike_max_value`                       | `null` forcé                                           |
+| `spike_max_deviation`                   | `null` forcé                                           |
+| `drift_slope`                           | `null` forcé                                           |
+| `drift_intercept`                       | `null` forcé                                           |
+| `drift_r2`                              | `null` forcé                                           |
 
-> Ces champs sont présents dans la sortie JSON (jamais omis) mais toujours à `null`.
-> Cohérence avec la décision D10 : `fast_probes` forcés à `null` pour les anomalies S5b.
+> Tous ces champs sont **présents dans la sortie JSON** (jamais omis).
+> Distinction importante :
+> Champs « constant `null` » / « forcé `null` » : structurellement impossibles à calculer pour fast.
+> Champs « émergent » : calculables en théorie mais souvent `null` faute d'échantillons.
 
 ---
 
@@ -276,9 +320,14 @@ Métadonnées de synchronisation cold/hot entre sessions.
 
 ```json
 "cold": {
-  "mono_start": <float>,
-  "mono_end":   <float>,
-  "duration_s": <float>,
+  "mono_start":         <float>,
+  "mono_end":           <float>,
+  "duration_s":         <float>,
+  "cold_end_target_s":  <float>,
+  "cold_end_real_s":    <float>,
+  "cold_drift_s":       <float>,
+  "cold_drift_warning": <bool>,
+  "cold_truncated":     <bool>,
   "frames":     { "agg": <int>, "frame": <int>, "fast": <int> },
   "probes":      { "<probe_name>": <probe_stats_bucket>, ... },
   "rates":       { "<rate_name>":  <float>, ... },
@@ -288,6 +337,8 @@ Métadonnées de synchronisation cold/hot entre sessions.
   "fast_gauges": { "<gauge_name>": <float>, ... }
 }
 ```
+
+> **Note duplication** : les 5 champs `cold_end_target_s`, `cold_end_real_s`, `cold_drift_s`, `cold_drift_warning`, `cold_truncated` sont dupliqués depuis `sync_metadata` (§6.1) pour faciliter l'accès local au bucket. Les valeurs sont identiques entre les deux emplacements.
 
 ### 6.3 Bucket `hot` (tableau)
 
@@ -334,8 +385,8 @@ Métadonnées de synchronisation cold/hot entre sessions.
 }
 ```
 
-> `is_partial` est **toujours `true`** — le tail représente la fin de session
-> potentiellement incomplète par construction.
+> `is_partial` est **toujours `true`** — le tail représente la fin de session potentiellement incomplète par construction.
+> Le bloc `tail` peut valoir `null` si la session se termine exactement sur la frontière d'un bucket `hot` (pas de résidu à représenter).
 
 ---
 
@@ -405,6 +456,8 @@ Métadonnées de synchronisation cold/hot entre sessions.
 }
 ```
 
+> **Note canal `frame`** : `gaps_fixed.delta` vaut `null` constant (les deux valeurs source sont `null` par construction event-driven).
+
 #### 7.2.2 `delta_probe_global` — deltas sondes hors buckets
 
 ```json
@@ -431,12 +484,12 @@ Métadonnées de synchronisation cold/hot entre sessions.
 }
 ```
 
-> Pas de champs `skewness`/`kurtosis_excess`/`spike_*`/`drift_*` au niveau global
-> (ces champs ne sont présents que dans les deltas de buckets — voir §7.2.3).
+> **Pas de delta sur compteurs** : `count_agg` / `count_fast` / `samples_exact` / `samples_approx` ne génèrent pas de champ delta (valeurs brutes seules dans `target` et `reference`).
+> **Pas de delta sur anomalies au niveau global** : `spike_*` et `drift_*` n'ont pas de delta global (ces champs ne sont présents que dans les deltas de buckets — voir §7.2.3).
 
 #### 7.2.3 `delta_probe_bucket` — deltas sondes dans un bucket
 
-Hérite de `delta_probe_global` et ajoute :
+Hérite de `delta_probe_global` et ajoute les deltas anomalies :
 
 ```json
 "<probe_name>": {
@@ -469,7 +522,7 @@ Hérite de `delta_probe_global` et ajoute :
 > **Sémantique delta** : si l'une des deux valeurs source est `null` → delta `null`.
 > `spike_max_value` et `drift_intercept` n'ont **jamais** de clé `delta` — valeurs brutes seules.
 
-### 7.3 Bloc `buckets`
+### 7.3 Bloc `buckets` (deltas par bucket)
 
 ```json
 "buckets": {
@@ -508,40 +561,42 @@ Hérite de `delta_probe_global` et ajoute :
 }
 ```
 
-| Champ                | Type          | Description                                                          |
-| -------------------- | ------------- | -------------------------------------------------------------------- |
-| `duration_delta_pct` | float \| null | Delta de durée en % (target − reference) / \|reference\| × 100.      |
-| `unaligned_hot`      | array\[int\]  | Indices des buckets hot sans correspondance dans la session opposée. |
-| `tail_status`        | string        | Statut d'alignement du tail entre les deux sessions.                 |
+| Champ                | Type          | Description                                                             |
+| -------------------- | ------------- | ----------------------------------------------------------------------- |
+| `duration_delta_pct` | float \| null | Delta de durée en % (target − reference) / \|reference\| × 100.         |
+| `unaligned_hot`      | array\[int\]  | Indices des buckets hot sans correspondance dans la session opposée.    |
+| `tail_status`        | string        | Statut d'alignement du tail entre les deux sessions (toujours présent). |
 
 #### Valeurs de `tail_status`
 
-| Valeur          | Signification                                             |
-| --------------- | --------------------------------------------------------- |
-| `aligned`       | Les deux sessions ont un tail — deltas calculés.          |
-| `both_absent`   | Aucune session n'a de tail — bloc `tail` absent.          |
-| `target_absent` | Le tail est absent de la session cible uniquement.        |
-| `ref_absent`    | Le tail est absent de la session de référence uniquement. |
+| Valeur          | Signification                                             | Bloc `tail` présent ? |
+| --------------- | --------------------------------------------------------- | --------------------- |
+| `aligned`       | Les deux sessions ont un tail — deltas calculés.          | ✅ Oui                |
+| `both_absent`   | Aucune session n'a de tail.                               | ❌ Absent             |
+| `target_absent` | Le tail est absent de la session cible uniquement.        | ❌ Absent             |
+| `ref_absent`    | Le tail est absent de la session de référence uniquement. | ❌ Absent             |
 
-> Quand `tail_status != "aligned"`, le bloc `tail` dans `comparisons.<comparison_type>.buckets` est **absent** du JSON.
+> Le champ `tail_status` est **toujours présent** dans le JSON (jamais omis).
+> Quand `tail_status != "aligned"`, le bloc `tail` est **absent** du JSON.
 
 ---
 
 ## 8. Matrice des sections par zone
 
 | Section             | `target` global | `target.buckets.cold/hot/tail` | `deltas` global | `deltas.buckets.cold/hot/tail` |
-| ------------------- | :-------------: | :----------------------------: | :-------------: | :----------------------------: |
-| `probes`            |       ✅        |               ✅               |       ✅        |               ✅               |
-| `fast_probes`       |       ✅        |               ✅               |       ✅        |               ✅               |
-| `rates`             |       ✅        |               ✅               |       ✅        |               ✅               |
-| `fast_rates`        |       ✅        |               ✅               |       ✅        |               ✅               |
-| `gauges`            |       ✅        |               ✅               |       ✅        |               ✅               |
-| `fast_gauges`       |       ✅        |               ✅               |       ✅        |               ✅               |
-| `skewness`          |   ✅ (probe)    |           ✅ (probe)           |       ❌        |    ✅ (delta_probe_bucket)     |
-| `kurtosis_excess`   |   ✅ (probe)    |           ✅ (probe)           |       ❌        |    ✅ (delta_probe_bucket)     |
-| `spike_* / drift_*` |       ❌        |  ✅ (probe bucket uniquement)  |       ❌        |    ✅ (delta_probe_bucket)     |
-| `sync_metadata`     |       ❌        |      ✅ (racine buckets)       |       ❌        |               ❌               |
-| `temporal_events`   |       ✅        |               ❌               | ✅ (`temporal`) |               ❌               |
+| ------------------- | --------------- | ------------------------------ | --------------- | ------------------------------ |
+| `probes`            | ✅              | ✅                             | ✅              | ✅                             |
+| `fast_probes`       | ✅              | ✅                             | ✅              | ✅                             |
+| `rates`             | ✅              | ✅                             | ✅              | ✅                             |
+| `fast_rates`        | ✅              | ✅                             | ✅              | ✅                             |
+| `gauges`            | ✅              | ✅                             | ✅              | ✅                             |
+| `fast_gauges`       | ✅              | ✅                             | ✅              | ✅                             |
+| `skewness_*`        | ✅ (probe)      | ✅ (probe)                     | ✅              | ✅                             |
+| `kurtosis_excess_*` | ✅ (probe)      | ✅ (probe)                     | ✅              | ✅                             |
+| `spike_* / drift_*` | ❌              | ✅ (probe bucket uniquement)   | ❌              | ✅                             |
+| `sync_metadata`     | ❌              | ✅ (racine buckets)            | ❌              | ❌                             |
+| `tail_status`       | ❌              | ❌                             | ❌              | ✅ (racine `buckets`)          |
+| `temporal_events`   | ✅              | ❌                             | ✅ (`temporal`) | ❌                             |
 
 ---
 
@@ -561,13 +616,4 @@ Hérite de `delta_probe_global` et ajoute :
 ## 10. Référence d'implémentation
 
 Producteur unique : `bench/bench_compare.py`.
-Toute divergence entre ce document et l'implémentation est un bug de l'un ou de l'autre —
-la résolution est arbitrée par l'équipe avant merge.
-
----
-
-## Historique des versions
-
-| Version | Date       | Motif                                                                                               |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------- |
-| 1       | 2026-05-20 | Version initiale — target + comparisons, buckets cold/hot/tail, S5a (skew/kurt), S5b (spike/drift). |
+Toute divergence entre ce document et l'implémentation est un bug de l'un ou de l'autre ,la résolution est arbitrée par l'équipe avant merge.
