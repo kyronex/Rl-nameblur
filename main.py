@@ -106,110 +106,115 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 time.sleep(0.001)
                 continue
 
-            # ── 2. Nouvelle frame → distribuer aux threads ──
-            frame_id = capturer.get_frame_id()
-            bench.gauge("main_frame_id", frame_id)
-            if frame_id > last_frame_id:
-                last_frame_id = frame_id
-                detector.give_frame(frame, frame_ts)
-                if fast_enabled :
-                    snapshot = [m for m in tracker.all_masks() if m.state == MaskState.CONFIRMED]
-                    if snapshot:
-                        views = [m.to_fast_view() for m in snapshot]
-                        fast_tracker.give_frame_and_views(frame, views, frame_ts)
+            with bench.timer("main_loop_ms"):
+                # ── 2. Nouvelle frame → distribuer aux threads ──
+                with bench.timer("main_distribute_ms"):
+                    frame_id = capturer.get_frame_id()
+                    bench.gauge("main_frame_id", frame_id)
+                    if frame_id > last_frame_id:
+                        last_frame_id = frame_id
+                        detector.give_frame(frame, frame_ts)
+                        if fast_enabled :
+                            snapshot = [m for m in tracker.all_masks() if m.state == MaskState.CONFIRMED]
+                            if snapshot:
+                                views = [m.to_fast_view() for m in snapshot]
+                                fast_tracker.give_frame_and_views(frame, views, frame_ts)
 
-            updated_uids = set()
+                updated_uids = set()
 
-            # ── 3. Slow detect ──
-            with bench.timer("main_slow_poll_ms"):
-                new_plates, detect_ts, current_version, detected_frame_ts = detector.get_result()
-            slow_updated = current_version > last_detect_version
-            if slow_updated:
-                last_detect_version = current_version
+                # ── 3. Slow detect ──
+                with bench.timer("main_slow_poll_ms"):
+                    new_plates, detect_ts, current_version, detected_frame_ts = detector.get_result()
+                slow_updated = current_version > last_detect_version
+                if slow_updated:
+                    last_detect_version = current_version
 
-            if slow_updated and new_plates:
-                with bench.timer("main_match_ms"):
-                    dets = [Detection(
-                        rect=pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT),
-                        source="slow",
-                        confidence=box.confidence,
-                        template=box.template,
-                        scores=box.scores,
-                    ) for box in new_plates]
-                    matched, created = tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
-                    updated_uids |= matched | created
+                if slow_updated and new_plates:
+                    with bench.timer("main_match_ms"):
+                        dets = [Detection(
+                            rect=pad_rect(*box.rect, SCREEN_WIDTH, SCREEN_HEIGHT),
+                            source="slow",
+                            confidence=box.confidence,
+                            template=box.template,
+                            scores=box.scores,
+                        ) for box in new_plates]
+                        matched, created = tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
+                        updated_uids |= matched | created
 
-            # ── 3b. Fast track ──
-            if fast_enabled and not slow_updated:
-                with bench.timer("main_fast_poll_ms"):
-                    fast_version, fast_results, fast_ts = fast_tracker.get_results()
-                if fast_version > last_fast_version:
-                    last_fast_version = fast_version
-                    uid_to_rect = {
-                        uid: pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                        for uid, new_rect, _score in fast_results
-                        if new_rect is not None
-                    }
-                    if uid_to_rect:
-                        matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts)
-                        updated_uids |= matched
+                # ── 3b. Fast track ──
+                if fast_enabled and not slow_updated:
+                    with bench.timer("main_fast_poll_ms"):
+                        fast_version, fast_results, fast_ts = fast_tracker.get_results()
+                    if fast_version > last_fast_version:
+                        last_fast_version = fast_version
+                        uid_to_rect = {
+                            uid: pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
+                            for uid, new_rect, _score in fast_results
+                            if new_rect is not None
+                        }
+                        if uid_to_rect:
+                            matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts)
+                            updated_uids |= matched
 
-            # ── 4. Tick (predict + TTL + purge) ──
-            with bench.timer("main_predict_ms"):
-                confirmed_masks = tracker.tick(now, updated_uids)
+                # ── 4. Tick (predict + TTL + purge) ──
+                with bench.timer("main_predict_ms"):
+                    confirmed_masks = tracker.tick(now, updated_uids)
 
-            # ── 5. Blur / debug draw ──
-            blur_zones = [
-                (int(m.rect[0]), int(m.rect[1]), int(m.rect[2]), int(m.rect[3]))
-                for m in confirmed_masks
-            ]
+                # ── 5. Blur / debug draw ──
+                with bench.timer("main_prepare_ms"):
+                    blur_zones = [
+                        (int(m.rect[0]), int(m.rect[1]), int(m.rect[2]), int(m.rect[3]))
+                        for m in confirmed_masks
+                    ]
+                    buf = sender.borrow()
 
-            buf = sender.borrow()
-            np.copyto(buf, frame)
+                with bench.timer("main_copy_ms"):
+                    np.copyto(buf, frame)
 
-            with bench.timer("main_blur_ms"):
-                apply_blur(buf, blur_zones)
-                if debug_draw:
-                    draw_debug(buf, confirmed_masks)
+                with bench.timer("main_blur_ms"):
+                    apply_blur(buf, blur_zones)
+                    if debug_draw:
+                        draw_debug(buf, confirmed_masks)
 
-            # ── 6. Envoi ──
-            with bench.timer("main_send_ms"):
-                sender.publish()
+                # ── 6. Envoi ──
+                with bench.timer("main_send_ms"):
+                    sender.publish()
 
-            # ── 7. Stats ──
-            bench.count("main_frames_total")
-            bench.gauge("main_masks_total", len(confirmed_masks))
-            bench.push_frame()
-            # ── 8. FPS print toutes les 2s ──
-            elapsed = time.perf_counter() - fps_timer
-            if elapsed >= 2.0:
-                fps  = bench.rate("main_frames_total", window_s=elapsed)
-                mode     = "DEBUG" if debug_draw else "PROD"
-                fast_tag = "+FAST" if fast_enabled else ""
+                # ── 7. Stats ──
+                with bench.timer("main_stats_ms"):
+                    bench.count("main_frames_total")
+                    bench.gauge("main_masks_total", len(confirmed_masks))
+                bench.push_frame()
+                # ── 8. FPS print toutes les 2s ──
+                elapsed = time.perf_counter() - fps_timer
+                if elapsed >= 2.0:
+                    fps  = bench.rate("main_frames_total", window_s=elapsed)
+                    mode     = "DEBUG" if debug_draw else "PROD"
+                    fast_tag = "+FAST" if fast_enabled else ""
 
-                # Stats tracker — lues depuis bench (gauges posées dans tracker.tick)
-                n_confirmed = bench.read_gauge("tracker_confirmed") or 0
-                n_pending   = bench.read_gauge("tracker_pending")   or 0
-                n_lost      = bench.read_gauge("tracker_lost")      or 0
+                    # Stats tracker — lues depuis bench (gauges posées dans tracker.tick)
+                    n_confirmed = bench.read_gauge("tracker_confirmed") or 0
+                    n_pending   = bench.read_gauge("tracker_pending")   or 0
+                    n_lost      = bench.read_gauge("tracker_lost")      or 0
 
-                # Stats motion — bench.last = valeur instantanée la plus récente
-                # (approximation court terme, remplacé par summary_window à l'étape 2)
-                stale_last = bench.last("motion_staleness_slow_ms")
-                if stale_last is not None:
-                    motion_tag = f"staleness_slow last={stale_last:.1f}ms"
-                else:
-                    motion_tag = "staleness_slow n/a"
+                    # Stats motion — bench.last = valeur instantanée la plus récente
+                    # (approximation court terme, remplacé par summary_window à l'étape 2)
+                    stale_last = bench.last("motion_staleness_slow_ms")
+                    if stale_last is not None:
+                        motion_tag = f"staleness_slow last={stale_last:.1f}ms"
+                    else:
+                        motion_tag = "staleness_slow n/a"
 
-                ts_str = datetime.now().strftime("%H:%M:%S")
+                    ts_str = datetime.now().strftime("%H:%M:%S")
 
-                log.info(
-                    f"[{ts_str}] ⚡ {fps:.1f} FPS | "
-                    f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
-                    f"{motion_tag} | "
-                    f"{mode} {fast_tag}"
-                )
+                    log.info(
+                        f"[{ts_str}] ⚡ {fps:.1f} FPS | "
+                        f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
+                        f"{motion_tag} | "
+                        f"{mode} {fast_tag}"
+                    )
 
-                fps_timer = time.perf_counter()
+                    fps_timer = time.perf_counter()
 
     except KeyboardInterrupt:
         log.info("\n🛑 Arrêt propre")

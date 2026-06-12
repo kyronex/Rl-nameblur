@@ -13,7 +13,6 @@ import json
 import logging
 from pathlib import Path
 import shutil
-import json
 
 from bench.compare._config import DIR_JSON, DIR_RESULTS
 

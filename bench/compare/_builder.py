@@ -1,8 +1,12 @@
 # bench/compare/_builder.py
 
-from bench.compare._config import (PERCENTILES,_r)
-from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,collect_frame_exact_pairs,compute_anomalies,_empty_anomalies,percentile_value, quartile_values,delta_pct,delta_abs,safe_skewness,safe_kurtosis_excess,filter_rows_by_mono)
+from bench.compare._config import (PERCENTILES,FRAME_BUDGET_ENABLED,_r)
+from bench.compare._stats import (agg_probes,agg_rates,agg_gauges,session_duration,extract_timeline,compute_frames,compute_duration_mono,compute_temporal_events,collect_frame_samples,collect_fast_approx_samples,collect_frame_exact_pairs,filter_rows_by_mono)
 from bench.compare._bucketing import BucketsResult, compute_buckets
+from bench.compare._correlations import compute_correlations
+from bench.compare._anomalies import (empty_anomalies,compute_anomalies)
+from bench.compare._frame_budget import build_frame_budget
+from bench.compare._math import (delta_pct,delta_abs,percentile_value, quartile_values,safe_skewness,safe_kurtosis_excess)
 
 def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]],approx_samples: dict[str, list[float]],*,channel: str) -> dict:
     """
@@ -43,8 +47,7 @@ def _build_percentile_block(probe_name: str,exact_samples: dict[str, list[float]
     block["kurtosis_excess_approx"] = safe_kurtosis_excess(approx_data)
     return block
 
-
-def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows:  list[dict]) -> dict:
+def _build_single_bucket(agg_rows: list[dict], frame_rows: list[dict], fast_rows: list[dict], *, bucket_label: str = "unknown") -> dict:
     """
     Agrège un bucket unique. Structure identique à build_session_block
     mais sans duration_s, duration_mono_s, frames, temporal_events.
@@ -67,7 +70,7 @@ def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows
     probes: dict[str, dict] = {}
     for probe_name, stats in base_probes_agg.items():
         pct_block = _build_percentile_block(probe_name, exact_samples, approx_samples, channel="agg")
-        anomalies = anomalies_by_probe.get(probe_name, _empty_anomalies())
+        anomalies = anomalies_by_probe.get(probe_name, empty_anomalies())
         probes[probe_name] = {
             "avg": _r(stats["avg"]),
             "min": _r(stats["min"]),
@@ -85,15 +88,19 @@ def _build_single_bucket(agg_rows:   list[dict],frame_rows: list[dict],fast_rows
             "max": _r(stats["max"]),
             "count_fast": stats["count_agg"],
             **{k: _r(v) for k, v in pct_block.items()},
-            **_empty_anomalies(),
+            **empty_anomalies(),
         }
+    fb = build_frame_budget(frame_rows) if FRAME_BUDGET_ENABLED else None
+    correlations = compute_correlations(frame_rows, bucket_label=bucket_label)
     return {
-        "probes":      probes,
-        "rates":       {k: _r(v) for k, v in rates_agg.items()},
-        "gauges":      {k: _r(v) for k, v in gauges_agg.items()},
-        "fast_probes": fast_probes,
-        "fast_rates":  {k: _r(v) for k, v in rates_fast.items()},
-        "fast_gauges": {k: _r(v) for k, v in gauges_fast.items()},
+        "probes":        probes,
+        "rates":         {k: _r(v) for k, v in rates_agg.items()},
+        "gauges":        {k: _r(v) for k, v in gauges_agg.items()},
+        "fast_probes":   fast_probes,
+        "fast_rates":    {k: _r(v) for k, v in rates_fast.items()},
+        "fast_gauges":   {k: _r(v) for k, v in gauges_fast.items()},
+        "frame_budget":  fb,
+        "correlations":  correlations,
     }
 
 def _build_buckets_block(agg_rows:list[dict],frame_rows:list[dict],fast_rows:list[dict],result:BucketsResult) -> dict:
@@ -122,7 +129,7 @@ def _build_buckets_block(agg_rows:list[dict],frame_rows:list[dict],fast_rows:lis
             "frame": len(cfr),
             "fast":  len(cfa),
         },
-        **_build_single_bucket(ca, cfr, cfa),
+        **_build_single_bucket(ca, cfr, cfa, bucket_label="cold"),
     }
     # Hot
     hot_list = []
@@ -139,7 +146,7 @@ def _build_buckets_block(agg_rows:list[dict],frame_rows:list[dict],fast_rows:lis
                 "frame": len(hfr),
                 "fast":  len(hfa),
             },
-            **_build_single_bucket(ha, hfr, hfa),
+            **_build_single_bucket(ha, hfr, hfa, bucket_label=f"hot_{h.index}"),
         })
     # Tail
     tail_block = None
@@ -155,7 +162,7 @@ def _build_buckets_block(agg_rows:list[dict],frame_rows:list[dict],fast_rows:lis
                 "frame": len(tfr),
                 "fast":  len(tfa),
             },
-            **_build_single_bucket(ta, tfr, tfa),
+            **_build_single_bucket(ta, tfr, tfa, bucket_label="tail"),
         }
     return {
         "sync_metadata": {
@@ -248,6 +255,8 @@ def build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: l
             "gaps_stat":  events["gaps_stat"],
             "gaps_fixed": events["gaps_fixed"],
         }
+    # ── Frame budget S6a (session-level) ──
+    frame_budget_block = build_frame_budget(frame_rows) if FRAME_BUDGET_ENABLED else None
     return {
         "duration_s": _r(duration),
         "duration_mono_s": _r(duration_mono),
@@ -260,6 +269,7 @@ def build_session_block(agg_rows: list[dict],frame_rows: list[dict],fast_rows: l
         "fast_rates":  {k: _r(v) for k, v in rates_fast.items()},
         "fast_gauges": {k: _r(v) for k, v in gauges_fast.items()},
         "buckets": buckets_block,
+        "frame_budget": frame_budget_block,
     }
 
 def _build_temporal_deltas(ref_block: dict, target_block: dict) -> dict:
@@ -326,7 +336,6 @@ def _build_probe_deltas(target_probes: dict, ref_probes: dict, *, include_anomal
         deltas[key] = entry
     return deltas
 
-
 def _build_scalar_deltas(target: dict, ref: dict) -> dict:
     """Construit les deltas pour rates ou gauges (valeurs scalaires)."""
     all_keys = set(target) | set(ref)
@@ -347,6 +356,40 @@ def _appeared_disappeared(target_map: dict, ref_map: dict) -> tuple[list, list]:
     r_keys = set(ref_map)
     return sorted(t_keys - r_keys), sorted(r_keys - t_keys)
 
+def _build_frame_budget_deltas(target_fb: dict | None, ref_fb: dict | None) -> dict | None:
+    """
+    Deltas S6a — frame budget aligné target vs référence.
+    Returns:
+        None si l'un des deux blocs est None (frame_budget désactivé d'un côté).
+    """
+    if target_fb is None or ref_fb is None:
+        return None
+    t_groups = target_fb.get("groups", {})
+    r_groups = ref_fb.get("groups", {})
+    appeared = sorted(set(t_groups) - set(r_groups))
+    disappeared = sorted(set(r_groups) - set(t_groups))
+    aligned = sorted(set(t_groups) & set(r_groups))
+    group_deltas: dict[str, dict] = {}
+    for name in aligned:
+        t_g = t_groups[name]
+        r_g = r_groups[name]
+        group_deltas[name] = {
+            "pct_delta":     _r(delta_abs(t_g.get("pct"), r_g.get("pct"))),
+            "sum_ms_delta_pct": delta_pct(t_g.get("sum_ms"), r_g.get("sum_ms")),
+            "presence_rate_delta": _r(delta_abs(
+                t_g.get("presence_rate"), r_g.get("presence_rate")
+            )),
+        }
+    return {
+        "total_ms_delta_pct":    delta_pct(target_fb.get("total_ms"), ref_fb.get("total_ms")),
+        "unaccounted_pct_delta": _r(delta_abs(
+            target_fb.get("unaccounted_pct"), ref_fb.get("unaccounted_pct")
+        )),
+        "groups":              group_deltas,
+        "appeared_groups":     appeared,
+        "disappeared_groups":  disappeared,
+    }
+
 def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) -> dict | None:
     """
     Deltas P1 — par bucket aligné : cold vs cold, hot_i vs hot_i.
@@ -363,6 +406,7 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
         "fast_probes": _build_probe_deltas(target_buckets["cold"].get("fast_probes", {}),ref_buckets["cold"].get("fast_probes", {}), include_anomalies=True),
         "fast_rates":  _build_scalar_deltas(target_buckets["cold"].get("fast_rates", {}),ref_buckets["cold"].get("fast_rates", {})),
         "fast_gauges": _build_scalar_deltas(target_buckets["cold"].get("fast_gauges", {}),ref_buckets["cold"].get("fast_gauges", {})),
+        "frame_budget": _build_frame_budget_deltas(target_buckets["cold"].get("frame_budget"),ref_buckets["cold"].get("frame_budget")),
     }
     # Hot alignés
     t_hot = target_buckets.get("hot", [])
@@ -380,6 +424,7 @@ def _build_buckets_deltas(target_buckets:dict | None,ref_buckets:dict | None) ->
             "fast_probes": _build_probe_deltas(th.get("fast_probes",{}), rh.get("fast_probes",{}), include_anomalies=True),
             "fast_rates":  _build_scalar_deltas(th.get("fast_rates",{}), rh.get("fast_rates",{})),
             "fast_gauges": _build_scalar_deltas(th.get("fast_gauges",{}), rh.get("fast_gauges",{})),
+            "frame_budget": _build_frame_budget_deltas(th.get("frame_budget"),rh.get("frame_budget")),
         })
     unaligned_hot = list(range(n_aligned, max(len(t_hot), len(r_hot))))
     # Tail
@@ -432,6 +477,8 @@ def build_comparison(ref_session_id: str, ref_block: dict, target_block: dict) -
             "fast_probes": _build_probe_deltas(target_block["fast_probes"], ref_block["fast_probes"]),
             "fast_rates": _build_scalar_deltas(target_block["fast_rates"], ref_block["fast_rates"]),
             "fast_gauges": _build_scalar_deltas(target_block["fast_gauges"], ref_block["fast_gauges"]),
+             # S6a — Frame budget (session-level)
+            "frame_budget": _build_frame_budget_deltas(target_block.get("frame_budget"),ref_block.get("frame_budget")),
         },
         "buckets": _build_buckets_deltas(target_block.get("buckets"),ref_block.get("buckets")),
         # Canal agg

@@ -304,6 +304,6 @@ Tous les paramètres ci-dessous sont définis dans `config/config.yaml` sous la 
 | `debug.bench.fast.path`        | string | `logs/json/bench_fast.jsonl`  | Chemin de base — `session_id` inséré avant l'extension.               |
 | `debug.bench.fast.interval_s`  | float  | `1.0`                         | Période entre deux snapshots fast.                                    |
 
-> **Note** : les clés `debug.bench.compare.*` (`buckets`, `shape`, `anomalies`) ne sont **pas** lues par le runtime bench. Elles sont la propriété exclusive de l'outil de post-analyse `bench_compare.py` et n'ont aucun impact sur la production des fichiers JSONL. Voir `bench-compare.md`.
+> **Note** : les clés `debug.bench.compare.*` (`buckets`, `shape`, `anomalies`, `frame_budget`) ne sont **pas** lues par le runtime bench. Elles sont la propriété exclusive de l'outil de post-analyse `bench_compare.py` et n'ont aucun impact sur la production des fichiers JSONL. Voir `bench-compare.md`.
 
 ---

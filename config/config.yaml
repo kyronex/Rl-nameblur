@@ -219,3 +219,22 @@ debug:
         spike_min_samples: 20 # Seuil min échantillons pour détection spikes via MAD
         spike_mad_factor: 3.5 # Multiplicateur MAD : |v - median| > factor * MAD ⇒ spike
         drift_min_samples: 30 # Seuil min échantillons pour régression OLS (drift)
+      # ── Frame budget (S6a) ─────────────────────────────────────
+      frame_budget:
+        enabled: true # Active le calcul de la décomposition temporelle main_loop_ms
+        min_presence_rate: 0.5 # Taux min de présence d'un groupe dans le bucket (rows_with_group / rows_total) ; sous seuil ⇒ flag low_presence
+        unaccounted_warn_pct: 15.0 # Seuil warning si unaccounted_pct dépasse cette valeur (%)
+      correlations:
+        enabled: true # active le calcul des corrélations Spearman par bucket
+        min_abs_rho: 0.5 # seuil |rho| minimal pour reporter une paire (doit être <= strength.moderate)
+        max_pairs_per_bucket: 50 # nombre max de paires reportées par bucket (tri |rho| décroissant)
+        probe_aggregation: sum # mode d'agrégation intra-frame des probes : sum | mean | max
+        blacklist_patterns: # patterns glob de sondes exclues (fnmatch)
+          - "bench_*"
+        blacklist_exact: # noms exacts de sondes exclues
+          - "main_frame_id"
+          - "main_loop_ms"
+        strength: # seuils d'étiquetage (doivent être strictement croissants dans ]0, 1])
+          moderate: 0.5
+          strong: 0.7
+          very_strong: 0.9

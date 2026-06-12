@@ -21,26 +21,26 @@ Référentiel exhaustif des sondes émises par chaque module instrumenté de l'a
 
 ## `main.py` — boucle principale
 
-| Sonde                  | Type  | Description                                           | Conditionnel                                 |
-| ---------------------- | ----- | ----------------------------------------------------- | -------------------------------------------- |
-| `main_capture_wait_ms` | probe | Durée attente frame capturée (`capturer.get_frame()`) | Non                                          |
-| `main_frame_id`        | gauge | Identifiant de la frame courante                      | Non                                          |
-| `main_slow_poll_ms`    | probe | Durée poll résultat `DetectThread`                    | Non                                          |
-| `main_match_ms`        | probe | Durée matching détections slow → tracker              | Oui — si `slow_updated and new_plates`       |
-| `main_fast_poll_ms`    | probe | Durée poll résultat `FastTrackThread`                 | Oui — si `fast_enabled and not slow_updated` |
-| `main_predict_ms`      | probe | Durée `tracker.tick()` (predict + TTL + purge)        | Non                                          |
-| `main_blur_ms`         | probe | Durée floutage + overlay debug                        | Non                                          |
-| `main_send_ms`         | probe | Durée publication frame vers `SendThread`             | Non                                          |
-| `main_frames_total`    | count | Nombre cumulé de frames traitées                      | Non                                          |
-| `main_masks_total`     | gauge | Nombre de masques confirmés à la frame courante       | Non                                          |
+| Sonde                  | Type  | Description                                                | Conditionnel                                 |
+| ---------------------- | ----- | ---------------------------------------------------------- | -------------------------------------------- |
+| `main_capture_wait_ms` | probe | Durée attente frame capturée (`capturer.get_frame()`)      | Non                                          |
+| `main_loop_ms`         | probe | Durée totale traitement frame (étapes 2 → 7)               | Non                                          |
+| `main_distribute_ms`   | probe | Durée distribution frame aux threads (détecteur + fast)    | Non                                          |
+| `main_frame_id`        | gauge | Identifiant de la frame courante                           | Non                                          |
+| `main_slow_poll_ms`    | probe | Durée poll résultat `DetectThread`                         | Non                                          |
+| `main_copy_ms`         | probe | Durée copie frame source → buffer SendThread (`np.copyto`) | Non                                          |
+| `main_match_ms`        | probe | Durée matching détections slow → tracker                   | Oui — si `slow_updated and new_plates`       |
+| `main_fast_poll_ms`    | probe | Durée poll résultat `FastTrackThread`                      | Oui — si `fast_enabled and not slow_updated` |
+| `main_predict_ms`      | probe | Durée `tracker.tick()` (predict + TTL + purge)             | Non                                          |
+| `main_prepare_ms`      | probe | Durée préparation blur_zones + emprunt buffer SendThread   | Non                                          |
+| `main_blur_ms`         | probe | Durée floutage + overlay debug                             | Non                                          |
+| `main_send_ms`         | probe | Durée publication frame vers `SendThread`                  | Non                                          |
+| `main_stats_ms`        | probe | Durée mise à jour compteurs/gauges de fin de boucle        | Non                                          |
+| `main_frames_total`    | count | Nombre cumulé de frames traitées                           | Non                                          |
+| `main_masks_total`     | gauge | Nombre de masques confirmés à la frame courante            | Non                                          |
 
-> `main_blur_ms` couvre floutage et overlay debug dans le même `bench.timer`.
-> `tracker_confirmed`, `tracker_pending`, `tracker_lost` sont lus dans `main.py`
-> via `bench.read_gauge()` pour le log console uniquement — ces gauges sont posées
-> dans `tracker.tick()` et documentées dans le domaine `tracker`.
-> `motion_staleness_slow_ms` est lu via `bench.last()` pour le log console uniquement —
-> posé dans `motion.py` et documenté dans le domaine `motion`.
-> `bench.push_frame()` appelé en fin de boucle — infrastructure bench, pas une sonde métier.
+> `main_loop_ms` est la référence du frame budget (`FRAME_BUDGET_REFERENCE` dans `bench/compare/_config.py`). Son périmètre couvre les étapes 2 à 7 de la boucle (distribution threads → publication frame). `main_capture_wait_ms` est mesuré **hors** `main_loop_ms` (étape 1, attente I/O) et n'entre donc pas dans le budget.
+> `main_blur_ms` couvre floutage et overlay debug dans le même `bench.timer`.`tracker_confirmed`, `tracker_pending`, `tracker_lost` sont lus dans `main.py` via `bench.read_gauge()` pour le log console uniquement — ces gauges sont posées dans `tracker.tick()` et documentées dans le domaine `tracker`.`motion_staleness_slow_ms` est lu via `bench.last()` pour le log console uniquement posé dans `motion.py` et documenté dans le domaine `motion`. `bench.push_frame()` appelé en fin de boucle — infrastructure bench, pas une sonde métier.
 
 ## Domaine `registry` — `tracker/registry.py`
 

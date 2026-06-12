@@ -73,10 +73,23 @@ def main() -> None:
         try:
             move_session_to_results(target_id, sessions[target_id])
         except OSError as exc:
-            log.error("Échec déplacement session — rapport non écrit. %s", exc)
+            log.error("Échec déplacement session cible — rapport non écrit. %s", exc)
             sys.exit(1)
     else:
         report_dir.mkdir(parents=True, exist_ok=True)  # garantie explicite spec point 5
+
+    # Références (et toute autre session orpheline) présentes dans logs/json/
+    # → déplacement best-effort, échec partiel non bloquant pour le rapport.
+    for sid, files in sessions.items():
+        if sid == target_id:
+            continue
+        if not files["agg"].is_relative_to(DIR_JSON):
+            continue
+        try:
+            move_session_to_results(sid, files)
+        except OSError as exc:
+            log.error("Échec déplacement session %s (non cible) — ignoré, rapport conservé. %s",sid,exc)
+
     try:
         write_report(report, report_path)
     except OSError as exc:

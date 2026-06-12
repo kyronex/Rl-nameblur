@@ -42,7 +42,7 @@ les deux comparaisons valent `null`.
 - Python 3.10+
 - Dépendances :
   - **stdlib** : `json`, `pathlib`, `datetime`, `statistics`, `shutil`, `sys`, `logging`
-  - **tiers** : `numpy` (régression linéaire pour la détection de drift), `scipy` (skewness / kurtosis excess), `PyYAML` (lecture `config.yaml`)
+  - **tiers** : `numpy` (régression linéaire pour la détection de drift), `scipy` (skewness / kurtosis excess, corrélations Spearman), `PyYAML` (lecture `config.yaml`)
 - Fichiers JSONL produits par `core/bench.py` (canaux `frame`, `agg`, `fast`)
 
 ---
@@ -102,20 +102,27 @@ disponibles. La cible et les références peuvent provenir de l'un comme de l'au
 
 ### Cas de modification de `logs/results/`
 
-Trois cas — et trois seulement — où des fichiers de `logs/results/` sont modifiés :
+Quatre cas — et quatre seulement — où des fichiers de `logs/results/` sont modifiés :
 
 1. **Doublon de `session_id`** entre `logs/json/` et `logs/results/`
    `logs/json/` est prioritaire (cas attendu uniquement après renommage manuel ou rejeu).
    Un avertissement est émis à l'ingestion.
-   Le dossier `logs/results/<session_id>/` est **vidé de ses fichiers de premier niveau** (JSONL **et** rapport préexistant éventuel) avant déplacement des fichiers venant de `logs/json/`. Le rapport est ensuite régénéré.
+   Le dossier `logs/results/<session_id>/` est **vidé de ses fichiers de premier niveau** (JSONL **et** rapport préexistant éventuel) avant déplacement des fichiers venant de `logs/json/`. Le rapport est ensuite régénéré (uniquement si la session concernée est la cible du run).
 
    > **Note d'implémentation (v1)** : le vidage est non récursif (`Path.iterdir()` + `Path.unlink()`). Le dossier n'est pas censé contenir de sous-dossier ; si tel était le cas, `unlink()` lèverait `IsADirectoryError` (Linux) / `PermissionError` (Windows) **non catchée**, interrompant le déplacement. Aucun sous-dossier n'est créé par le pipeline actuel — cette limite est documentée mais non bloquante en exploitation normale.
 
 2. **Cible déjà présente dans `logs/results/`**
-   Si la session la plus récente se trouve dans `logs/results/` (aucune session neuve dans `logs/json/` portant le même `session_id`), aucun JSONL n'est déplacé ni supprimé. Seul le rapport JSON `<target_session>.json` est (re)généré dans le dossier existant, écrasant atomiquement tout rapport préexistant du même nom (écriture `.tmp` + `replace`).
+   Si la session la plus récente se trouve dans `logs/results/` (aucune session neuve dans `logs/json/` portant le même `session_id`), aucun JSONL n'est déplacé ni supprimé pour la cible. Seul le rapport JSON `<target_session>.json` est (re)généré dans le dossier existant, écrasant atomiquement tout rapport préexistant du même nom (écriture `.tmp` + `replace`).
 
 3. **Création du dossier cible**
    Si la cible vient de `logs/json/` et que `logs/results/<session_id>/` n'existe pas, il est créé.
+
+4. **Archivage des sessions non cibles présentes dans `logs/json/`**
+   Toute session présente dans `logs/json/` au moment du run et qui n'est pas la cible (références absolue / relative, ou sessions orphelines jamais devenues cibles) est également déplacée vers `logs/results/<session_id>/`. Le dossier est créé si nécessaire. **Aucun rapport JSON n'est généré pour ces sessions** — seuls les fichiers JSONL sont déplacés.
+
+   Le déplacement est **best-effort** : un échec (OSError, permission, etc.) sur une session non cible est journalisé en `ERROR` mais n'interrompt pas l'écriture du rapport pour la cible. La session concernée reste dans `logs/json/` et pourra être archivée lors d'un run ultérieur.
+
+   En cas de doublon `session_id` entre `logs/json/` et `logs/results/` sur une session non cible, la règle du point **1** s'applique (vidage du dossier `results/` puis déplacement), mais **aucun rapport n'est régénéré** — le fichier `<session_id>.json` préexistant éventuel est supprimé sans remplacement.
 
 Dans tous les autres cas, `logs/results/` est en lecture seule.
 
@@ -376,6 +383,144 @@ debug:
         spike_mad_factor: 3.5 # SPIKE_MAD_FACTOR
         drift_min_samples: 30 # DRIFT_MIN_SAMPLES
 ```
+
+### Corrélations Spearman par bucket (S6c)
+
+Pour chaque bucket (`cold` / `hot[i]` / `tail`), sont calculées les corrélations de rang de Spearman entre sondes afin d'identifier les couplages de performance masqués par les agrégats univariés (`avg`, `p95`, `skew`, `kurt`).
+
+#### Canal source
+
+**Uniquement le canal `frame`** (alignement temporel garanti par `frame_id`).
+Les canaux `agg` et `fast` sont exclus — leur désalignement temporel structurel
+rendrait les corrélations non interprétables.
+
+#### Types de sondes inclus
+
+| Type    | Inclus | Rationale                                 |
+| ------- | ------ | ----------------------------------------- |
+| `probe` | ✅     | Timings — corrélables directement         |
+| `gauge` | ✅     | États instantanés — corrélables par frame |
+| `count` | ❌     | Sémantique cumulative — non corrélable    |
+
+#### Agrégation intra-frame
+
+Lorsqu'une sonde est émise plusieurs fois dans une même frame, les valeurs sont
+**sommées** avant calcul (comportement par défaut, configurable via
+`correlations.probe_aggregation : sum | mean | max`).
+
+#### Exclusions
+
+**Blacklist hybride** :
+
+- Patterns glob (défaut : `bench_*`)
+- Liste exacte (défaut : vide)
+
+**Garde-fou variance nulle** : toute sonde dont la variance est **strictement nulle**
+sur le bucket est exclue avant formation des paires. Pas de seuil epsilon — exclusion
+uniquement sur variance identiquement zéro.
+
+Toutes les exclusions sont tracées dans le champ `excluded_probes` du bloc
+`correlations` (cf. schéma JSON ci-dessous) et loguées au niveau **INFO**.
+
+#### Formation des paires
+
+- Paires **ordonnées lexicographiquement** `(A, B)` avec `A < B` — déduplication
+  naturelle (Spearman symétrique).
+- **Auto-corrélation exclue** (`rho(A, A) = 1` n'apparaît pas dans le rapport).
+- **Périmètre v1** : paires `main_* × main_*` uniquement.
+
+#### Stratégie de filtrage — hybride seuil + cap
+
+- Seuil minimum : `|rho| ≥ min_abs_rho` (défaut `0.5`)
+- Cap dur : `max_pairs_per_bucket` paires retenues au maximum (défaut `50`),
+  sélection par `|rho|` décroissant
+- Garantit pertinence statistique et taille bornée du rapport
+
+#### Classification `strength`
+
+| `\|rho\|`    | `strength`    |
+| ------------ | ------------- |
+| `[0.5, 0.7[` | `moderate`    |
+| `[0.7, 0.9[` | `strong`      |
+| `[0.9, 1.0]` | `very_strong` |
+
+La **direction** est implicite dans le signe de `rho` — pas de champ séparé.
+
+#### Robustesse statistique
+
+- **NaN handling** : pairwise deletion — `N` est recalculé par paire après suppression
+  des frames où l'une des deux sondes est absente.
+- Si `N effectif < min_samples` (défaut `20`) → paire exclue silencieusement,
+  comptabilisée dans `summary.total_pairs_below_min_samples`, log INFO.
+- Le champ `n_samples` est exposé **par paire** dans le rapport JSON.
+
+#### Schéma JSON du bloc `correlations`
+
+Bloc présent dans chaque bucket, sibling de `probes`, `fast_probes`, `rates`,
+`gauges`, `duration_s` :
+
+```json
+"correlations": {
+  "pairs": [
+    {
+      "probe_a": "main_capture_wait_ms",
+      "probe_b": "main_predict_ms",
+      "rho": 0.823,
+      "strength": "strong",
+      "n_samples": 487
+    }
+  ],
+  "excluded_probes": [
+    { "name": "main_xxx_ms",    "reason": "zero_variance"     },
+    { "name": "bench_writer_ms","reason": "blacklist_pattern" }
+  ],
+  "summary": {
+    "total_probes_considered":    8,
+    "total_probes_excluded":      2,
+    "total_pairs_evaluated":     21,
+    "total_pairs_reported":       7,
+    "total_pairs_below_threshold":12,
+    "total_pairs_below_min_samples": 2
+  }
+}
+```
+
+**Valeurs possibles de `reason`** :
+
+| Valeur              | Signification                            |
+| ------------------- | ---------------------------------------- |
+| `zero_variance`     | Variance strictement nulle sur le bucket |
+| `blacklist_pattern` | Match glob `blacklist_patterns`          |
+| `blacklist_exact`   | Match liste exacte `blacklist`           |
+| `type_excluded`     | Type non inclus (ex. `count`)            |
+
+**Règles de présence** :
+
+- `pairs` trié par `|rho|` **décroissant**.
+- Bucket sans paire reportée → bloc présent avec `pairs: []` + `summary` rempli.
+- `correlations` exposé côté **`target` ET `reference`** (symétrie structurelle).
+- **Pas de deltas calculés** sur les corrélations en v1.
+- Si bucket contient moins de `min_samples` frames exploitables →
+  `correlations` vaut `null`.
+
+#### Configuration
+
+```yaml
+debug:
+  bench:
+    compare:
+      correlations:
+        enabled: true
+        include_types: [probe, gauge]
+        probe_aggregation: sum
+        blacklist_patterns: ["bench_*"]
+        blacklist: []
+        min_abs_rho: 0.5
+        max_pairs_per_bucket: 50
+        min_samples: 20
+```
+
+`enabled: false` → bloc `correlations` **absent** de tous les buckets.
 
 ### Rates
 
@@ -642,63 +787,66 @@ Les deltas entre sessions sont calculés **par bucket aligné par index** :
 
 Dans toute la sortie JSON, `null` signifie **« donnée non disponible ou non calculable »** — jamais zéro implicite.
 
-| Contexte                                              | Signification                                                            |
-| ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| Sonde absente de la session                           | Branche de code non atteinte pendant l'exécution                         |
-| Percentile / quartile sous seuil (< 20)               | Échantillon insuffisant pour calcul statistique fiable                   |
-| `skewness_*` sous seuil `SKEWNESS_MIN_SAMPLES`        | Échantillon insuffisant pour forme de distribution (S5a)                 |
-| `kurtosis_excess_*` sous seuil `KURTOSIS_MIN_SAMPLES` | Échantillon insuffisant pour forme de distribution (S5a)                 |
-| `spike_*` sous seuil `SPIKE_MIN_SAMPLES`              | Échantillon insuffisant pour détection MAD (S5b)                         |
-| `drift_*` sous seuil `DRIFT_MIN_SAMPLES`              | Série filtrée trop courte ou MAD nul / quasi-nul (S5b)                   |
-| Variance nulle (`stdev == 0`)                         | `skewness_*` / `kurtosis_excess_*` → `null` (garde défensive)            |
-| MAD nul (`MAD == 0`)                                  | `spike_*` → `null` (distribution dégénérée, garde défensive)             |
-| Delta impossible (référence = 0 ou valeur null)       | `null`                                                                   |
-| Mode session unique (`N == 1`)                        | `comparisons.absolute` et `comparisons.relative` valent `null`           |
-| `target.buckets` null                                 | Session trop courte (< 2 événements `agg`) pour bucketing                |
-| `deltas.buckets` null                                 | Au moins un des deux blocs `buckets` est null                            |
-| `cold_truncated: true`                                | `hot: []` et `tail: null` — session trop courte pour phase régime établi |
+| Contexte                                              | Signification                                                                     |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Sonde absente de la session                           | Branche de code non atteinte pendant l'exécution                                  |
+| Percentile / quartile sous seuil (< 20)               | Échantillon insuffisant pour calcul statistique fiable                            |
+| `skewness_*` sous seuil `SKEWNESS_MIN_SAMPLES`        | Échantillon insuffisant pour forme de distribution (S5a)                          |
+| `kurtosis_excess_*` sous seuil `KURTOSIS_MIN_SAMPLES` | Échantillon insuffisant pour forme de distribution (S5a)                          |
+| `spike_*` sous seuil `SPIKE_MIN_SAMPLES`              | Échantillon insuffisant pour détection MAD (S5b)                                  |
+| `drift_*` sous seuil `DRIFT_MIN_SAMPLES`              | Série filtrée trop courte ou MAD nul / quasi-nul (S5b)                            |
+| Variance nulle (`stdev == 0`)                         | `skewness_*` / `kurtosis_excess_*` → `null` (garde défensive)                     |
+| MAD nul (`MAD == 0`)                                  | `spike_*` → `null` (distribution dégénérée, garde défensive)                      |
+| Delta impossible (référence = 0 ou valeur null)       | `null`                                                                            |
+| Mode session unique (`N == 1`)                        | `comparisons.absolute` et `comparisons.relative` valent `null`                    |
+| `target.buckets` null                                 | Session trop courte (< 2 événements `agg`) pour bucketing                         |
+| `deltas.buckets` null                                 | Au moins un des deux blocs `buckets` est null                                     |
+| `cold_truncated: true`                                | `hot: []` et `tail: null` — session trop courte pour phase régime établi          |
+| `correlations` vaut `null` sur un bucket              | Bucket contient moins de `min_samples` frames exploitables                        |
+| Paire absente de `pairs`                              | `\|rho\|` < `min_abs_rho` ou N effectif < `min_samples` — consommé dans `summary` |
 
 ### Sondes conditionnelles notables
 
-| Sonde                                              | Condition d'émission                                           |
-| -------------------------------------------------- | -------------------------------------------------------------- |
-| `mask_lost_latency_ms`                             | Uniquement si un mask passe en état LOST                       |
-| `mask_revive_latency_ms`                           | Uniquement si un mask est revitalisé                           |
-| `motion_staleness_slow_ms`                         | Uniquement si staleness dépasse le seuil                       |
-| `fast_stale_used`                                  | Uniquement si fallback stale déclenché                         |
-| `selector_source_<name>`                           | Émise une fois — présente dans `frame` uniquement              |
-| `temporal_events.<canal>.median_interval_s`        | `null` si canal avec moins de 2 lignes ingérées                |
-| `temporal_events.frame.gaps_fixed`                 | `null` constant (canal event-driven, pas de période théorique) |
-| `deltas.temporal.*.delta_pct`                      | `null` si référence à 0 ou null                                |
-| `skewness_*` / `kurtosis_excess_*` (session)       | Calculés sur `target.probes` si seuil atteint                  |
-| `skewness_*` / `kurtosis_excess_*` (bucket)        | Calculés sur cold / hot[i] / tail si seuil atteint             |
-| `skewness_*` / `kurtosis_excess_*` (`fast_probes`) | `null` constant à tous niveaux (cohérence E10)                 |
-| `spike_*` / `drift_*` (session)                    | **Non calculés** — hors périmètre S5b (buckets uniquement)     |
-| `spike_*` (bucket)                                 | `null` si bucket < `SPIKE_MIN_SAMPLES` échantillons exacts     |
-| `drift_*` (bucket)                                 | `null` si série filtrée < `DRIFT_MIN_SAMPLES` ou MAD nul       |
-| `spike_max_value` / `spike_max_deviation`          | `null` si `spike_count == 0` (pas `0.0`)                       |
-| `spike_*` / `drift_*` (`fast_probes`)              | `null` constant (pas d'échantillons `exact` sur canal `fast`)  |
+| Sonde                                              | Condition d'émission                                                                           |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `mask_lost_latency_ms`                             | Uniquement si un mask passe en état LOST                                                       |
+| `mask_revive_latency_ms`                           | Uniquement si un mask est revitalisé                                                           |
+| `motion_staleness_slow_ms`                         | Uniquement si staleness dépasse le seuil                                                       |
+| `fast_stale_used`                                  | Uniquement si fallback stale déclenché                                                         |
+| `selector_source_<name>`                           | Émise une fois — présente dans `frame` uniquement                                              |
+| `temporal_events.<canal>.median_interval_s`        | `null` si canal avec moins de 2 lignes ingérées                                                |
+| `temporal_events.frame.gaps_fixed`                 | `null` constant (canal event-driven, pas de période théorique)                                 |
+| `deltas.temporal.*.delta_pct`                      | `null` si référence à 0 ou null                                                                |
+| `skewness_*` / `kurtosis_excess_*` (session)       | Calculés sur `target.probes` si seuil atteint                                                  |
+| `skewness_*` / `kurtosis_excess_*` (bucket)        | Calculés sur cold / hot[i] / tail si seuil atteint                                             |
+| `skewness_*` / `kurtosis_excess_*` (`fast_probes`) | `null` constant à tous niveaux (cohérence E10)                                                 |
+| `spike_*` / `drift_*` (session)                    | **Non calculés** — hors périmètre S5b (buckets uniquement)                                     |
+| `spike_*` (bucket)                                 | `null` si bucket < `SPIKE_MIN_SAMPLES` échantillons exacts                                     |
+| `drift_*` (bucket)                                 | `null` si série filtrée < `DRIFT_MIN_SAMPLES` ou MAD nul                                       |
+| `spike_max_value` / `spike_max_deviation`          | `null` si `spike_count == 0` (pas `0.0`)                                                       |
+| `spike_*` / `drift_*` (`fast_probes`)              | `null` constant (pas d'échantillons `exact` sur canal `fast`)                                  |
+| `correlations` (bucket)                            | `null` si bucket < `min_samples` frames ; `pairs: []` si aucune paire ne dépasse `min_abs_rho` |
 
 ---
 
 ## Limites v1
 
-| Limite                                                   | Statut                                                        |
-| -------------------------------------------------------- | ------------------------------------------------------------- |
-| Canal `frame` lu uniquement pour percentiles probes      | Reste du contenu archivé, exploitable manuellement            |
-| Sélection interactive de session                         | Hors scope v1 — prévu v2                                      |
-| Génération automatique de `analyse.md`                   | Hors scope — rédigé manuellement                              |
-| Comparaison N cibles simultanées                         | Hors scope — une cible par exécution                          |
-| Seuils de régression configurables                       | Hors scope                                                    |
-| Détection statistique (p-values)                         | Hors scope                                                    |
-| Seuil minimal d'échantillons percentiles                 | `20` en v1                                                    |
-| Facteurs `GAP_STAT_FACTOR` / `GAP_FIXED_FACTOR`          | `3.0` / `2.0` en v1                                           |
-| Seuils (`SKEWNESS_MIN_SAMPLES` / `KURTOSIS_MIN_SAMPLES`) | `50` / `100` en v1                                            |
-| Rates / gauges ventilés par bucket                       | Hors scope v1 — moyenne session uniquement (choix volontaire) |
-| IQR (Q1 / Q3 / IQR par sonde)                            | ✅ Implémenté                                                 |
-| Skewness / Kurtosis (forme de distribution)              | ✅ Implémenté (deltas absolus)                                |
-| Détection spikes & drift par bucket                      | ✅ Implémenté (MAD + OLS, deltas absolus)                     |
-| Corrélations inter-sondes & budget frame                 | Prévu S6 — non implémenté en v1                               |
+| Limite                                                   | Statut                                                          |
+| -------------------------------------------------------- | --------------------------------------------------------------- |
+| Canal `frame` lu uniquement pour percentiles probes      | Reste du contenu archivé, exploitable manuellement              |
+| Sélection interactive de session                         | Hors scope v1 — prévu v2                                        |
+| Génération automatique de `analyse.md`                   | Hors scope — rédigé manuellement                                |
+| Comparaison N cibles simultanées                         | Hors scope — une cible par exécution                            |
+| Seuils de régression configurables                       | Hors scope                                                      |
+| Détection statistique (p-values)                         | Hors scope                                                      |
+| Seuil minimal d'échantillons percentiles                 | `20` en v1                                                      |
+| Facteurs `GAP_STAT_FACTOR` / `GAP_FIXED_FACTOR`          | `3.0` / `2.0` en v1                                             |
+| Seuils (`SKEWNESS_MIN_SAMPLES` / `KURTOSIS_MIN_SAMPLES`) | `50` / `100` en v1                                              |
+| Rates / gauges ventilés par bucket                       | Hors scope v1 — moyenne session uniquement (choix volontaire)   |
+| IQR (Q1 / Q3 / IQR par sonde)                            | ✅ Implémenté                                                   |
+| Skewness / Kurtosis (forme de distribution)              | ✅ Implémenté (deltas absolus)                                  |
+| Détection spikes & drift par bucket                      | ✅ Implémenté (MAD + OLS, deltas absolus)                       |
+| Corrélations Spearman inter-sondes par bucket            | ✅ Implémenté (Spearman, paires `main_*`, deltas hors scope v1) |
 
 ---
 
@@ -714,5 +862,10 @@ Dans toute la sortie JSON, `null` signifie **« donnée non disponible ou non ca
 - `cold_truncated: true` est émis si `cold_end_real > t_max` (session trop courte).
 - `cold_drift_warning: true` est émis si `cold_drift_s > max_cold_drift_s` — le bucketing continue sans interruption.
 - `tail_status` est **toujours présent** dans la sortie ; le bloc `tail` est absent quand `tail_status != "aligned"`.
+- `correlations` est présent dans chaque bucket non-null avec `pairs: []` minimum si aucune paire ne dépasse le seuil.
+- `excluded_probes` liste toutes les exclusions locales au bucket (`zero_variance`, `blacklist_pattern`, `blacklist_exact`, `type_excluded`).
+- `summary` dans `correlations` est toujours complet — tous les compteurs présents, jamais `null`.
+- Pas de deltas calculés sur les corrélations en v1 — lecture manuelle `target` / `reference`.
+- `correlations: null` si et seulement si le bucket contient moins de `min_samples` frames exploitables ou si `enabled: false`.
 - Le champ `schema_version` identifie la version du schéma. Toute évolution non rétro-compatible incrémente ce champ.
 - Le champ `generated_at` est un timestamp ISO 8601 avec fuseau horaire local (`datetime.now().astimezone().isoformat()`).
