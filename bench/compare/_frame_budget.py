@@ -1,9 +1,6 @@
 # bench/compare/_frame_budget.py
 """
-Construction du bloc « frame budget » (S6a) — décomposition temporelle de la boucle frame par groupes de sondes.
-
-⚠️ Chantier S6 en cours (cf. Plan_Bench_Compare.md, ligne S6 ⏳). Module isolé volontairement : point chaud en développement actif.
-
+Construction du bloc « frame budget »  — décomposition temporelle de la boucle frame par groupes de sondes.
 Rôle : builder de section. Lit les lignes du canal `frame`, agrège par groupe, applique _r() (arrondi présentation), pose les flags (low_presence, unaccounted_warn, conditional). Produit un dict prêt à sérialiser dans le rapport.
 """
 

@@ -427,6 +427,14 @@
   - Marge de sécurité documentée (`× 1.2` ou valeur justifiée).
   - Vrais teleports détectés sur footage tagué.
   - Percentiles `dist` p95/p99 consignés dans `docs/session-de-reference.md`.
+  - **Session de bench `20260613_213824` — Résultats clés** :
+    - 13 buckets analysés, 24/27 sondes instables
+    - Goulots : `main_distribute_ms` (60%), `main_blur_ms` (21%), `main_copy_ms` (12%)
+    - `ratio_lost` moyen : ~60% (hors `hot[10]`)
+    - Drift `detect_slow_ms` confirmé : +6.2 ms/s en `hot[2]`
+    - `motion_staleness_slow_ms` en DRIFT sur 100% des buckets hot
+    - Comparaison vs `20260613_211935` : `pending` +34.4%, `blur` +10.2%
+    - Conclusion : système en phase P0, tous les bugs bloquants P0 confirmés par données terrain
   - Aucune régression sur session de référence.
 
 - **Bloque** : B-05 (anomalie #1 peut générer des bursts CREATE parasites cohérents avec le symptôme B-05 — diagnostic faussé si non résolu avant).
@@ -441,12 +449,24 @@
   - Valider uniquement sur session sans teleport → absence de preuve que les vrais teleports restent détectés.
   - Embarquer dans B-00 → préconditions non satisfaites à ce stade.
   - Embarquer dans B-05 → B-05 partirait sur une config potentiellement incohérente.
+    **Preuves terrain (session 20260613_213824)** :
+- `motion_residual_px` : P99_HIGH-IQR_HIGH-SPIKES en hot[7] et hot[8]
+- `motion_velocity_pps` : P99_HIGH-IQR_HIGH en hot[1], P99_HIGH-IQR_HIGH-SPIKES en hot[7]/hot[8]
+- Pics de vélocité anormaux corrélés aux spikes d`associator_tick_ms`
+- Signal cohérent avec teleport_thresh sous-dimensionné → faux teleports → resets vélocité parasites
 
 ---
 
 ### 🔴 B-05 — Slow detector : faux positifs en burst `[RÉÉCRIT, découpé en B-05a + B-05b]`
 
 > **Note d'honnêteté préservée** : la cause racine exacte n'est pas connue. Le découpage audit/implémentation reflète cette incertitude. B-05a peut révéler que le problème est ailleurs (effet de bord B-04 résiduel, anomalie B-00 #1, etc.), auquel cas B-05b devient sans objet.
+> **Preuves terrain (session 20260613_213824)** :
+
+- `detect_slow_ms` : drift +6.2 ms/s confirmé en hot[2] (avg 121ms → p99 284ms)
+- `motion_staleness_slow_ms` : [DRIFT] systématique sur 100% des buckets hot
+- drift positif de staleness = détections de moins en moins fraîches au fil du temps
+- Conséquence directe sur ratio_lost : 46–78% sur 10/11 buckets hot
+- Seul hot[10] échappe (ratio_lost 39%) → moment de jeu stable, slow detector non sollicité de façon intensive
 
 ---
 
@@ -627,7 +647,11 @@
 - **Effets de bord à anticiper** :
   - **Vers B-03** : B-06 ré-élargit la durée de vie effective sur scènes statiques. Ne **pas** remonter `lost_after_s` après livraison de B-06 sans concertation : cela invaliderait l'observation de la couverture du keepalive et fausserait les métriques alimentant B-07.
   - **Vers B-07** : la sémantique de `last_seen_ts` devient "preuve **ou** présomption d'existence". Cette ambiguïté est **dette acceptée** à court terme et est l'objet exact de l'audit B-07.
-
+    **Preuves terrain (session 20260613_213824)** :
+- ratio_lost : 46–78% sur l'ensemble de la session → masques évincés avant keepalive
+- `tracker_pending` +34.4% inter-sessions → masques bloqués en pending, TTL expiré avant confirmation
+- Corrélation inverse blur ↔ lost (rho -0.730 en hot[6]) : chaque masque lost = flou perdu
+- hot[10] (ratio_lost 39%, confirmed=3.25) : seul bucket où le tracker est sain → preuve que le pipeline fonctionne quand les masques tiennent
 - **Bloque** : Phase 0 (par discipline d'ordonnancement P0)
 - **Débloque** : démarrage observation longue durée → B-07.
 
@@ -763,6 +787,14 @@
 ---
 
 ## 🟡 Lot 2 — Bande passante
+
+**Dette technique documentée — `main_distribute_ms` (signal session 20260613_213824)**
+
+- Coût constant **58–62% du budget frame** sur tous les buckets (2847–2955 ms/bucket)
+- Non corrélé aux événements → coût architectural pur, jamais identifié comme déclencheur
+- Hypothèse : envoi inconditionnel à chaque frame, indépendamment des changements de masques
+- Pistes : dirty flag conditionnel (Lot 1), découplage via F-09 thread tick dédié (Phase 2)
+- **Action avant Lot 2** : audit du code `distribute` — qualifier si optimisable sans refonte
 
 - **Statut** : volontairement non détaillé.
 - **Trigger** : Lot 1 livré + signaux explicites sur l'utilisation des ressources réseau / capture / send.
