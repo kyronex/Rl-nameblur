@@ -34,7 +34,8 @@ class DetectThread:
 
     def give_frame(self, frame, ts):
         with self._frame_lock:
-            self._latest_frame = frame.copy()
+            self._latest_frame = frame
+            #self._latest_frame = frame.copy()
             self._latest_frame_ts = ts
 
     def get_result(self):

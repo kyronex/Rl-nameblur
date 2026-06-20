@@ -1,0 +1,1063 @@
+══════════════════════════════════════════════════════════════
+  BENCH ANALYSE — 20260613_213824
+  Mode : comparaison
+══════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────────
+  BUCKET : cold
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 3328.39 ms   rows_total : 172
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          63.3%   2108.17    100.0%
+  blur               main_blur_ms                16.1%    535.21    100.0%
+  copy               main_copy_ms                15.2%    504.81    100.0%
+  match              main_match_ms                2.1%     69.39      9.3%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     11.69    100.0%
+  stats              main_stats_ms                0.1%      3.27    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.38    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      0.90     85.5%  [CONDITIONNEL]
+  prepare            main_prepare_ms              0.0%      0.91    100.0%
+  send               main_send_ms                 0.0%      0.84    100.0%
+
+  Non comptabilisé : 2.8%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      3.07    15.21     6.25      76    0.000   [P99_HIGH][IQR_HIGH][SPIKES]
+  main_copy_ms                      2.95     8.97     2.12       7    0.014   [P99_HIGH][SPIKES]
+  main_distribute_ms               12.22    20.62     4.55       8    1.974   [SPIKES][DRIFT]
+  main_fast_poll_ms                 0.01     0.02     0.00      12    0.000   [P99_HIGH][SPIKES]
+  main_loop_ms                     19.36    39.78    11.52       4    5.547   [SPIKES][DRIFT]
+  main_predict_ms                   0.07     0.21     0.04      19    0.011   [P99_HIGH][SPIKES]
+  main_slow_poll_ms                 0.01     0.03     0.00      18    0.001   [P99_HIGH][SPIKES]
+  tracker_apply_fast_direct_ms      0.35     3.27     0.06       9        —   [P99_HIGH][SPIKES]
+  tracker_tick_ms                   0.06     0.19     0.04      21    0.010   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.02     0.00       4   -0.000   [SPIKES]
+  main_capture_wait_ms              0.71     1.74     0.36      12    0.058   [SPIKES]
+  main_prepare_ms                   0.01     0.01     0.00      14    0.002   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      18    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.05     0.01       9    0.001   [SPIKES]
+  motion_apply_ms                   0.01     0.04     0.02       3        —   [IQR_HIGH]
+
+  → 27 sondes analysées, 15 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               main_masks_total                0.837  strong          173
+  main_blur_ms               registry_confirmed              0.837  strong          173
+  main_blur_ms               tracker_confirmed               0.837  strong          173
+  main_blur_ms               tracker_masks_total             0.807  strong          173
+  main_blur_ms               main_prepare_ms                 0.757  strong          173
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.50  pending=0.25  lost=1.50
+      ratio_lost = 46.2%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [IQR_HIGH]
+
+      → 8 sondes, 1 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[0]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4856.79 ms   rows_total : 243
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          61.2%   2973.93    100.0%
+  blur               main_blur_ms                18.0%    875.76    100.0%
+  copy               main_copy_ms                13.9%    675.08    100.0%
+  match              main_match_ms                2.2%    105.56     12.8%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.5%     22.47    100.0%
+  stats              main_stats_ms                0.1%      5.33    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.22    100.0%
+  prepare            main_prepare_ms              0.0%      1.52    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.26     83.1%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.21    100.0%
+
+  Non comptabilisé : 4.0%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  motion_apply_ms                   0.01     0.09     0.01       7    0.003   [P99_HIGH][IQR_HIGH][SPIKES]
+  motion_staleness_slow_ms        319.01   777.83   402.98      11  -26.811   [IQR_HIGH][SPIKES][DRIFT]
+  associator_tick_ms                0.56     1.97     0.37       6        —   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.01     0.07     0.01       6   -0.001   [P99_HIGH][SPIKES]
+  tracker_apply_fast_direct_ms      0.50     4.19     0.10      16   -0.005   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.09     0.00       3   -0.000   [P99_HIGH]
+  detect_slow_ms                  110.26   230.77    51.60       2   -1.834   [DRIFT]
+  main_blur_ms                      4.13    12.28     5.66       0   -0.056   [IQR_HIGH]
+  main_capture_wait_ms              0.52     0.99     0.27       7   -0.001   [SPIKES]
+  main_copy_ms                      2.71     7.05     1.66      14    0.068   [SPIKES]
+  main_distribute_ms               12.54    20.07     3.46      10    0.057   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      10   -0.000   [SPIKES]
+  main_match_ms                     3.55     8.52     2.30       1   -0.625   [DRIFT]
+  main_predict_ms                   0.09     0.26     0.05      17    0.004   [SPIKES]
+  main_prepare_ms                   0.01     0.02     0.00       9   -0.000   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      13   -0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      20    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.06     0.01      13   -0.000   [SPIKES]
+  tracker_apply_detections_ms       3.48     8.47     2.27       1   -0.619   [DRIFT]
+  tracker_tick_ms                   0.08     0.23     0.05      15    0.004   [SPIKES]
+
+  → 27 sondes analysées, 20 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               main_masks_total                0.741  strong          243
+  main_blur_ms               registry_confirmed              0.741  strong          243
+  main_blur_ms               tracker_confirmed               0.741  strong          243
+  main_blur_ms               capture_frame_ms                0.731  strong          242
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.50  pending=1.00  lost=3.50
+      ratio_lost = 58.3%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_staleness_slow_ms             [IQR_HIGH][SPIKES][DRIFT]
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      main_match_ms                        [DRIFT]
+
+      → 8 sondes, 5 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[1]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4792.42 ms   rows_total : 290
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          67.1%   3214.25    100.0%
+  copy               main_copy_ms                14.2%    682.93    100.0%
+  blur               main_blur_ms                13.3%    639.80    100.0%
+  match              main_match_ms                2.1%    101.47     10.3%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     19.46    100.0%
+  stats              main_stats_ms                0.1%      4.95    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.04    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.31     85.9%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.17    100.0%
+  prepare            main_prepare_ms              0.0%      1.12    100.0%
+
+  Non comptabilisé : 2.6%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      1.91    10.16     4.53     113   -0.000   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.44     2.79     0.16       5        —   [P99_HIGH][SPIKES]
+  main_distribute_ms               10.88    18.12     3.94      14   -0.539   [SPIKES][DRIFT]
+  main_loop_ms                     16.10    30.78     9.65      13   -1.717   [SPIKES][DRIFT]
+  main_slow_poll_ms                 0.01     0.02     0.00      16   -0.000   [P99_HIGH][SPIKES]
+  motion_velocity_pps             625.01  1952.67   756.25       1        —   [P99_HIGH][IQR_HIGH]
+  capture_frame_ms                  0.01     0.01     0.00      13    0.000   [SPIKES]
+  detect_slow_ms                  125.66   269.26    78.31       2   12.712   [DRIFT]
+  main_capture_wait_ms              0.70     1.65     0.28      24    0.035   [SPIKES]
+  main_copy_ms                      2.40     6.53     1.61      11    0.022   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      12   -0.000   [SPIKES]
+  main_match_ms                     3.10    11.81     2.56       2        —   [P99_HIGH]
+  main_predict_ms                   0.07     0.16     0.04      12   -0.002   [SPIKES]
+  main_prepare_ms                   0.00     0.01     0.00      24   -0.000   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      11   -0.000   [SPIKES]
+  main_stats_ms                     0.02     0.04     0.01      22   -0.000   [SPIKES]
+  motion_apply_ms                   0.02     0.04     0.03       0    0.001   [IQR_HIGH]
+  motion_dt_slow_ms               146.26   597.83    82.06       3        —   [P99_HIGH]
+  motion_residual_px               98.96   683.76    61.53       2        —   [P99_HIGH]
+  motion_staleness_slow_ms        241.51   321.72    93.13       1   16.477   [DRIFT]
+  tracker_apply_detections_ms       3.05    11.77     2.56       2        —   [P99_HIGH]
+  tracker_tick_ms                   0.06     0.15     0.04      12   -0.002   [SPIKES]
+
+  → 26 sondes analysées, 22 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               main_masks_total                0.829  strong          290
+  main_blur_ms               registry_confirmed              0.829  strong          290
+  main_blur_ms               tracker_confirmed               0.829  strong          290
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=0.40  pending=1.00  lost=3.60
+      ratio_lost = 72.0%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_velocity_pps                  [P99_HIGH][IQR_HIGH]
+      main_match_ms                        [P99_HIGH]
+      motion_apply_ms                      [IQR_HIGH]
+      motion_dt_slow_ms                    [P99_HIGH]
+      motion_residual_px                   [P99_HIGH]
+      motion_staleness_slow_ms             [DRIFT]
+
+      → 8 sondes, 7 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[2]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4793.57 ms   rows_total : 238
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          60.8%   2914.15    100.0%
+  blur               main_blur_ms                21.2%   1017.89    100.0%
+  copy               main_copy_ms                12.3%    588.26    100.0%
+  match              main_match_ms                2.4%    112.93     13.9%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     18.95    100.0%
+  stats              main_stats_ms                0.1%      3.94    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.84    100.0%
+  prepare            main_prepare_ms              0.0%      1.24    100.0%
+  send               main_send_ms                 0.0%      1.02    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      0.97     81.5%  [CONDITIONNEL]
+
+  Non comptabilisé : 2.8%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  associator_tick_ms                0.62     3.01     1.08      10        —   [P99_HIGH][IQR_HIGH][SPIKES]
+  main_blur_ms                      4.09    14.14     6.67       0    0.855   [P99_HIGH][IQR_HIGH][DRIFT]
+  main_predict_ms                   0.08     0.25     0.05       7    0.003   [P99_HIGH][SPIKES]
+  main_slow_poll_ms                 0.01     0.03     0.00      22    0.000   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.04     0.01      14    0.001   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.01     0.09     0.01       5   -0.001   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        301.57   660.16    94.18       9   -6.630   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.36     2.87     0.07      14   -0.004   [P99_HIGH][SPIKES]
+  tracker_tick_ms                   0.07     0.24     0.05       7    0.003   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.02     0.00       1        —   [P99_HIGH]
+  detect_slow_ms                  112.64   264.51    73.91       3    4.226   [DRIFT]
+  main_capture_wait_ms              0.74     1.52     0.32       8   -0.018   [SPIKES]
+  main_copy_ms                      2.47     5.99     1.40      18    0.029   [SPIKES]
+  main_distribute_ms               12.25    18.35     4.16       4    0.377   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      15    0.000   [SPIKES]
+  main_loop_ms                     19.92    34.48    10.37       1    1.429   [DRIFT]
+  main_prepare_ms                   0.01     0.01     0.00      15    0.000   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      21    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.03     0.01      17   -0.000   [SPIKES]
+
+  → 27 sondes analysées, 19 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               capture_frame_ms                0.712  strong          238
+  main_blur_ms               main_masks_total                0.705  strong          238
+  main_blur_ms               registry_confirmed              0.705  strong          238
+  main_blur_ms               tracker_confirmed               0.705  strong          238
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.40  pending=0.80  lost=3.20
+      ratio_lost = 59.3%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[3]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4816.49 ms   rows_total : 254
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          63.3%   3049.35    100.0%
+  blur               main_blur_ms                17.8%    859.54    100.0%
+  copy               main_copy_ms                13.1%    630.69    100.0%
+  match              main_match_ms                2.1%    100.70     10.2%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     19.16    100.0%
+  stats              main_stats_ms                0.1%      4.35    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.00    100.0%
+  prepare            main_prepare_ms              0.0%      1.28    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.27     85.4%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.03    100.0%
+
+  Non comptabilisé : 3.1%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      4.23    12.32     6.08       0   -1.733   [IQR_HIGH][DRIFT]
+  main_distribute_ms               12.36    19.95     4.01       8   -1.012   [SPIKES][DRIFT]
+  main_prepare_ms                   0.01     0.02     0.00      12   -0.001   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.05     0.01      15    0.000   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.02     0.06     0.01       6    0.001   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        281.41   783.79   100.15      10    4.419   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.25     2.59     0.04      18    0.000   [P99_HIGH][SPIKES]
+  tracker_tick_ms                   0.07     0.22     0.04      24   -0.004   [P99_HIGH][SPIKES]
+  associator_tick_ms                0.65     2.64     0.32       3        —   [P99_HIGH]
+  capture_frame_ms                  0.01     0.01     0.00       5    0.001   [SPIKES]
+  detect_slow_ms                  121.40   284.68    60.84       3    6.233   [DRIFT]
+  main_capture_wait_ms              0.73     1.39     0.27       8    0.041   [SPIKES]
+  main_copy_ms                      2.50     7.04     1.64      16   -0.029   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      16   -0.000   [SPIKES]
+  main_loop_ms                     20.34    32.53    11.42       0   -3.043   [DRIFT]
+  main_match_ms                     3.71    10.71     1.09       6        —   [SPIKES]
+  main_predict_ms                   0.08     0.23     0.04      24   -0.004   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      10   -0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      24   -0.000   [SPIKES]
+  main_stats_ms                     0.02     0.05     0.01      20   -0.000   [SPIKES]
+  tracker_apply_detections_ms       3.66    10.63     1.07       6        —   [SPIKES]
+
+  → 27 sondes analysées, 21 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               main_masks_total                0.823  strong          254
+  main_blur_ms               registry_confirmed              0.823  strong          254
+  main_blur_ms               tracker_confirmed               0.823  strong          254
+  main_blur_ms               capture_frame_ms                0.744  strong          252
+  main_blur_ms               main_prepare_ms                 0.718  strong          254
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.20  pending=0.40  lost=4.20
+      ratio_lost = 72.4%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+      associator_tick_ms                   [P99_HIGH]
+      main_match_ms                        [SPIKES]
+
+      → 8 sondes, 5 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[4]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4831.93 ms   rows_total : 211
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          58.9%   2847.48    100.0%
+  blur               main_blur_ms                24.5%   1184.81    100.0%
+  copy               main_copy_ms                10.7%    515.38    100.0%
+  match              main_match_ms                2.5%    118.62     16.6%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     18.09    100.0%
+  stats              main_stats_ms                0.1%      3.44    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.80    100.0%
+  prepare            main_prepare_ms              0.0%      1.59    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.01     80.6%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      0.94    100.0%
+
+  Non comptabilisé : 2.9%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      4.27    13.24     3.61       8    0.623   [P99_HIGH][SPIKES][DRIFT]
+  associator_tick_ms                0.42     2.34     0.24       4    0.012   [P99_HIGH][SPIKES]
+  main_copy_ms                      2.38     7.50     1.56      16   -0.081   [P99_HIGH][SPIKES]
+  main_fast_poll_ms                 0.01     0.02     0.00      11    0.000   [P99_HIGH][SPIKES]
+  main_loop_ms                     20.46    36.12     6.60       8    0.840   [SPIKES][DRIFT]
+  main_predict_ms                   0.08     0.25     0.05      14    0.004   [P99_HIGH][SPIKES]
+  main_prepare_ms                   0.01     0.03     0.00      17    0.001   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.05     0.01      16   -0.000   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.01     0.06     0.01       3   -0.003   [P99_HIGH][IQR_HIGH]
+  motion_staleness_slow_ms        294.53   690.20   175.61       6    7.635   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.35     3.36     0.06      19    0.003   [P99_HIGH][SPIKES]
+  tracker_tick_ms                   0.07     0.24     0.05      11    0.004   [P99_HIGH][SPIKES]
+  detect_slow_ms                  133.46   272.12    51.55       2    8.289   [DRIFT]
+  main_capture_wait_ms              0.75     1.42     0.27      13   -0.022   [SPIKES]
+  main_distribute_ms               12.63    20.94     4.13       5    0.370   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      17   -0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      19    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.03     0.01       8   -0.000   [SPIKES]
+
+  → 27 sondes analysées, 18 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=2.00  pending=0.00  lost=4.80
+      ratio_lost = 70.6%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][IQR_HIGH]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[5]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4809.65 ms   rows_total : 241
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          61.3%   2949.85    100.0%
+  blur               main_blur_ms                19.8%    951.59    100.0%
+  copy               main_copy_ms                12.7%    611.37    100.0%
+  match              main_match_ms                1.7%     81.07      9.5%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     20.37    100.0%
+  stats              main_stats_ms                0.1%      4.39    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.84    100.0%
+  prepare            main_prepare_ms              0.0%      1.38    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.13     82.6%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.00    100.0%
+
+  Non comptabilisé : 3.9%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  motion_staleness_slow_ms        346.77   796.30   352.51      12   11.298   [IQR_HIGH][SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.73     4.69     1.15      32    0.027   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.87     5.47     0.45       5        —   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.02     0.00       6        —   [P99_HIGH][SPIKES]
+  main_blur_ms                      3.94    13.21     6.63       1    0.440   [P99_HIGH][IQR_HIGH]
+  main_copy_ms                      2.57     7.83     1.70      12   -0.083   [P99_HIGH][SPIKES]
+  main_prepare_ms                   0.01     0.02     0.01       9    0.000   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.05     0.01      13    0.000   [P99_HIGH][SPIKES]
+  detect_slow_ms                  118.71   270.23    51.71       1    4.819   [DRIFT]
+  main_capture_wait_ms              0.77     1.41     0.32      10    0.007   [SPIKES]
+  main_distribute_ms               12.10    19.00     3.75       6    0.118   [SPIKES]
+  main_fast_poll_ms                 0.01     0.02     0.00      12    0.000   [SPIKES]
+  main_loop_ms                     20.04    35.01    11.51       0    0.539   [DRIFT]
+  main_predict_ms                   0.09     0.25     0.06      16   -0.000   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      16    0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      21    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.04     0.01      19    0.000   [SPIKES]
+  motion_predict_ms                 0.01     0.06     0.01       2   -0.001   [P99_HIGH]
+  tracker_tick_ms                   0.08     0.20     0.05      13   -0.001   [SPIKES]
+
+  → 27 sondes analysées, 19 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               capture_frame_ms                0.768  strong          241
+  main_blur_ms               main_masks_total                0.756  strong          241
+  main_blur_ms               registry_confirmed              0.756  strong          241
+  main_blur_ms               tracker_confirmed               0.756  strong          241
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.40  pending=0.20  lost=3.80
+      ratio_lost = 70.4%
+
+  D.2 Stabilité motion / associator
+      motion_staleness_slow_ms             [IQR_HIGH][SPIKES][DRIFT]
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[6]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4861.49 ms   rows_total : 286
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          65.0%   3160.94    100.0%
+  copy               main_copy_ms                15.3%    742.47    100.0%
+  blur               main_blur_ms                13.0%    633.62    100.0%
+  match              main_match_ms                1.5%     74.72      9.1%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.5%     23.32    100.0%
+  stats              main_stats_ms                0.1%      5.39    100.0%
+  slow_poll          main_slow_poll_ms            0.1%      2.48    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.64     86.4%  [CONDITIONNEL]
+  prepare            main_prepare_ms              0.0%      1.46    100.0%
+  send               main_send_ms                 0.0%      1.32    100.0%
+
+  Non comptabilisé : 4.4%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      2.39     9.47     4.02     133    0.000   [P99_HIGH][IQR_HIGH][SPIKES]
+  tracker_apply_fast_direct_ms      0.47     4.27     0.72      25    0.001   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.40     1.34     0.21       4        —   [P99_HIGH][SPIKES]
+  main_predict_ms                   0.08     0.24     0.05      25    0.003   [P99_HIGH][SPIKES]
+  main_prepare_ms                   0.01     0.02     0.00      34    0.000   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.05     0.01      17    0.000   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.02     0.07     0.01       9    0.001   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        360.64   752.36    96.58       9   20.091   [SPIKES][DRIFT]
+  tracker_tick_ms                   0.07     0.23     0.04      23    0.003   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.01     0.00       5   -0.000   [SPIKES]
+  detect_slow_ms                  125.98   313.26    62.36       3    2.117   [DRIFT]
+  main_capture_wait_ms              0.49     1.06     0.18      28   -0.008   [SPIKES]
+  main_copy_ms                      2.51     7.37     1.50      13    0.015   [SPIKES]
+  main_distribute_ms               11.14    17.34     3.16      17   -0.075   [SPIKES]
+  main_fast_poll_ms                 0.01     0.02     0.00      20    0.000   [SPIKES]
+  main_loop_ms                     17.08    32.29     8.66       8   -0.260   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      17   -0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      27    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.05     0.01      16    0.000   [SPIKES]
+
+  → 26 sondes analysées, 19 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Goulot                     ← Sonde corrélée                  rho  strength          n
+  ─────────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms               main_masks_total                0.843  strong          286
+  main_blur_ms               registry_confirmed              0.843  strong          286
+  main_blur_ms               tracker_confirmed               0.843  strong          286
+  main_blur_ms               registry_lost                  -0.730  strong          286
+  main_blur_ms               tracker_lost                   -0.730  strong          286
+  main_blur_ms               capture_frame_ms                0.711  strong          285
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=0.60  pending=0.20  lost=2.80
+      ratio_lost = 77.8%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[7]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4905.27 ms   rows_total : 232
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          60.5%   2965.29    100.0%
+  blur               main_blur_ms                21.1%   1033.90    100.0%
+  copy               main_copy_ms                12.5%    612.70    100.0%
+  match              main_match_ms                2.5%    124.03     18.1%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     20.50    100.0%
+  stats              main_stats_ms                0.1%      4.55    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.18    100.0%
+  prepare            main_prepare_ms              0.0%      1.66    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.17     78.4%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.15    100.0%
+
+  Non comptabilisé : 2.8%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  motion_apply_ms                   0.01     0.08     0.02      20   -0.000   [P99_HIGH][IQR_HIGH][SPIKES]
+  motion_residual_px              110.13   828.99   116.00       8        —   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.55     2.32     0.32       8    0.005   [P99_HIGH][SPIKES]
+  motion_dt_slow_ms               218.59  1121.12   110.28       5        —   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.01     0.05     0.01       8   -0.000   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        257.48   752.98   114.13      10    6.056   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.37     1.53     0.04      12   -0.003   [P99_HIGH][SPIKES]
+  detect_slow_ms                   97.58   152.34    47.46       0   -2.014   [DRIFT]
+  main_blur_ms                      4.66    13.18     3.04      16    0.166   [SPIKES]
+  main_capture_wait_ms              0.41     0.86     0.16      16    0.000   [SPIKES]
+  main_copy_ms                      2.63     6.61     1.59      15   -0.022   [SPIKES]
+  main_distribute_ms               12.84    19.80     3.81       4    0.143   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      11   -0.000   [SPIKES]
+  main_loop_ms                     21.69    34.11     6.74       9    0.280   [SPIKES]
+  main_predict_ms                   0.10     0.21     0.04      14    0.001   [SPIKES]
+  main_prepare_ms                   0.01     0.02     0.00       5    0.000   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      16   -0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.01      11    0.000   [SPIKES]
+  main_stats_ms                     0.02     0.05     0.01      11   -0.000   [SPIKES]
+  motion_velocity_pps             533.01  1578.55   476.66       7        —   [SPIKES]
+  tracker_tick_ms                   0.09     0.20     0.04      14    0.000   [SPIKES]
+
+  → 27 sondes analysées, 21 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=2.00  pending=0.20  lost=2.80
+      ratio_lost = 56.0%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_residual_px                   [P99_HIGH][IQR_HIGH][SPIKES]
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_dt_slow_ms                    [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+      motion_velocity_pps                  [SPIKES]
+
+      → 8 sondes, 7 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[8]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4862.46 ms   rows_total : 218
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          59.3%   2885.28    100.0%
+  blur               main_blur_ms                22.5%   1091.67    100.0%
+  copy               main_copy_ms                11.0%    533.86    100.0%
+  match              main_match_ms                3.0%    147.99     18.8%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     20.18    100.0%
+  stats              main_stats_ms                0.1%      4.49    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.98    100.0%
+  prepare            main_prepare_ms              0.0%      1.66    100.0%
+  send               main_send_ms                 0.0%      1.09    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.01     78.0%  [CONDITIONNEL]
+
+  Non comptabilisé : 3.6%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  associator_tick_ms                0.72     2.79     0.80      10    0.036   [P99_HIGH][IQR_HIGH][SPIKES]
+  motion_residual_px               46.80   180.60    58.30       4        —   [P99_HIGH][IQR_HIGH][SPIKES]
+  motion_velocity_pps             235.32  2356.03   279.48       4        —   [P99_HIGH][IQR_HIGH][SPIKES]
+  main_loop_ms                     21.56    38.73     5.75      21    0.607   [SPIKES][DRIFT]
+  main_predict_ms                   0.09     0.29     0.05      19   -0.001   [P99_HIGH][SPIKES]
+  main_stats_ms                     0.02     0.07     0.01      16    0.000   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.01     0.06     0.01      18    0.000   [P99_HIGH][SPIKES]
+  motion_dt_slow_ms               176.96   993.72   109.80       5        —   [P99_HIGH][SPIKES]
+  motion_predict_ms                 0.01     0.07     0.01       6   -0.001   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        303.89   765.83   117.29      12   -3.052   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.54     3.96     0.48      26    0.001   [P99_HIGH][SPIKES]
+  tracker_tick_ms                   0.08     0.26     0.05      20   -0.001   [P99_HIGH][SPIKES]
+  main_blur_ms                      4.68    13.33     2.82      15    0.493   [SPIKES]
+  main_capture_wait_ms              0.53     1.32     0.26      12    0.003   [SPIKES]
+  main_copy_ms                      2.47     6.33     1.23      12    0.024   [SPIKES]
+  main_distribute_ms               12.75    24.88     3.87       8    0.385   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00       7    0.000   [SPIKES]
+  main_prepare_ms                   0.01     0.02     0.00      13    0.000   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      13    0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      15    0.000   [SPIKES]
+
+  → 27 sondes analysées, 20 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=2.20  pending=0.20  lost=2.60
+      ratio_lost = 52.0%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_residual_px                   [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_velocity_pps                  [P99_HIGH][IQR_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][SPIKES]
+      motion_dt_slow_ms                    [P99_HIGH][SPIKES]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+
+      → 8 sondes, 7 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[9]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4918.44 ms   rows_total : 244
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          61.2%   3009.69    100.0%
+  blur               main_blur_ms                20.1%    989.80    100.0%
+  copy               main_copy_ms                12.4%    607.47    100.0%
+  match              main_match_ms                2.1%    102.61     12.3%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     20.52    100.0%
+  stats              main_stats_ms                0.1%      4.91    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.20    100.0%
+  prepare            main_prepare_ms              0.0%      1.55    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.24     83.2%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.18    100.0%
+
+  Non comptabilisé : 3.6%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      4.05    13.17     6.12       3   -1.256   [P99_HIGH][IQR_HIGH][DRIFT]
+  motion_apply_ms                   0.01     0.05     0.02      10   -0.001   [P99_HIGH][IQR_HIGH][SPIKES]
+  tracker_apply_fast_direct_ms      0.44     2.99     0.66      28   -0.010   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.61     2.24     0.58       4        —   [P99_HIGH][SPIKES]
+  main_copy_ms                      2.42     7.61     1.35      15   -0.021   [P99_HIGH][SPIKES]
+  main_fast_poll_ms                 0.01     0.02     0.00      17   -0.000   [P99_HIGH][SPIKES]
+  main_loop_ms                     20.11    39.01     9.72       5   -2.276   [SPIKES][DRIFT]
+  main_predict_ms                   0.08     0.26     0.06      14   -0.002   [P99_HIGH][SPIKES]
+  main_send_ms                      0.01     0.02     0.00      14   -0.000   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        322.78   784.58   263.77       9    7.173   [SPIKES][DRIFT]
+  tracker_tick_ms                   0.07     0.24     0.05      12   -0.003   [P99_HIGH][SPIKES]
+  main_capture_wait_ms              0.58     1.37     0.29      22    0.009   [SPIKES]
+  main_distribute_ms               12.31    20.51     4.42       3   -0.773   [DRIFT]
+  main_prepare_ms                   0.01     0.02     0.00       8   -0.001   [SPIKES]
+  main_slow_poll_ms                 0.01     0.03     0.01      18   -0.000   [SPIKES]
+  main_stats_ms                     0.02     0.06     0.01      14   -0.000   [SPIKES]
+  motion_predict_ms                 0.01     0.06     0.01       2    0.002   [P99_HIGH]
+
+  → 26 sondes analysées, 17 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.60  pending=0.20  lost=2.20
+      ratio_lost = 55.0%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [P99_HIGH][IQR_HIGH][SPIKES]
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+      motion_predict_ms                    [P99_HIGH]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : hot[10]
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 4787.34 ms   rows_total : 241
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          61.7%   2955.86    100.0%
+  blur               main_blur_ms                19.6%    937.81    100.0%
+  copy               main_copy_ms                12.5%    597.17    100.0%
+  match              main_match_ms                2.4%    117.20     13.7%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     18.87    100.0%
+  stats              main_stats_ms                0.1%      4.33    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      2.03    100.0%
+  prepare            main_prepare_ms              0.0%      1.53    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      1.39     83.8%  [CONDITIONNEL]
+  send               main_send_ms                 0.0%      1.15    100.0%
+
+  Non comptabilisé : 3.1%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  motion_apply_ms                   0.01     0.06     0.02      12        —   [P99_HIGH][IQR_HIGH][SPIKES]
+  associator_tick_ms                0.73     2.01     0.75       7        —   [IQR_HIGH][SPIKES]
+  main_fast_poll_ms                 0.01     0.02     0.00      17   -0.000   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        370.75   670.55    85.79       8    1.181   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.39     2.51     0.04      25    0.001   [P99_HIGH][SPIKES]
+  capture_frame_ms                  0.01     0.01     0.00       4        —   [SPIKES]
+  detect_slow_ms                  131.90   263.80    33.20       3   -0.646   [DRIFT]
+  main_blur_ms                      4.50    10.83     6.26       0   -0.295   [IQR_HIGH]
+  main_capture_wait_ms              0.54     1.20     0.27      13    0.015   [SPIKES]
+  main_copy_ms                      2.50     6.14     1.26      21   -0.014   [SPIKES]
+  main_distribute_ms               12.54    25.34     3.81      11   -0.188   [SPIKES]
+  main_loop_ms                     21.11    38.00     9.41       6   -0.428   [SPIKES]
+  main_predict_ms                   0.08     0.23     0.04      24   -0.001   [SPIKES]
+  main_prepare_ms                   0.01     0.02     0.00      16   -0.000   [SPIKES]
+  main_send_ms                      0.01     0.01     0.00      19    0.000   [SPIKES]
+  main_slow_poll_ms                 0.01     0.02     0.00      19   -0.000   [SPIKES]
+  main_stats_ms                     0.02     0.04     0.01      12   -0.000   [SPIKES]
+  motion_predict_ms                 0.01     0.04     0.01       7    0.000   [SPIKES]
+  tracker_tick_ms                   0.07     0.22     0.04      29   -0.001   [SPIKES]
+
+  → 27 sondes analysées, 19 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  [AVERT] truncated_by_max_pairs=true — certaines paires peuvent être absentes.
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=3.25  pending=0.25  lost=2.25
+      ratio_lost = 39.1%
+
+  D.2 Stabilité motion / associator
+      motion_apply_ms                      [P99_HIGH][IQR_HIGH][SPIKES]
+      associator_tick_ms                   [IQR_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+      motion_predict_ms                    [SPIKES]
+
+      → 8 sondes, 4 instable(s).
+
+──────────────────────────────────────────────────────────────
+  BUCKET : tail
+──────────────────────────────────────────────────────────────
+
+
+  [A] BUDGET FRAME
+  ··························································
+  Référence : main_loop_ms
+  total_ms  : 3501.92 ms   rows_total : 152
+
+  Groupe             Sonde                         Pct    sum_ms  Présence  Flags
+  ───────────────────────────────────────────────────────────────────────────────
+  distribute         main_distribute_ms          58.0%   2032.28    100.0%
+  blur               main_blur_ms                24.8%    869.69    100.0%
+  copy               main_copy_ms                11.0%    383.87    100.0%
+  match              main_match_ms                2.5%     87.87     17.1%  [LOW_PRESENCE][CONDITIONNEL]
+  predict            main_predict_ms              0.4%     12.62    100.0%
+  stats              main_stats_ms                0.1%      2.78    100.0%
+  slow_poll          main_slow_poll_ms            0.0%      1.38    100.0%
+  prepare            main_prepare_ms              0.0%      1.01    100.0%
+  send               main_send_ms                 0.0%      0.67    100.0%
+  fast_poll          main_fast_poll_ms            0.0%      0.63     78.3%  [CONDITIONNEL]
+
+  Non comptabilisé : 3.1%
+
+  → Goulots top-3 : main_blur_ms, main_copy_ms, main_distribute_ms
+
+
+  [B] INSTABILITÉ DES SONDES
+  ··························································
+  Sonde                              avg      p99      iqr  spikes    drift  Flags
+  ────────────────────────────────────────────────────────────────────────────────
+  main_blur_ms                      4.73    24.25     4.04      11   -0.719   [P99_HIGH][SPIKES][DRIFT]
+  associator_tick_ms                0.66     2.03     0.42       6        —   [P99_HIGH][SPIKES]
+  main_copy_ms                      2.49     9.75     1.60       8    0.047   [P99_HIGH][SPIKES]
+  main_loop_ms                     21.01    44.79     6.47      12   -0.614   [SPIKES][DRIFT]
+  main_prepare_ms                   0.01     0.02     0.00      12   -0.000   [P99_HIGH][SPIKES]
+  main_slow_poll_ms                 0.01     0.03     0.00      17   -0.000   [P99_HIGH][SPIKES]
+  motion_apply_ms                   0.02     0.08     0.02       3   -0.003   [P99_HIGH][IQR_HIGH]
+  motion_predict_ms                 0.01     0.05     0.01       4   -0.001   [P99_HIGH][SPIKES]
+  motion_staleness_slow_ms        284.84   678.90   145.37       7   48.896   [SPIKES][DRIFT]
+  tracker_apply_fast_direct_ms      0.33     3.26     0.06       7    0.001   [P99_HIGH][SPIKES]
+  detect_slow_ms                  103.09   216.36    40.30       2    1.209   [DRIFT]
+  main_capture_wait_ms              0.60     1.41     0.26      11    0.059   [SPIKES]
+  main_distribute_ms               12.46    21.63     3.56       4   -0.369   [SPIKES]
+  main_fast_poll_ms                 0.01     0.01     0.00      10   -0.000   [SPIKES]
+  main_match_ms                     3.60     8.55     1.34       4        —   [SPIKES]
+  main_predict_ms                   0.08     0.18     0.04      18   -0.003   [SPIKES]
+  main_send_ms                      0.00     0.01     0.00      10   -0.000   [SPIKES]
+  main_stats_ms                     0.02     0.05     0.01       7   -0.001   [SPIKES]
+  tracker_apply_detections_ms       3.53     8.51     1.33       4        —   [SPIKES]
+  tracker_tick_ms                   0.07     0.17     0.04      17   -0.002   [SPIKES]
+
+  → 27 sondes analysées, 20 instable(s).
+
+  [C] DÉCLENCHEURS (corrélations → goulots)
+  ··························································
+  Aucun déclencheur identifié pour les goulots top-3 (|rho| ≥ 0.7).
+
+  [D] ROBUSTESSE TRACKING
+  ··························································
+  D.1 État tracker
+      confirmed=1.75  pending=0.75  lost=2.75
+      ratio_lost = 52.4%
+
+  D.2 Stabilité motion / associator
+      associator_tick_ms                   [P99_HIGH][SPIKES]
+      motion_apply_ms                      [P99_HIGH][IQR_HIGH]
+      motion_predict_ms                    [P99_HIGH][SPIKES]
+      motion_staleness_slow_ms             [SPIKES][DRIFT]
+      main_match_ms                        [SPIKES]
+
+      → 8 sondes, 5 instable(s).
+
+──────────────────────────────────────────────────────────────
+  [E] COMPARAISON
+  ··························································
+
+  ── absolute (réf : 20260613_211935)
+
+    Sondes avec delta |avg| > 10% :
+    Sonde                            delta_avg%
+    ───────────────────────────────────────────
+    main_slow_poll_ms                     -20.0%
+    tracker_apply_fast_direct_ms          -18.6%
+    motion_predict_ms                     -17.6%
+    main_prepare_ms                       -14.3%
+    tracker_tick_ms                       -10.8%
+    main_blur_ms                     +      10.2%
+    Aucun delta budget > 5%.
+
+    Gauges avec delta > 10% :
+    Gauge                                delta%
+    ───────────────────────────────────────────
+    registry_pending                 +      34.4%
+    tracker_pending                  +      34.4%
+
+══════════════════════════════════════════════════════════════
+  [F] RÉSUMÉ CONSOLIDÉ
+  ··························································
+  Buckets analysés       : 13
+  Sondes instables       : 24
+    • associator_tick_ms
+    • capture_frame_ms
+    • detect_slow_ms
+    • main_blur_ms
+    • main_capture_wait_ms
+    • main_copy_ms
+    • main_distribute_ms
+    • main_fast_poll_ms
+    • main_loop_ms
+    • main_match_ms
+    • main_predict_ms
+    • main_prepare_ms
+    • main_send_ms
+    • main_slow_poll_ms
+    • main_stats_ms
+    • motion_apply_ms
+    • motion_dt_slow_ms
+    • motion_predict_ms
+    • motion_residual_px
+    • motion_staleness_slow_ms
+    • motion_velocity_pps
+    • tracker_apply_detections_ms
+    • tracker_apply_fast_direct_ms
+    • tracker_tick_ms
+  Goulots identifiés     : 3  (main_blur_ms, main_distribute_ms, main_copy_ms)
+  Déclencheurs corrélés  : 31 paire(s)
+  Gaps temporels         : 0 gaps_stat / 0 gaps_fixed (tous canaux)
+
+  D.3 Régularité temporelle (target)
+      Canal       median_itv_s  gaps_stat  gaps_fixed
+      ───────────────────────────────────────────────
+      agg               1.0200          0           0
+      frame             0.0210          0         N/A
+      fast              1.0150          0           0
+  Comparaison disponible : oui
+══════════════════════════════════════════════════════════════

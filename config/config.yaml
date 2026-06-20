@@ -20,7 +20,8 @@ capture:
   wgc:
     target: "monitor" # "monitor" | "window"
     monitor_index: 1 # utilisé si target=monitor (1 = primaire)
-    window_name: "Rocket League" # utilisé si target=window (substring match
+    #window_name: "Rocket League" # utilisé si target=window (substring match
+    window_name: "Player" # utilisé si target=window (substring match
 # ═══════════════════════════════════════════════════════════════════
 #  DÉTECTION
 # ═══════════════════════════════════════════════════════════════════

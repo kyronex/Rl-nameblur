@@ -82,8 +82,8 @@ class FastTrackThread:
 
     def give_frame_and_views(self, frame, views: List[FastMaskView], frame_ts: float):
         with self._frame_lock:
-            #self._latest_frame = frame
-            self._latest_frame = frame.copy()
+            self._latest_frame = frame
+            #self._latest_frame = frame.copy()
             self._latest_frame_ts = frame_ts
             self._latest_views = list(views)
         self._new_frame_event.set()
@@ -200,9 +200,7 @@ class FastTrackThread:
                                 self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
                             last_state = self._last_known[v.uid]
 
-                            candidate_rect, of_succeeded = of_track(
-                                self._prev_gray, curr_gray, last_state["rect"]
-                            )
+                            candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
                             bench.count("fast_mask_processed_total")
                             if not of_succeeded:
                                 bench.count("fast_of_failed_total")

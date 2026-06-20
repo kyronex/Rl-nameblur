@@ -32,8 +32,10 @@
    ├── B-04  Investigation dérive dt + nettoyage post-B-03                  ✅
    │    ├── livrable interne : correction compute_predicted_rect (#60)
    │    └── déclencheur humain : footage tagué teleport (pendant B-04)
+   ├── B-08  TTL différencié par source (slow/fast)                         🟡 [PRÉVU]
    ├── B-00b Anomalie config #1 (teleport_thresh)                           🔴
    ├── B-05  Slow detector : faux positifs en burst                         🔴
+   ├── B-09  TTL différencié par état (PENDING/CONFIRMED)                   🟡 [PRÉVU]
    └── B-06  Auto-keepalive masks stationnaires (patch tactique)            🔴
          │
          ▼
@@ -400,6 +402,54 @@
 
 ---
 
+### 🟡 B-08 — TTL différencié par source (slow / fast) `[PRÉVU]`
+
+- **Trigger** : incohérence de calibration `lost_after_s = 0.3 s < fast_max_drift_s = 0.5 s`.
+  La zone [0.3–0.5 s] est inaccessible : le TTL expire un mask avant que son autorisation
+  fast ne s'exerce. Diagnostic confirmé sur source (`registry.py` › `tick_and_expire`,
+  `core/mask.py` › `transition`).
+
+- **Décision produit ancrée** : le fast tracker ne doit pas prolonger un mask
+  sans validation slow récente. Le slow reste l'autorité nominale ; le fast n'a qu'un
+  sursis borné et conditionné à un match réel.
+
+- **Description** : le TTL du registry est fonction de la source du dernier match du mask.
+  La logique vit dans `registry.py › tick_and_expire` :
+  - Dernier match slow → `ttl = lost_after_s` (0.3 s, nominal)
+  - Dernier match fast → `ttl = fast_lost_after_s` (nouveau champ config = `masks.fast_max_drift_s`)
+
+  Pour éviter la double-garde interne de `Mask.transition("missing", ts)` (qui teste
+  `self.lost_after_s` en dur), le TTL retenu est **passé en paramètre** à la transition
+  et supplante le champ instance lors du calcul du delta.
+
+- **Nouveau champ config** :
+
+  ```yaml
+  tracker:
+    lifecycle:
+      fast_lost_after_s: 0.5 # aligns TTL fast avec fast_max_drift_s
+  ```
+
+  **Invariant** : `fast_lost_after_s == masks.fast_max_drift_s` — une seule vérité,
+  documentée dans `A-02 › Invariants`.
+
+- 🔍 **Audit requis** :
+  - Recenser tous les appelants de `Mask.transition("missing")` dans le codebase
+    (focus : `registry.py › tick_and_expire` + tests éventuels) avant de modifier la signature.
+  - Valider que le nouveau paramètre `ttl` ne casse aucun chemin secondaire.
+
+- **Critères de succès** :
+  - Baisse mesurable de `registry_lost_total` sur les scénarios de trous slow courts
+    (≤ 0.5 s) **sans** hausse de `registry_expire_total` (pas de zombie).
+  - `mask_revive_total` stable (le fast ne réanime pas d'UIDs morts).
+  - Lifecycle reshape : distribution des lifetimes reflecte la fenêtre [0.3–0.5 s].
+
+- **Effort estimé** : ~1 h dev + 1 h validation.
+
+- **Bloque** : rien. Réversible (suppression du paramètre → retour à C′ simple).
+
+---
+
 ### 🔴 B-00b — Anomalie config #1 : `teleport_thresh` vs `vx_max × dt_cap`
 
 > **Justification d'extraction depuis B-00** : cette anomalie nécessite des stats motion fiables (post-B-04 / correction #60) et un footage de référence avec vrai teleport tagué (action humaine à déclencher pendant B-04). Ces deux préconditions n'étant pas satisfaites au moment de B-00, elle est traitée en ticket dédié après B-04.
@@ -554,14 +604,15 @@
 
 - **Effort estimé B-05b** : 2-6 h selon hypothèse(s) retenue(s) par B-05a.
 
-- **Bloque** : B-06.
-
-- **Effets de bord à anticiper** :
+- - **Effets de bord à anticiper** :
   - **Vers B-06** : slow detector pollué fausse le keepalive (un mask stationnaire entouré de faux positifs reçoit des "matches" parasites). B-06 doit s'exécuter sur un slow propre.
   - **Vers B-07** : la sémantique de `last_seen_ts` dépend de la qualité du flux slow. Bursts de FP polluent les statistiques alimentant l'audit B-07.
-  - **Vers `lost_after_s`** : si `confirm_after` ≥ 2 adopté, latence CREATE augmente. Invariant à vérifier (cf. A-02 catégorie 8) :
+  - **Vers `lost_after_s`** : si `confirm_after` ≥ 2 adopté,
+    latence CREATE augmente. Invariant à vérifier (cf. A-02 catégorie 8) :
     `confirm_after / capture_fps < 0.3 × lost_after_s`
     À 120 FPS, `confirm_after = 3` ajoute ~25 ms ; `lost_after_s = 0.3 s` reste très large. ✅ OK pour valeurs nominales.
+  - **Vers `fast_lost_after_s` (B-08)** : selon option retenue, ce paramètre disparaît (F, au profit d'events `missing`/`silence`) ou migre vers `BOOST[source]` différencié (G). Inventaire B-07 livrable #1 le capture mécaniquement par confrontation à la codebase.
+  - **Vers `pending_lost_after_s` (B-09)** : selon option retenue, ce paramètre disparaît (F, règle de quorum spécifique PENDING) ou migre vers `TAU_DECAY` court / `θ_lost` relevé pour masks non confirmés (G). Capturé par l'inventaire B-07.
   - **Vers session de référence** : footage tagué doit inclure transitions de scène + apparitions multiples + régime statique long + mouvements rapides. Réutilisable pour B-06.
 
 - **Anti-patterns à éviter** :
@@ -570,7 +621,63 @@
   - Démarrer B-05b avant que B-04 soit validé : un `dt` saturé peut masquer des comportements registry et fausser le diagnostic.
   - Embarquer un fix B-05 dans une refonte sémantique (B-07) : périmètres distincts.
   - Retirer l'instrumentation `slow_*` avant B-07 tranché.
+  - **B-06/B-08/B-09 (patchs TTL) vs B-07 (refonte TTL)** : ne **jamais** confondre. B-06, B-08 et B-09 sont des patchs tactiques sur le mécanisme TTL actuel (paramétrage `lost_after_s` / `fast_lost_after_s` / `pending_lost_after_s`). B-07 est l'audit structurel (plusieurs jours) qui refond ce mécanisme. Sauter de ces patchs directement à F/G/F+G sans audit = anti-pattern. Les trois patchs seront soit migrés (option G), soit retirés (option F) lors de B-07.
   - Confondre tuning detector (B-05) et tuning tracker (`confirm_after`, qui est côté tracker mais agit comme filtre temporel sur le flux detector — légitime dans le périmètre B-05).
+
+---
+
+### 🟡 B-09 — TTL différencié par état (PENDING / CONFIRMED) `[PRÉVU]`
+
+- **Trigger** : un mask `PENDING` jamais confirmé (faux positif slow potentiel,
+  cf. B-05 « slow pollué par FP ») survit aussi longtemps qu'un `CONFIRMED`, ce qui
+  amplifie le bruit sur scène riche en faux positifs burst.
+
+- **Dépendance** : s'appuie sur le mécanisme TTL paramétré de **B-08**
+  (signature modifiée de `Mask.transition`). À implémenter **après** B-08.
+
+- **Description** : le TTL dépend aussi de `mask.state`. Les deux dimensions
+  se composent — TTL final = fonction de (`last_source`, `state`) :
+
+  | `last_source` | `state`   | TTL appliqué                                             |
+  | ------------- | --------- | -------------------------------------------------------- |
+  | slow          | CONFIRMED | `lost_after_s` (0.3 s)                                   |
+  | slow          | PENDING   | `lost_after_s` (0.3 s)                                   |
+  | fast          | CONFIRMED | `fast_lost_after_s` (0.5 s)                              |
+  | fast          | PENDING   | `pending_lost_after_s` (≈ 0.15 s, purge quasi-immédiate) |
+
+  Le TTL `PENDING` court filtre les fausses détections slow sans impacter les
+  vrais positifs lentement confirmables.
+
+- **Nouveau champ config** :
+
+  ```yaml
+  tracker:
+    lifecycle:
+      pending_lost_after_s: 0.15 # TTL PENDING — purge rapide FP
+  ```
+
+  ⚠️ À calibrer en post-B-05, une fois le taux de FP slow connu.
+
+- 🔍 **Audit requis** :
+  - Vérifier l'interaction avec `confirm_after` (core/mask.py › transition) —
+    un mask CONFIRMED ne doit pas repasser en PENDING par effet de bord.
+  - Confirmer que le TTL court ne tue pas les vrais positifs lents à confirmer.
+
+- **Critères de succès** :
+  - Baisse des masks `PENDING` expirés rapidement sans impact sur `mask_promote_total`
+    (vrais positifs toujours promus).
+  - Distribution `PENDING → CONFIRMED` préservée vs baseline B-05a.
+  - Aucune régression sur les masks `CONFIRMED` ( TTL inchangé).
+
+- **Effort estimé** : ~30 min dev + 1 h validation.
+
+- **Effets de bord à anticiper** :
+  - Les scripts de bench qui assertent une distribution fixe de `PENDING` doivent
+    être adaptés (nouvelle distribution post-fix).
+  - Interaction avec B-05b : la calibration de `pending_lost_after_s` dépend du
+    taux de FP residual post-B-05b.
+
+- **Bloque** : rien.
 
 ---
 

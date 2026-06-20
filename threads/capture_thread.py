@@ -76,6 +76,7 @@ class CaptureThread:
                 _diag_t0 = time.perf_counter()
 
             frame = frame.copy()
+            #frame.flags.writeable = False
             ts = time.perf_counter()
             with self._frame_lock:
                 self._latest_frame = frame
