@@ -329,12 +329,35 @@ Métadonnées de synchronisation cold/hot entre sessions.
   "cold_drift_warning": <bool>,
   "cold_truncated":     <bool>,
   "frames":     { "agg": <int>, "frame": <int>, "fast": <int> },
+  "frame_budget": { "groups": <int>, "reference": <int | null>, "rows_total": <int>, "total_ms": <float>, "unaccounted_pct": <float>, "unaccounted_warn": <bool> },
   "probes":      { "<probe_name>": <probe_stats_bucket>, ... },
   "rates":       { "<rate_name>":  <float>, ... },
   "gauges":      { "<gauge_name>": <float>, ... },
   "fast_probes": { "<probe_name>": <probe_stats_fast_bucket>, ... },
   "fast_rates":  { "<rate_name>":  <float>, ... },
-  "fast_gauges": { "<gauge_name>": <float>, ... }
+  "fast_gauges": { "<gauge_name>": <float>, ... },
+  "correlations": {
+    "pairs": [
+      {
+        "probe_a":         <string>,
+        "probe_b":         <string>,
+        "rho":             <float>,
+        "strength":        <string>,         // "moderate" | "strong" | "very_strong"
+        "n_samples":       <int>
+      }
+    ],
+    "summary": {
+      "n_metrics_excluded_blacklist":  <int>,
+      "n_metrics_excluded_zero_var":  <int>,
+      "n_metrics_total":              <int>,
+      "n_pairs_below_threshold":      <int>,
+      "n_pairs_evaluated":            <int>,
+      "n_pairs_low_samples":          <int>,
+      "n_pairs_reported":             <int>,
+      "n_rows":                       <int>,
+      "truncated_by_max_pairs":       <bool>
+    }
+  }
 }
 ```
 
@@ -356,7 +379,29 @@ Métadonnées de synchronisation cold/hot entre sessions.
     "gauges":      { "<gauge_name>": <float>, ... },
     "fast_probes": { "<probe_name>": <probe_stats_fast_bucket>, ... },
     "fast_rates":  { "<rate_name>":  <float>, ... },
-    "fast_gauges": { "<gauge_name>": <float>, ... }
+    "fast_gauges": { "<gauge_name>": <float>, ... },
+    "correlations": {
+      "pairs": [
+        {
+          "probe_a":   <string>,
+          "probe_b":   <string>,
+          "rho":       <float>,
+          "strength":  <string>,
+          "n_samples": <int>
+        }
+      ],
+      "summary": {
+        "n_metrics_excluded_blacklist":  <int>,
+        "n_metrics_excluded_zero_var":  <int>,
+        "n_metrics_total":              <int>,
+        "n_pairs_below_threshold":      <int>,
+        "n_pairs_evaluated":            <int>,
+        "n_pairs_low_samples":          <int>,
+        "n_pairs_reported":             <int>,
+        "n_rows":                       <int>,
+        "truncated_by_max_pairs":       <bool>
+      }
+    }
   },
   ...
 ]
@@ -376,12 +421,35 @@ Métadonnées de synchronisation cold/hot entre sessions.
   "duration_s": <float>,
   "is_partial": true,
   "frames":      { "agg": <int>, "frame": <int>, "fast": <int> },
+  "frame_budget": { "groups": <int>, "reference": <int | null>, "rows_total": <int>, "total_ms": <float>, "unaccounted_pct": <float>, "unaccounted_warn": <bool> },
   "probes":      { "<probe_name>": <probe_stats_bucket>, ... },
   "rates":       { "<rate_name>":  <float>, ... },
   "gauges":      { "<gauge_name>": <float>, ... },
   "fast_probes": { "<probe_name>": <probe_stats_fast_bucket>, ... },
   "fast_rates":  { "<rate_name>":  <float>, ... },
-  "fast_gauges": { "<gauge_name>": <float>, ... }
+  "fast_gauges": { "<gauge_name>": <float>, ... },
+  "correlations": {
+    "pairs": [
+      {
+        "probe_a":         <string>,
+        "probe_b":         <string>,
+        "rho":             <float>,
+        "strength":        <string>,         // "moderate" | "strong" | "very_strong"
+        "n_samples":       <int>
+      }
+    ],
+    "summary": {
+      "n_metrics_excluded_blacklist":  <int>,
+      "n_metrics_excluded_zero_var":  <int>,
+      "n_metrics_total":              <int>,
+      "n_pairs_below_threshold":      <int>,
+      "n_pairs_evaluated":            <int>,
+      "n_pairs_low_samples":          <int>,
+      "n_pairs_reported":             <int>,
+      "n_rows":                       <int>,
+      "truncated_by_max_pairs":       <bool>
+    }
+  }
 }
 ```
 
@@ -436,7 +504,8 @@ Métadonnées de synchronisation cold/hot entre sessions.
   "gauges":      { "<gauge_name>": { "delta_pct": <float | null> }, ... },
   "fast_probes": { "<probe_name>": <delta_probe_global>, ... },
   "fast_rates":  { "<rate_name>":  { "delta_pct": <float | null> }, ... },
-  "fast_gauges": { "<gauge_name>": { "delta_pct": <float | null> }, ... }
+  "fast_gauges": { "<gauge_name>": { "delta_pct": <float | null> }, ... },
+  "frame_budget": { "appeared_groups": <int>, "disappeared_groups": <int>, "groups": <int>, "total_ms_delta_pct": <float | null>, "unaccounted_pct_delta": <float | null> }
 }
 ```
 
@@ -528,6 +597,7 @@ Hérite de `delta_probe_global` et ajoute les deltas anomalies :
 "buckets": {
   "cold": {
     "duration_delta_pct": <float | null>,
+    "frame_budget": { "appeared_groups": <int>, "disappeared_groups": <int>, "groups": <int>, "total_ms_delta_pct": <float | null>, "unaccounted_pct_delta": <float | null> },
     "probes":      { "<probe_name>": <delta_probe_bucket>, ... },
     "rates":       { "<rate_name>":  { "delta_pct": <float | null> }, ... },
     "gauges":      { "<gauge_name>": { "delta_pct": <float | null> }, ... },
@@ -539,6 +609,7 @@ Hérite de `delta_probe_global` et ajoute les deltas anomalies :
     {
       "index":                <int>,
       "duration_delta_pct":   <float | null>,
+      "frame_budget": { "appeared_groups": <int>, "disappeared_groups": <int>, "groups": <int>, "total_ms_delta_pct": <float | null>, "unaccounted_pct_delta": <float | null> },
       "probes":      { "<probe_name>": <delta_probe_bucket>, ... },
       "rates":       { "<rate_name>":  { "delta_pct": <float | null> }, ... },
       "gauges":      { "<gauge_name>": { "delta_pct": <float | null> }, ... },

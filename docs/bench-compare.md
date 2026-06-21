@@ -514,7 +514,7 @@ debug:
         include_types: [probe, gauge]
         probe_aggregation: sum
         blacklist_patterns: ["bench_*"]
-        blacklist: []
+        blacklist_exact: []
         min_abs_rho: 0.5
         max_pairs_per_bucket: 50
         min_samples: 20

@@ -9,7 +9,7 @@ le flux vers OBS via une caméra virtuelle.
 ## Architecture du pipeline
 
 ```text
-SourceSelector (probe DXCam → cv2 fallback)
+SourceSelector (probe wgc → dxcam → cv2 → mss)
     │
     ▼
 CaptureThread (worker daemon)
@@ -50,9 +50,12 @@ CaptureThread (worker daemon)
 
 ### Entrée / Orchestration
 
-| Fichier   | Rôle                                                                               |
-| --------- | ---------------------------------------------------------------------------------- |
-| `main.py` | Orchestration pipeline v13 — TTL, matching, dual detect, Tracker, MaskState, debug |
+| Fichier   | Rôle                                                                                    |
+| --------- | --------------------------------------------------------------------------------------- |
+| `main.py` | Orchestration — 4 threads (CaptureThread / DetectThread / FastTrackThread / SendThread) |
+
+Démarrage ordre capturer→detector→fast_tracker→sender, arrêt ordre inverse ;
+Boucle principale : étape 1 attente frame (`capturer.get_frame()`, mesuré hors budget), puis étapes 2→7 dans `main_loop_ms` (distribution threads → poll slow/fast → predict → prepare → blur → send)
 
 ### Configuration
 
@@ -131,7 +134,6 @@ CaptureThread (worker daemon)
 | `detect.fast.ncc_threshold`    | `0.4`                            | Seuil NCC pour valider un match template → ROI (∈ [0, 1])   |
 | `detect.fast.max_stale_frames` | `15`                             | Frames consécutives sans match NCC avant perte du masque    |
 | `blur.mode`                    | `pixelate`                       | Mode de floutage : `pixelate` / `box` / `gaussian` / `fill` |
-| `blur.pixel_size`              | `15`                             | Taille d'un bloc (px) en mode `pixelate`                    |
 | `debug.overlay.enabled`        | `false`                          | Affiche les rectangles et UIDs sur le flux OBS              |
 | `debug.bench.enabled`          | `true`                           | Active la collecte des métriques de performance             |
 

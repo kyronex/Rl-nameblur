@@ -31,7 +31,7 @@ class CaptureConfig:
     screen_h: int = field(default_factory=lambda: cfg.get("screen.height"))
     capture_fps: int = field(default_factory=lambda: cfg.get("screen.capture_fps"))
 
-    source_priority: List[str] = field(default_factory=lambda: list(cfg.get("capture.source_priority", ["dxcam", "cv2"])))
+    source_priority: List[str] = field(default_factory=lambda: list(cfg.get("capture.source_priority", ["wgc", "dxcam", "cv2", "mss"])))
     probe_timeout_s: float = field(default_factory=lambda: cfg.get("capture.probe_timeout_s"))
     probe_min_frames: int = field(default_factory=lambda: cfg.get("capture.probe_min_frames"))
 

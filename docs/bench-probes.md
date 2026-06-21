@@ -160,28 +160,30 @@ Fonctions pures (sans état global). Sondes émises par `apply_detection()` et `
 Sondes émises par le thread de suivi inter-frames (NCC). Toutes les sondes NCC
 sont portées ici — `ncc_match()` dans `detect.py` n'émet aucune sonde.
 
-| Sonde                         | Type  | Description                                             | Conditionnel                 |
-| ----------------------------- | ----- | ------------------------------------------------------- | ---------------------------- |
-| `fast_track_ms`               | probe | Durée totale du cycle fast track (ms)                   | Non                          |
-| `fast_views_total`            | count | Nombre de views traitées par cycle                      | Non — 0 si aucune view       |
-| `fast_roi_scale`              | probe | Facteur d'échelle ROI adaptatif par view                | Oui — template présent       |
-| `fast_margin_px`              | probe | Valeur margin calculée (pixels) par view                | Oui — template présent       |
-| `fast_ncc_score`              | probe | Score NCC par view                                      | Non (0.0 si template absent) |
-| `fast_ncc_confirmed_total`    | count | Views confirmées par NCC (score ≥ `ncc_threshold`)      | Oui — NCC réussi             |
-| `fast_stale_skipped_total`    | count | Views stale tolérées (`stale ≤ max_stale_frames`)       | Oui — stale toléré           |
-| `fast_mask_lost_total`        | count | Views perdues (`stale > max_stale_frames`)              | Oui — stale dépassé          |
-| `fast_event_wait_ms`          | probe | Durée d'attente de l'événement déclencheur (ms)         | Non                          |
-| `fast_queue_depth`            | gauge | Profondeur de la queue d'entrée au moment du traitement | Non                          |
-| `fast_template_missing_total` | count | Views sans template disponible (NCC non tenté)          | Oui — template absent        |
-| `fast_roi_too_small_total`    | count | ROI trop petite pour NCC (après scale + margin)         | Oui — ROI dégénérée          |
-| `fast_result_drop_total`      | count | Résultats non consommés (queue sortie pleine)           | Oui — queue pleine           |
-| `fast_stale_frame_id`         | gauge | `frame_id` de la dernière view stale traitée            | Oui — stale détecté          |
-| `fast_ncc_roi_px`             | probe | Surface de la ROI utilisée pour NCC (px²)               | Oui — template présent       |
+> **Note — DetectThread non instrumenté** : `DetectThread` (slow) n'émet aucune sonde.
+> Le pipeline slow detect est instrumenté dans `detect.py` (domaine `detect`),
+> qui constitue la source de vérité pour les métriques de détection lente.
 
-> Les sondes `fast_roi_scale`, `fast_margin_px`, `fast_ncc_score`, `fast_ncc_roi_px`
-> sont émises par view — plusieurs émissions possibles par cycle si plusieurs views actives.
-> `fast_ncc_confirmed_total`, `fast_stale_skipped_total`, `fast_mask_lost_total`
-> sont des counts cumulatifs session.
+| Sonde                       | Type  | Description                                          | Conditionnel                |
+| --------------------------- | ----- | ---------------------------------------------------- | --------------------------- |
+| `fast_wakeup_lag_ms`        | probe | Délai entre signal Event et début de traitement (ms) | Non                         |
+| `fast_tick_total`           | count | Nombre de cycles fast traités                        | Non — 0 si aucune view      |
+| `fast_n_masks`              | probe | Nombre de FastMaskView actives à l'entrée du cycle   | Non                         |
+| `fast_tick_ms`              | timer | Durée totale du cycle fast track (ms)                | Non                         |
+| `fast_cvt_ms`               | timer | Durée conversion BGR→RGB (ms)                        | Non                         |
+| `fast_of_total_ms`          | timer | Durée du tracking Optical Flow global (ms)           | Non — 0 si aucune view      |
+| `fast_mask_processed_total` | count | Vues traitées par le pipeline (OF tenté si template) | Non — 0 si aucune view      |
+| `fast_of_failed_total`      | count | Vues où OF n'a pas réussi à proposer une position    | Oui — OF failed             |
+| `fast_ncc_total_ms`         | timer | Durée des appariements NCC (toutes views) (ms)       | Oui — au moins un NCC tenté |
+| `fast_margin_ms`            | timer | Durée de calcul de la marge adaptive (ms)            | Oui — au moins un NCC tenté |
+| `fast_margin_px`            | probe | Marge adaptive en pixels par view                    | Oui — au moins un NCC tenté |
+| `fast_ncc_score`            | probe | Score NCC par view                                   | Oui — au moins un NCC tenté |
+| `fast_ncc_confirmed_total`  | count | Vues confirmées par NCC (score ≥ `ncc_threshold`)    | Oui — NCC réussi            |
+| `fast_mask_lost_total`      | count | Vues perdues (`stale > max_stale_frames`)            | Oui — stale dépassé         |
+| `fast_stale_skipped_total`  | count | Vues stale tolérées (`stale ≤ max_stale_frames`)     | Oui — stale toléré          |
+
+> Les sondes `fast_margin_px`, `fast_ncc_score` sont émises par view — plusieurs émissions possibles par cycle si plusieurs views actives.
+> `fast_ncc_confirmed_total`, `fast_mask_lost_total`, `fast_stale_skipped_total` sont des counts cumulatifs session.
 
 ## Domaine `mask` — `core/mask.py`
 
