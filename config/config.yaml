@@ -181,6 +181,7 @@ debug:
       enabled: true # Maître : false = aucun writer démarré, quelles que soient les clés fille
       queue_maxsize: 10000 # Taille max de la queue bornée partagée entre writers. Au-delà : ligne droppée + bench.count("bench_writer_dropped") incrémenté
       shutdown_timeout_s: 2.0 # Délai max (s) accordé à chaque writer pour vider sa queue à l'arrêt
+      max_chars: 3990000 # null = illimité (pas de rotation). Sinon : rotation par fichier au-delà de N caractères écrits (\n inclus)
       session_id_format:
         "%Y%m%d_%H%M%S"
         # Strftime inséré dans le nom de fichier avant l'extension

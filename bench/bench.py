@@ -409,6 +409,8 @@ class BenchRegistry:
 
         queue_maxsize = int(cfg.get("debug.bench.writer.queue_maxsize", 10000))
         shutdown_timeout_s = float(cfg.get("debug.bench.writer.shutdown_timeout_s", 2.0))
+        max_chars_cfg = cfg.get("debug.bench.writer.max_chars", None)
+        max_chars = int(max_chars_cfg) if max_chars_cfg is not None else None
 
         for mode in ("agg", "frame", "fast"):
             if not cfg.get(f"debug.bench.{mode}.enabled", False):
@@ -424,6 +426,7 @@ class BenchRegistry:
                 interval_s=interval_s,
                 queue_maxsize=queue_maxsize,
                 shutdown_timeout_s=shutdown_timeout_s,
+                max_chars=max_chars
             )
             if writer.start():
                 self._writers[mode] = writer

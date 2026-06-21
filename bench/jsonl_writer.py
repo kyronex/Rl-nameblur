@@ -57,6 +57,7 @@ class BenchJsonlWriter:
         interval_s: float = 1.0,
         queue_maxsize: int = 10000,
         shutdown_timeout_s: float = 2.0,
+        max_chars: int | None = None,
     ):
         if mode not in _VALID_MODES:
             raise ValueError(f"[BenchJsonlWriter] mode invalide : {mode!r} — attendu : {_VALID_MODES}")
@@ -68,9 +69,12 @@ class BenchJsonlWriter:
         self._queue_maxsize = queue_maxsize
         self._shutdown_timeout_s = shutdown_timeout_s
 
-        # Insertion session_id avant l'extension
-        base, ext = os.path.splitext(path)
-        self._path = f"{base}_{session_id}{ext}" if ext else f"{base}_{session_id}"
+        # Insertion session_id avant l'extension, + index de rotation {i} (toujours à partir de 0)
+        self._base, self._ext = os.path.splitext(path)
+        self._max_chars = max_chars if (max_chars is None or max_chars > 0) else None
+        self._file_index = 0
+        self._char_count = 0
+        self._path = self._build_path(self._file_index)
 
         self._fh = None
         self._q: queue.Queue[str | None] = queue.Queue(maxsize=queue_maxsize)
@@ -79,6 +83,33 @@ class BenchJsonlWriter:
         self._tick_thread: threading.Thread | None = None   # producteur périodique (agg / fast)
         self._writer_thread: threading.Thread | None = None # consommateur queue → fichier
         self._stop_event = threading.Event()
+
+    def _build_path(self, index: int) -> str:
+        suffix = f"_{self._session_id}_{index}"
+        return f"{self._base}{suffix}{self._ext}" if self._ext else f"{self._base}{suffix}"
+
+    def _rotate_if_needed(self, written_chars: int) -> None:
+        # null = illimité → no-op (comportement historique inchangé)
+        if self._max_chars is None:
+            return
+        self._char_count += written_chars
+        # Rotation APRÈS écriture complète → garantit >= 1 ligne par fichier,
+        # jamais d'éclatement de ligne, même si une ligne seule dépasse max_chars.
+        if self._char_count >= self._max_chars:
+            if self._fh is not None:
+                try:
+                    self._fh.flush()
+                    self._fh.close()
+                except OSError:
+                    pass
+            self._file_index += 1
+            self._char_count = 0
+            self._path = self._build_path(self._file_index)
+            try:
+                self._fh = open(self._path, "a", buffering=1, encoding="utf-8")
+            except OSError as e:
+                log.error("[bench.writer.%s] échec rotation '%s' : %s", self._mode, self._path, e)
+                self._fh = None
 
     # ─────────────────────────────────────────────────────────────
     #  Cycle de vie
@@ -324,6 +355,7 @@ class BenchJsonlWriter:
             if self._fh is not None:
                 try:
                     self._fh.write(line + "\n")
+                    self._rotate_if_needed(len(line) + 1)
                 except OSError as e:
                     log.error("[bench.writer.%s] erreur écriture : %s", self._mode, e)
 
@@ -342,6 +374,7 @@ class BenchJsonlWriter:
             if self._fh is not None:
                 try:
                     self._fh.write(line + "\n")
+                    self._rotate_if_needed(len(line) + 1)
                 except OSError as e:
                     log.error("[bench.writer.%s] erreur écriture : %s", self._mode, e)
 
