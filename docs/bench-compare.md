@@ -55,18 +55,22 @@ les deux comparaisons valent `null`.
 Rl-nameblur/
 └── logs/
     ├── json/
-    │   ├── bench_agg_20260519_091540.jsonl
-    │   ├── bench_fast_20260519_091540.jsonl
-    │   └── bench_frame_20260519_091540.jsonl
+    │   ├── bench_agg_20260519_091540_0.jsonl
+    │   ├── bench_fast_20260519_091540_0.jsonl
+    │   ├── bench_fast_20260519_091540_1.jsonl
+    │   ├── bench_frame_20260519_091540_0.jsonl
+    │   ├── bench_frame_20260519_091540_1.jsonl
+    │   └── bench_frame_20260519_091540_2.jsonl
     └── results/
         ├── 20260517_205106/
-        │   ├── bench_agg_20260517_205106.jsonl
-        │   ├── bench_fast_20260517_205106.jsonl
-        │   └── bench_frame_20260517_205106.jsonl
+        │   └── bench_agg_20260517_205106_0.jsonl
         └── 20260518_103022/
-            ├── bench_agg_20260518_103022.jsonl
-            ├── bench_fast_20260518_103022.jsonl
-            ├── bench_frame_20260518_103022.jsonl
+            ├── bench_agg_20260518_103022_0.jsonl
+            ├── bench_fast_20260518_103022_0.jsonl
+            ├── bench_fast_20260518_103022_1.jsonl
+            ├── bench_frame_20260518_103022_0.jsonl
+            ├── bench_frame_20260518_103022_1.jsonl
+            ├── bench_frame_20260518_103022_2.jsonl
             └── 20260518_103022.json
 ```
 
@@ -82,9 +86,12 @@ Rl-nameblur/
         ├── 20260518_103022/           # Référence relative (inchangée)
         │   └── ...
         └── 20260519_091540/           # Cible — déplacée depuis logs/json/
-            ├── bench_agg_20260519_091540.jsonl
-            ├── bench_fast_20260519_091540.jsonl
-            ├── bench_frame_20260519_091540.jsonl
+            ├── bench_agg_20260519_091540_0.jsonl
+            ├── bench_fast_20260519_091540_0.jsonl
+            ├── bench_fast_20260519_091540_1.jsonl
+            ├── bench_frame_20260519_091540_0.jsonl
+            ├── bench_frame_20260519_091540_1.jsonl
+            ├── bench_frame_20260519_091540_2.jsonl
             └── 20260519_091540.json   # Rapport produit
 ```
 
@@ -99,6 +106,21 @@ disponibles. La cible et les références peuvent provenir de l'un comme de l'au
 | --------------- | ------------------ | ---------------------------------------------------------- |
 | `logs/json/`    | Sessions neuves    | Déplacées vers `results/` après succès                     |
 | `logs/results/` | Sessions archivées | Lues ; modifiées uniquement dans les cas listés ci-dessous |
+
+### Format des fichiers source
+
+Chaque session est enregistrée sous la forme de **plusieurs fragments JSONL**, un par fichier. Le nommage suit le pattern à **4 tokens** :
+
+```text
+bench_{mode}_{YYYYMMDD}_{HHMMSS}_{index}.jsonl
+```
+
+| Composante   | Description                                                                        |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `{mode}`     | `agg`, `fast` ou `frame`                                                           |
+| `{YYYYMMDD}` | Date de la session (8 chiffres)                                                    |
+| `{HHMMSS}`   | Heure de la session (6 chiffres)                                                   |
+| `{index}`    | Numéro de fragment (entier, démarrant à 0) — permet la distribution multi-fichiers |
 
 ### Cas de modification de `logs/results/`
 

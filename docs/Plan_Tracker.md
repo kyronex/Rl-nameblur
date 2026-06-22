@@ -1,4 +1,4 @@
-# 📘 Plan v4.3 — Tracker / Plan consolidé
+# 📘 Plan v4.3+1 — Tracker / Plan consolidé (Pistes de correction)
 
 > **Document autoportant.** Aucune référence implicite aux plans antérieurs. En cas de doute sur le périmètre exact d'un item, un **audit de code base** est explicitement requis avant démarrage.
 
@@ -32,7 +32,7 @@
    ├── B-04  Investigation dérive dt + nettoyage post-B-03                  ✅
    │    ├── livrable interne : correction compute_predicted_rect (#60)
    │    └── déclencheur humain : footage tagué teleport (pendant B-04)
-   ├── B-08  TTL différencié par source (slow/fast)                         🟡 [PRÉVU]
+   ├── B-08  TTL différencié par source (slow/fast)                         ✅
    ├── B-00b Anomalie config #1 (teleport_thresh)                           🔴
    ├── B-05  Slow detector : faux positifs en burst                         🔴
    ├── B-09  TTL différencié par état (PENDING/CONFIRMED)                   🟡 [PRÉVU]
@@ -70,7 +70,32 @@
    └── Prédiction par historique (régression pondérée)
 ```
 
-**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.
+**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.
+
+---
+
+## 🚧 Ordre de déploiement recommandé — Pistes de correction
+
+> Les 4 pistes ci-dessous sont des **corrections planifiées** ajoutées au plan v4.3 suite au diagnostic
+> croisé sondes × code. Elles sont **orthogonales et déployables dans l'ordre ci-dessous** pour maximiser
+> le gain incrémental tout en limitant les interactions.
+
+| #   | Piste                            | ID       | Dépendance principale           | Effort               | Livrable                     |
+| --- | -------------------------------- | -------- | ------------------------------- | -------------------- | ---------------------------- |
+| 1   | Calibration `teleport_thresh`    | B-00b    | B-04 (stats motion fiabilisées) | 1 ligne config       | `teleport_thresh ≥ 1700`     |
+| 2   | Livraison `stationary_keepalive` | B-06     | B-04 + B-05 (slow propre)       | ~1 h code            | config + code keepalive      |
+| 3   | `confirm_after = 2`              | B-05a/H1 | B-00b (config cohérence)        | 1 ligne config       | `confirm_after: 2`           |
+| 4   | `pending_lost_after_s ≈ 0.15 s`  | B-09     | B-08 (TTL paramétré)            | 1 config + 1 branche | `pending_lost_after_s: 0.15` |
+
+> **Ordre recommandé** : Piste 1 → **re-bench** → Piste 2 (isolée, puis re-bench) → Pistes 3+4 (indépendantes entre elles, re-bench entre chaque).
+> **Principe** : chaque piste est re-benchable indépendamment. Ne pas enchaîner sans validation intermédiaire.
+> **Anti-pattern** : appliquée simultanément sans re-bench → impossible de imputer un changement à une piste.
+
+**Précautions d'interaction** :
+
+- Piste 2 (keepalive) agit sur `last_seen_ts` — peut fausser l'observation de Piste 3 et 4 si appliquée avant.
+- Piste 3 et 4 sont **indépendantes** entre elles (elles affectent des chemins différents du registry).
+- Piste 1 (teleport_thresh) est **indépendante** des trois autres — applicable en premier sans risque.
 
 ---
 
@@ -402,7 +427,7 @@
 
 ---
 
-### 🟡 B-08 — TTL différencié par source (slow / fast) `[PRÉVU]`
+### 🟢 B-08 — TTL différencié par source (slow / fast) `[LIVRÉ]`
 
 - **Trigger** : incohérence de calibration `lost_after_s = 0.3 s < fast_max_drift_s = 0.5 s`.
   La zone [0.3–0.5 s] est inaccessible : le TTL expire un mask avant que son autorisation
@@ -416,7 +441,7 @@
 - **Description** : le TTL du registry est fonction de la source du dernier match du mask.
   La logique vit dans `registry.py › tick_and_expire` :
   - Dernier match slow → `ttl = lost_after_s` (0.3 s, nominal)
-  - Dernier match fast → `ttl = fast_lost_after_s` (nouveau champ config = `masks.fast_max_drift_s`)
+  - Dernier match fast → `ttl = fast_lost_after_s` (nouveau champ config = `masks.fast_lost_after_s`)
 
   Pour éviter la double-garde interne de `Mask.transition("missing", ts)` (qui teste
   `self.lost_after_s` en dur), le TTL retenu est **passé en paramètre** à la transition
@@ -425,9 +450,8 @@
 - **Nouveau champ config** :
 
   ```yaml
-  tracker:
-    lifecycle:
-      fast_lost_after_s: 0.5 # aligns TTL fast avec fast_max_drift_s
+  masks:
+    fast_lost_after_s: 0.5 # B-08 — TTL LOST pour masks.last_source=="fast". A-02: == fast_max_drift_s
   ```
 
   **Invariant** : `fast_lost_after_s == masks.fast_max_drift_s` — une seule vérité,
@@ -469,6 +493,21 @@
   3. Réajuster la valeur incohérente. Cible : `teleport_thresh > vx_max × dt_cap × 1.2` (marge de sécurité 20 %).
   4. Valider sur footage tagué que les vrais teleports restent détectés après réajustement.
   5. Documenter la décision produit (seuil retenu + justification percentiles).
+
+  > **📌 Piste 1 — Calibration `teleport_thresh` (correction rapide, livrable immédiat)**
+  >
+  > Diagnostic terrain : `teleport_thresh=300 px < vx_max × dt_cap = 4000 × 0.35 = 1400 px` (ratio 0.21×).
+  > Les déplacements nominaux à vitesse élevée déclenchent de faux resets de vélocité, alimentant les bursts
+  > `tracker_lost` observés en session de bench. Correction à portée de main :
+  >
+  > ```yaml
+  > motion:
+  >   teleport_thresh: 1700 # Règle : > vx_max × dt_cap × 1.2 = 4000 × 0.35 × 1.2 = 1680 px
+  > ```
+  >
+  > **Effort** : 1 ligne dans `config.yaml`.
+  > **Validation** : re-bench des sondes `motion_residual_px` / `motion_velocity_pps` — réduction des pics
+  > anormaux en buckets hot, réduction des bursts `tracker_lost` en début de session.
 
 - **Effort estimé** : 1 h.
 
@@ -539,10 +578,22 @@
   - **Localisation des bursts** : timestamps + frames source des rafales > 3 CREATE/s.
 
 - **Hypothèses à instruire** _(ordre par coût croissant, recommandé)_ :
-  1. **Tuning `tracker.lifecycle.confirm_after`**
+  1. **Tuning `tracker.lifecycle.confirm_after` — Piste 3**
      - Actuellement = 1 (CREATE immédiat, aucune consolidation temporelle).
      - Test : passer à 2 puis 3, mesurer impact sur taux masks éphémères.
      - Coût : 1 ligne config, effet immédiat.
+       > **Valeur retenue** : `confirm_after = 2` (calibrée pour rester très largement sous `lost_after_s = 0.3 s`).
+       > Vérification : à 120 FPS, `2 / 120 ≈ 0.017 s` — soit 5.7 % de la fenêtre TTL. Espace de sécurité
+       >
+       > > 10× → aucun risque de transition LOST pendant la phase de consolidation.
+       >
+       > ```yaml
+       > tracker:
+       >   lifecycle:
+       >     confirm_after: 2 # Piste 3 — filtre FP par consolidation temporelle (2 frames)
+       > ```
+       >
+       > **Effort** : 1 ligne config. **Validation** : ratio `slow_ephemeral_ratio_10s` baseline → post-fix.
 
   2. **Resserrement validation refine (texte)**
      - Clés : `detect.refine.min_text_fill` (0.08), `min_transition` (0.10), `min_proj_score` (0.10).
@@ -653,10 +704,16 @@
   ```yaml
   tracker:
     lifecycle:
-      pending_lost_after_s: 0.15 # TTL PENDING — purge rapide FP
+      pending_lost_after_s: 0.15 # Piste 4 — TTL PENDING ≈ 0.15 s (purge rapide FP non promus)
   ```
 
-  ⚠️ À calibrer en post-B-05, une fois le taux de FP slow connu.
+  > **Calibration** : `pending_lost_after_s ≈ 0.15 s` purge en quasi-immédiat tout PENDING qui ne
+  > se confirme pas. Justification : prend en sandwich le `confirm_after = 2` (≈ 17 ms à 120 FPS) avec
+  > une marge > 8× — les vrais positifs lentement confirmables (> 2 frames) ne sont pas affectés.
+  > Le TTL court n'impacte que les FP — les masques légitime avant confirmation voyagent déjà dans
+  > le registre avant que le TTL ne s'exerce.
+  >
+  > ⚠️ À recalibrer en post-B-05 si le taux de FP residual reste élevé.
 
 - 🔍 **Audit requis** :
   - Vérifier l'interaction avec `confirm_after` (core/mask.py › transition) —
@@ -703,6 +760,29 @@
   - À haut FPS (≥ 150) sur scène statique : oscillation `C/L` non nulle alors que la scène est figée.
   - Logs `[FAST-APPLY] drift dégradé` corrélés aux re-CREATE.
   - Compteur `fast_received` constant mais `fast_applied` ≈ 0 sur fenêtres immobiles.
+
+- **📌 Piste 2 — Livraison `stationary_keepalive` (implémentation + config absente du yaml)**
+
+  > B-06 est spécifié dans ce plan mais son bloc config est **absent de `config.yaml`**. Ce ticket
+  > inclut donc l'implémentation code ET le parameter set à ajouter au yaml. Livrable double
+  > (code + config) — effort total ~1 h.
+
+  ```yaml
+  # ── Piste 2 : B-06 — keepalive masks stationnaires ──
+  tracker:
+    lifecycle:
+      stationary_keepalive:
+        enabled: true # activation keepalive
+        velocity_eps_pps: 0.5 # px/s — sous ce seuil = stationnaire
+        max_without_slow_s: 2.0 # garde-fou : ≥ 2× période slow attendue
+  ```
+
+  **Effort** : 30 min code + 30 min validation + instrumentation métriques.
+  **Effets de bord à anticiper** :
+  - Ré-élargit la durée de vie effective sur scènes statiques. Ne **pas** relever `lost_after_s`
+    après livraison B-06 sans concertation — invalide les métriques `keepalive_*` alimentant B-07.
+  - Sur scène riche en FP (pré-B-05), le garde-fou `max_without_slow_s` peut être franchi
+    par des "matches" parasites → B-05 doit précéder la validation B-06.
 
 - **Approche** : patch tactique côté `Tracker.tick()`. Avant `tick_and_expire`, marquer comme matché tout mask CONFIRMED dont la **vitesse estimée est sous seuil**, sous condition d'un **garde-fou slow** :
 
@@ -801,6 +881,9 @@
   motion.teleport_thresh > max(motion.vx_max, motion.vy_max) × motion.dt_cap
   motion.dt_cap < motion.dt_slow_max
   ```
+
+  _Note_ : l'invariant `teleport_thresh` est **calibré par B-00b (Piste 1)**. Sa valeur cible est
+  `> vx_max × dt_cap × 1.2` (marge 20 %). L'invariant vérifie l'inégalité, pas la valeur absolue.
 
   #### Catégorie 3 — Étanchéité unités (frames vs secondes)
 
