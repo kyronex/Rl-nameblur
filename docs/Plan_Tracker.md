@@ -1,4 +1,4 @@
-# 📘 Plan v4.3+1 — Tracker / Plan consolidé (Pistes de correction)
+# 📘 Plan v4.3+1 — Tracker / Plan consolidé
 
 > **Document autoportant.** Aucune référence implicite aux plans antérieurs. En cas de doute sur le périmètre exact d'un item, un **audit de code base** est explicitement requis avant démarrage.
 
@@ -70,32 +70,7 @@
    └── Prédiction par historique (régression pondérée)
 ```
 
-**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.
-
----
-
-## 🚧 Ordre de déploiement recommandé — Pistes de correction
-
-> Les 4 pistes ci-dessous sont des **corrections planifiées** ajoutées au plan v4.3 suite au diagnostic
-> croisé sondes × code. Elles sont **orthogonales et déployables dans l'ordre ci-dessous** pour maximiser
-> le gain incrémental tout en limitant les interactions.
-
-| #   | Piste                            | ID       | Dépendance principale           | Effort               | Livrable                     |
-| --- | -------------------------------- | -------- | ------------------------------- | -------------------- | ---------------------------- |
-| 1   | Calibration `teleport_thresh`    | B-00b    | B-04 (stats motion fiabilisées) | 1 ligne config       | `teleport_thresh ≥ 1700`     |
-| 2   | Livraison `stationary_keepalive` | B-06     | B-04 + B-05 (slow propre)       | ~1 h code            | config + code keepalive      |
-| 3   | `confirm_after = 2`              | B-05a/H1 | B-00b (config cohérence)        | 1 ligne config       | `confirm_after: 2`           |
-| 4   | `pending_lost_after_s ≈ 0.15 s`  | B-09     | B-08 (TTL paramétré)            | 1 config + 1 branche | `pending_lost_after_s: 0.15` |
-
-> **Ordre recommandé** : Piste 1 → **re-bench** → Piste 2 (isolée, puis re-bench) → Pistes 3+4 (indépendantes entre elles, re-bench entre chaque).
-> **Principe** : chaque piste est re-benchable indépendamment. Ne pas enchaîner sans validation intermédiaire.
-> **Anti-pattern** : appliquée simultanément sans re-bench → impossible de imputer un changement à une piste.
-
-**Précautions d'interaction** :
-
-- Piste 2 (keepalive) agit sur `last_seen_ts` — peut fausser l'observation de Piste 3 et 4 si appliquée avant.
-- Piste 3 et 4 sont **indépendantes** entre elles (elles affectent des chemins différents du registry).
-- Piste 1 (teleport_thresh) est **indépendante** des trois autres — applicable en premier sans risque.
+**Règle d'or séquentielle** : chaque bloc se termine avant que le suivant démarre. Toute feature peut être supprimée du V4 et reportée dans un plan ultérieur sans casser la chaîne.
 
 ---
 
@@ -460,13 +435,6 @@
 
 ### 🔴 B-00b — Anomalie config #1 : `teleport_thresh` vs `vx_max × dt_cap`
 
-> **Justification d'extraction depuis B-00** : cette anomalie nécessite des stats motion fiables (post-B-04 / correction #60) et un footage de référence avec vrai teleport tagué (action humaine à déclencher pendant B-04). Ces deux préconditions n'étant pas satisfaites au moment de B-00, elle est traitée en ticket dédié après B-04.
-
-- **Préconditions dures** :
-  - B-04 livré et validé (`compute_predicted_rect` #60 corrigé, `motion.dt` fiabilisé).
-  - Percentiles `dist` inter-frames extraits sur session de référence post-B-04.
-  - Footage de référence avec au moins un vrai teleport tagué disponible (déclenché pendant B-04 — action humaine).
-
 - **Anomalie** :
   - `motion.teleport_thresh = 300 < vx_max × dt_cap = 4000 × 0.10 = 400`
   - Un déplacement nominal à vitesse max sur `dt_cap` déclenche un faux teleport → reset vélocité → CREATE parasite cohérent avec les bursts observés en B-05.
@@ -478,11 +446,10 @@
   4. Valider sur footage tagué que les vrais teleports restent détectés après réajustement.
   5. Documenter la décision produit (seuil retenu + justification percentiles).
 
-  > **📌 Piste 1 — Calibration `teleport_thresh` (correction rapide, livrable immédiat)**
+  > **📌 Calibration `teleport_thresh` (correction rapide, livrable immédiat)**
   >
   > Diagnostic terrain : `teleport_thresh=300 px < vx_max × dt_cap = 4000 × 0.35 = 1400 px` (ratio 0.21×).
-  > Les déplacements nominaux à vitesse élevée déclenchent de faux resets de vélocité, alimentant les bursts
-  > `tracker_lost` observés en session de bench. Correction à portée de main :
+  > Les déplacements nominaux à vitesse élevée déclenchent de faux resets de vélocité, alimentant les bursts `tracker_lost` observés en session de bench. Correction à portée de main :
   >
   > ```yaml
   > motion:
@@ -490,8 +457,7 @@
   > ```
   >
   > **Effort** : 1 ligne dans `config.yaml`.
-  > **Validation** : re-bench des sondes `motion_residual_px` / `motion_velocity_pps` — réduction des pics
-  > anormaux en buckets hot, réduction des bursts `tracker_lost` en début de session.
+  > **Validation** : re-bench des sondes `motion_residual_px` / `motion_velocity_pps` — réduction des pics anormaux en buckets hot, réduction des bursts `tracker_lost` en début de session.
 
 - **Effort estimé** : 1 h.
 
@@ -499,32 +465,13 @@
   - `teleport_thresh > vx_max × dt_cap` (incohérence éliminée).
   - Marge de sécurité documentée (`× 1.2` ou valeur justifiée).
   - Vrais teleports détectés sur footage tagué.
-  - Percentiles `dist` p95/p99 consignés dans `docs/session-de-reference.md`.
-  - **Session de bench `20260613_213824` — Résultats clés** :
-    - 13 buckets analysés, 24/27 sondes instables
-    - Goulots : `main_distribute_ms` (60%), `main_blur_ms` (21%), `main_copy_ms` (12%)
-    - `ratio_lost` moyen : ~60% (hors `hot[10]`)
-    - Drift `detect_slow_ms` confirmé : +6.2 ms/s en `hot[2]`
-    - `motion_staleness_slow_ms` en DRIFT sur 100% des buckets hot
-    - Comparaison vs `20260613_211935` : `pending` +34.4%, `blur` +10.2%
-    - Conclusion : système en phase P0, tous les bugs bloquants P0 confirmés par données terrain
   - Aucune régression sur session de référence.
-
-- **Bloque** : B-05 (anomalie #1 peut générer des bursts CREATE parasites cohérents avec le symptôme B-05 — diagnostic faussé si non résolu avant).
 
 - **Effets de bord à anticiper** :
   - Si `teleport_thresh` relevé significativement : vérifier que les cas-limites de teleport (ex. transition de scène brutale) restent couverts.
   - Si `vx_max` abaissé : impact sur les seuils de drift du fast tracker — auditer les consommateurs de `vx_max` dans le codebase.
 
 - **Anti-patterns à éviter** :
-  - Réajuster sans extraction préalable des percentiles → décision aveugle non reproductible.
-  - Démarrer avant B-04 livré → stats motion structurellement fausses (correction #60 non appliquée).
-  - Valider uniquement sur session sans teleport → absence de preuve que les vrais teleports restent détectés.
-  - Embarquer dans B-00 → préconditions non satisfaites à ce stade.
-  - Embarquer dans B-05 → B-05 partirait sur une config potentiellement incohérente.
-    **Preuves terrain (session 20260613_213824)** :
-- `motion_residual_px` : P99_HIGH-IQR_HIGH-SPIKES en hot[7] et hot[8]
-- `motion_velocity_pps` : P99_HIGH-IQR_HIGH en hot[1], P99_HIGH-IQR_HIGH-SPIKES en hot[7]/hot[8]
 - Pics de vélocité anormaux corrélés aux spikes d`associator_tick_ms`
 - Signal cohérent avec teleport_thresh sous-dimensionné → faux teleports → resets vélocité parasites
 
@@ -533,27 +480,10 @@
 ### 🔴 B-05 — Slow detector : faux positifs en burst `[RÉÉCRIT, découpé en B-05a + B-05b]`
 
 > **Note d'honnêteté préservée** : la cause racine exacte n'est pas connue. Le découpage audit/implémentation reflète cette incertitude. B-05a peut révéler que le problème est ailleurs (effet de bord B-04 résiduel, anomalie B-00 #1, etc.), auquel cas B-05b devient sans objet.
-> **Preuves terrain (session 20260613_213824)** :
-
-- `detect_slow_ms` : drift +6.2 ms/s confirmé en hot[2] (avg 121ms → p99 284ms)
-- `motion_staleness_slow_ms` : [DRIFT] systématique sur 100% des buckets hot
-- drift positif de staleness = détections de moins en moins fraîches au fil du temps
-- Conséquence directe sur ratio_lost : 46–78% sur 10/11 buckets hot
-- Seul hot[10] échappe (ratio_lost 39%) → moment de jeu stable, slow detector non sollicité de façon intensive
 
 ---
 
 ### 🔴 B-05a — Audit slow detector
-
-- **Préconditions dures** :
-  - B-00 livré (anomalie #1 sur `teleport_thresh` traitée — peut générer des symptômes confondus avec B-05).
-  - B-04 livré et validé (`motion.dt` fiabilisé, FPS stable, logs nettoyés).
-  - Session de référence à jour intégrant les corrections B-00 et B-04.
-  - Sondes registry disponibles : taux CREATE/s, ratio masks éphémères, taux EXPIRE.
-
-- **Symptôme** :
-  - Rafales de CREATE observées en logs post-B-03 (ex. uid=20→37 sur ~3 s) → pollution registry, EXPIRE en cascade peu après.
-  - Hors-scope motion/tracker : pathologie identifiée côté **slow detector** (pipeline CV : HSV + morpho + refine + geometry).
 
 - **Mesure baseline obligatoire** _(pré-requis à toute action)_ :
   - **Taux CREATE/s** sur fenêtre glissante 1 s (moyenne, p95, max).
@@ -562,7 +492,7 @@
   - **Localisation des bursts** : timestamps + frames source des rafales > 3 CREATE/s.
 
 - **Hypothèses à instruire** _(ordre par coût croissant, recommandé)_ :
-  1. **Tuning `tracker.lifecycle.confirm_after` — Piste 3**
+  1. **Tuning `tracker.lifecycle.confirm_after`**
      - Actuellement = 1 (CREATE immédiat, aucune consolidation temporelle).
      - Test : passer à 2 puis 3, mesurer impact sur taux masks éphémères.
      - Coût : 1 ligne config, effet immédiat.
@@ -574,7 +504,7 @@
        > ```yaml
        > tracker:
        >   lifecycle:
-       >     confirm_after: 2 # Piste 3 — filtre FP par consolidation temporelle (2 frames)
+       >     confirm_after: 2 # filtre FP par consolidation temporelle (2 frames)
        > ```
        >
        > **Effort** : 1 ligne config. **Validation** : ratio `slow_ephemeral_ratio_10s` baseline → post-fix.
@@ -688,15 +618,11 @@
   ```yaml
   tracker:
     lifecycle:
-      pending_lost_after_s: 0.15 # Piste 4 — TTL PENDING ≈ 0.15 s (purge rapide FP non promus)
+      pending_lost_after_s: 0.15 # TTL PENDING ≈ 0.15 s (purge rapide FP non promus)
   ```
 
-  > **Calibration** : `pending_lost_after_s ≈ 0.15 s` purge en quasi-immédiat tout PENDING qui ne
-  > se confirme pas. Justification : prend en sandwich le `confirm_after = 2` (≈ 17 ms à 120 FPS) avec
-  > une marge > 8× — les vrais positifs lentement confirmables (> 2 frames) ne sont pas affectés.
-  > Le TTL court n'impacte que les FP — les masques légitime avant confirmation voyagent déjà dans
-  > le registre avant que le TTL ne s'exerce.
-  >
+  > **Calibration** : `pending_lost_after_s ≈ 0.15 s` purge en quasi-immédiat tout PENDING qui ne se confirme pas. Justification : prend en sandwich le `confirm_after = 2` (≈ 17 ms à 120 FPS) avec une marge > 8× — les vrais positifs lentement confirmables (> 2 frames) ne sont pas affectés.
+  > Le TTL court n'impacte que les FP — les masques légitime avant confirmation voyagent déjà dans le registre avant que le TTL ne s'exerce.
   > ⚠️ À recalibrer en post-B-05 si le taux de FP residual reste élevé.
 
 - 🔍 **Audit requis** :
@@ -713,23 +639,14 @@
 - **Effort estimé** : ~30 min dev + 1 h validation.
 
 - **Effets de bord à anticiper** :
-  - Les scripts de bench qui assertent une distribution fixe de `PENDING` doivent
-    être adaptés (nouvelle distribution post-fix).
-  - Interaction avec B-05b : la calibration de `pending_lost_after_s` dépend du
-    taux de FP residual post-B-05b.
+  - Les scripts de bench qui assertent une distribution fixe de `PENDING` doivent être adaptés (nouvelle distribution post-fix).
+  - Interaction avec B-05b : la calibration de `pending_lost_after_s` dépend du taux de FP residual post-B-05b.
 
 - **Bloque** : rien.
 
 ---
 
 ### 🔴 B-06 — Auto-keepalive masks stationnaires
-
-- **Préconditions dures** :
-  1. **B-04 livré** : sinon `estimated_velocity_pps` est biaisé par dérive `dt`.
-  2. **B-05 livré** : sinon `last_slow_ts` est pollué par faux positifs burst, garde-fou inopérant.
-  3. **Sondes B-03 actives** : `since_last_seen`, lifetime médian/p95.
-
-  ⚠️ **Démarrage interdit avant validation des trois préconditions.** Si B-04 ou B-05 traînent, B-06 reste en attente — pas de contournement.
 
 - **Périmètre strict** : transition CONFIRMED → LOST côté `Tracker.tick()` uniquement.
   Ne touche **ni** au fast tracker, **ni** au slow associator, **ni** à la sémantique de `last_seen_ts` côté événements externes (ce dernier sujet relève de **B-07**).
@@ -745,14 +662,12 @@
   - Logs `[FAST-APPLY] drift dégradé` corrélés aux re-CREATE.
   - Compteur `fast_received` constant mais `fast_applied` ≈ 0 sur fenêtres immobiles.
 
-- **📌 Piste 2 — Livraison `stationary_keepalive` (implémentation + config absente du yaml)**
+- **📌 Livraison `stationary_keepalive` (implémentation + config absente du yaml)**
 
-  > B-06 est spécifié dans ce plan mais son bloc config est **absent de `config.yaml`**. Ce ticket
-  > inclut donc l'implémentation code ET le parameter set à ajouter au yaml. Livrable double
-  > (code + config) — effort total ~1 h.
+  > B-06 est spécifié dans ce plan mais son bloc config est **absent de `config.yaml`**. Ce ticket inclut donc l'implémentation code ET le parameter set à ajouter au yaml. Livrable double (code + config) — effort total ~1 h.
 
   ```yaml
-  # ── Piste 2 : B-06 — keepalive masks stationnaires ──
+  # ── B-06 — keepalive masks stationnaires ──
   tracker:
     lifecycle:
       stationary_keepalive:
@@ -818,11 +733,6 @@
 - **Effets de bord à anticiper** :
   - **Vers B-03** : B-06 ré-élargit la durée de vie effective sur scènes statiques. Ne **pas** remonter `lost_after_s` après livraison de B-06 sans concertation : cela invaliderait l'observation de la couverture du keepalive et fausserait les métriques alimentant B-07.
   - **Vers B-07** : la sémantique de `last_seen_ts` devient "preuve **ou** présomption d'existence". Cette ambiguïté est **dette acceptée** à court terme et est l'objet exact de l'audit B-07.
-    **Preuves terrain (session 20260613_213824)** :
-- ratio_lost : 46–78% sur l'ensemble de la session → masques évincés avant keepalive
-- `tracker_pending` +34.4% inter-sessions → masques bloqués en pending, TTL expiré avant confirmation
-- Corrélation inverse blur ↔ lost (rho -0.730 en hot[6]) : chaque masque lost = flou perdu
-- hot[10] (ratio_lost 39%, confirmed=3.25) : seul bucket où le tracker est sain → preuve que le pipeline fonctionne quand les masques tiennent
 - **Bloque** : Phase 0 (par discipline d'ordonnancement P0)
 - **Débloque** : démarrage observation longue durée → B-07.
 
@@ -866,8 +776,7 @@
   motion.dt_cap < motion.dt_slow_max
   ```
 
-  _Note_ : l'invariant `teleport_thresh` est **calibré par B-00b (Piste 1)**. Sa valeur cible est
-  `> vx_max × dt_cap × 1.2` (marge 20 %). L'invariant vérifie l'inégalité, pas la valeur absolue.
+  _Note_ : l'invariant `teleport_thresh` est **calibré par B-00b**. Sa valeur cible est `> vx_max × dt_cap × 1.2` (marge 20 %). L'invariant vérifie l'inégalité, pas la valeur absolue.
 
   #### Catégorie 3 — Étanchéité unités (frames vs secondes)
 
@@ -962,7 +871,7 @@
 
 ## 🟡 Lot 2 — Bande passante
 
-**Dette technique documentée — `main_distribute_ms` (signal session 20260613_213824)**
+**Dette technique documentée — `main_distribute_ms`**
 
 - Coût constant **58–62% du budget frame** sur tous les buckets (2847–2955 ms/bucket)
 - Non corrélé aux événements → coût architectural pur, jamais identifié comme déclencheur
@@ -1393,37 +1302,6 @@ Le backlog gelé `Prédiction par historique (régression pondérée)` est **l'a
 - Tant que la revue F-10 n'a pas conclu → backlog gelé reste gelé.
 
 **Aucun travail R&D ne peut être démarré tant que ces 3 verrous ne sont pas levés**, conformément au statut « gelé — ne pas démarrer ».
-
----
-
-## 📁 Hygiène documentaire
-
-- `docs/closed-tickets.md` : tickets clos au fil de l'eau, avec date et lien commit.
-- `docs/backlog/prediction-historique.md` : R&D gelée, marquée explicitement « GELÉ — voir Plan v4.1 §Backlog ».
-- `docs/session-de-reference.md` : protocole de bench canonique réutilisable pour B-02, F-08, Lot 3, F-10.
-  - 🔍 **Audit requis** : la session de référence doit explicitement consommer :
-    - **Sondes officielles README** : `capture_wait`, `slow_poll`, `match`, `fast_poll`, `predict`, `blur`, `frames`, `masks_total`, `fast_wakeup_lag`, `fast_tick`, `fast_of_total`, `fast_ncc_total`, `fast_ncc_confirmed`, `fast_stale_used`, `fast_mask_lost`, `send`.
-    - **Sondes motion à confirmer** : `motion.dt`, `capped_pct` (existence à valider lors de l'audit B-03).
-  - Définir le footage tagué et les scénarios standards avant le premier usage en B-03.
-
-- `docs/audits/B-07-last-seen-ts.md` : à créer **au démarrage de l'audit B-07**, contiendra l'inventaire, les métriques consommées, la matrice de décision et la décision finale.
-
----
-
-## ✅ Critères globaux V4.3
-
-- **Conformité README** : ✅ types (`MaskState`), composants (`MaskRegistry`, `Associator`, `Tracker`, `FastTrackThread`), API publique (`tick`, `get_confirmed_masks`), horloge (`perf_counter`), hiérarchie YAML, hot-reload config.
-- **Étanchéité unités** : ✅ frames côté FastTrack (`detect.fast.max_stale_frames`), secondes côté Tracker (`tracker.lifecycle.*`), invariant verrouillé par A-02.
-- **Sondes bench** : ✅ critères de succès Lot 3 et tests de régression adossés aux sondes officielles README.
-- **Séquentialité simple** : ✅ chaque bloc indépendant du suivant.
-- **Reportabilité** : ✅ toute feature peut être retirée vers un plan ultérieur sans casser la chaîne.
-- **Préservation R&D antérieure** : ✅ via F-10 + backlog gelé documenté.
-- **Triggers mesurables** : ✅ chaque item conditionnel a un signal explicite.
-- **Audits explicites** : ✅ chaque zone d'incertitude marquée 🔍, prérequis bloquant à la livraison.
-- **Couverture bugs** : ✅ B-01..B-06 explicites en P0, séquentiels stricts.
-- **Différenciation tactique / structurel** : ✅ B-06 (patch) et B-07 (refonte) explicitement séparés, préconditions chaînées.
-- **Continuité métriques** : ✅ instrumentation B-06 dimensionnée pour alimenter B-07.
-- **Pas de suffixes `bis`** : ✅ numérotation strictement séquentielle.
 
 ---
 
