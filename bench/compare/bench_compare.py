@@ -66,7 +66,8 @@ def main() -> None:
             ),
         },
     }
-    target_in_json = sessions[target_id]["agg"].is_relative_to(DIR_JSON)
+
+    target_in_json = sessions[target_id]["agg"][0].is_relative_to(DIR_JSON)
     report_dir = DIR_RESULTS / target_id
     report_path = report_dir / f"{target_id}.json"
     if target_in_json:
@@ -83,7 +84,7 @@ def main() -> None:
     for sid, files in sessions.items():
         if sid == target_id:
             continue
-        if not files["agg"].is_relative_to(DIR_JSON):
+        if not files["agg"][0].is_relative_to(DIR_JSON):
             continue
         try:
             move_session_to_results(sid, files)
