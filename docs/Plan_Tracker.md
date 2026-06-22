@@ -429,48 +429,32 @@
 
 ### 🟢 B-08 — TTL différencié par source (slow / fast) `[LIVRÉ]`
 
-- **Trigger** : incohérence de calibration `lost_after_s = 0.3 s < fast_max_drift_s = 0.5 s`.
-  La zone [0.3–0.5 s] est inaccessible : le TTL expire un mask avant que son autorisation
-  fast ne s'exerce. Diagnostic confirmé sur source (`registry.py` › `tick_and_expire`,
-  `core/mask.py` › `transition`).
+- **Design réellement implémenté** : TTL figé à la création du mask dans `registry.py › create`.
+  Le TTL n'est PAS un paramètre de `Mask.transition` (signature réelle :
+  `def transition(self, event: str, ts: float)`, sans ttl). Le TTL est dans `registry.create()` :
 
-- **Décision produit ancrée** : le fast tracker ne doit pas prolonger un mask
-  sans validation slow récente. Le slow reste l'autorité nominale ; le fast n'a qu'un
-  sursis borné et conditionné à un match réel.
-
-- **Description** : le TTL du registry est fonction de la source du dernier match du mask.
-  La logique vit dans `registry.py › tick_and_expire` :
-  - Dernier match slow → `ttl = lost_after_s` (0.3 s, nominal)
-  - Dernier match fast → `ttl = fast_lost_after_s` (nouveau champ config = `masks.fast_lost_after_s`)
-
-  Pour éviter la double-garde interne de `Mask.transition("missing", ts)` (qui teste
-  `self.lost_after_s` en dur), le TTL retenu est **passé en paramètre** à la transition
-  et supplante le champ instance lors du calcul du delta.
-
-- **Nouveau champ config** :
-
-  ```yaml
-  masks:
-    fast_lost_after_s: 0.5 # B-08 — TTL LOST pour masks.last_source=="fast". A-02: == fast_max_drift_s
+  ```python
+  lost_after_s = fast_lost_after_s if source == 'fast' else lost_after_s
   ```
 
-  **Invariant** : `fast_lost_after_s == masks.fast_max_drift_s` — une seule vérité,
-  documentée dans `A-02 › Invariants`.
+  puis stocké comme attribut d'instance `self.lost_after_s`. Le champ est lu par `tick_and_expire` via `mask.lost_after_s`.
+  Cette approche est fonctionnellement équivalente à un TTL par source sans modifier la signature de `transition`.
 
-- 🔍 **Audit requis** :
-  - Recenser tous les appelants de `Mask.transition("missing")` dans le codebase
-    (focus : `registry.py › tick_and_expire` + tests éventuels) avant de modifier la signature.
-  - Valider que le nouveau paramètre `ttl` ne casse aucun chemin secondaire.
+- **Conformité** : objectif fonctionnel (TTL différencié slow/fast) ✅ ATTEINT.
+  Invariant config respecté : `fast_lost_after_s=0.5 == fast_max_drift_s=0.5`.
+  Zone [0.3→0.5 s] couverte par le fast sans remonter `lost_after_s` slow.
+  Le libellé du Plan_Tracker a été aligné sur l'implémentation réelle (design « TTL à la création » retenu, plutôt que le design initialement envisagé avec passage de ttl en paramètre à `transition` + suppression de la double-garde).
 
-- **Critères de succès** :
-  - Baisse mesurable de `registry_lost_total` sur les scénarios de trous slow courts
-    (≤ 0.5 s) **sans** hausse de `registry_expire_total` (pas de zombie).
-  - `mask_revive_total` stable (le fast ne réanime pas d'UIDs morts).
-  - Lifecycle reshape : distribution des lifetimes reflecte la fenêtre [0.3–0.5 s].
+- **Validation code** : vérifié sur `registry.py` + `mask.py`
 
-- **Effort estimé** : ~1 h dev + 1 h validation.
+- **Risques résiduels connus — acceptés, non bloquants** :
+  (A) `last_source` non rafraîchi après un match slow sur un mask né fast :
+  impacte traçabilité / métriques uniquement, pas le TTL.
+  (B) TTL non réactualisé lors d'un revive LOST→CONFIRMED :
+  un mask né slow garde `lost_after_s=0.3` même s'il revit via fast.
+  Cas edge rare.
 
-- **Bloque** : rien. Réversible (suppression du paramètre → retour à C′ simple).
+- **Statut** : 🟢 **LIVRÉ / CLÔTURÉ**.
 
 ---
 

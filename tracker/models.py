@@ -16,6 +16,7 @@ class TrackerConfig:
     confirm_after: int = field(default_factory=lambda: cfg.get("tracker.lifecycle.confirm_after"))
 
     fast_max_drift_s: float = field(default_factory=lambda: cfg.get("masks.fast_max_drift_s"))
+    fast_lost_after_s: float = field(default_factory=lambda: cfg.get("masks.fast_lost_after_s"))
     # associator
     weights_source_slow: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_slow"))
     weights_source_fast: tuple = field(default_factory=lambda: cfg.get("masks.associator.weights_source_fast"))
@@ -68,6 +69,10 @@ class TrackerConfig:
             raise ValueError(f"continuity_bonus_max ({self.continuity_bonus_max}) doit être ≥ 0")
         if self.continuity_tau_s <= 0.0:
             raise ValueError(f"continuity_tau_s ({self.continuity_tau_s}) doit être > 0")
+        if self.fast_lost_after_s < self.fast_max_drift_s:
+            raise ValueError(f"fast_lost_after_s ({self.fast_lost_after_s}) doit être >= fast_max_drift_s ({self.fast_max_drift_s}) : le mask doit survivre au moins le temps qu'une détection fast reste acceptable.")
+
+
 
 @dataclass(frozen=True, slots=True)
 class MatchScore:

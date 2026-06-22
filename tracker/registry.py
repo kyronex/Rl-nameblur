@@ -49,7 +49,7 @@ class MaskRegistry:
             last_source=source,
             confidence=confidence,
             confirm_after=self.cfg.confirm_after,
-            lost_after_s=self.cfg.lost_after_s,
+            lost_after_s=(self.cfg.fast_lost_after_s if source == "fast" else self.cfg.lost_after_s),
             hash_history_max=self.cfg.hash_history_max,
             state=MaskState.PENDING,
             frames_matched=1,
@@ -85,7 +85,6 @@ class MaskRegistry:
             updated_uids = set()
         expired: List[Mask] = []
 
-        lost_after_s = self.cfg.lost_after_s
         expire_after_lost_s = self.cfg.expire_after_lost_s
 
         for mask in list(self._masks.values()):
@@ -94,7 +93,7 @@ class MaskRegistry:
             if not is_matched_this_tick:
                 # Transition vers LOST si hors-vue depuis trop longtemps
                 if mask.state in (MaskState.PENDING, MaskState.CONFIRMED):
-                    if (ts - mask.last_seen_ts) >= lost_after_s:
+                    if (ts - mask.last_seen_ts) >= mask.lost_after_s:
                         mask.transition("missing", ts)  # passe en LOST, set lost_since_ts=ts
                         bench.count("registry_lost_total")
 

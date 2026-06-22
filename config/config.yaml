@@ -107,6 +107,7 @@ tracker:
 masks:
   max_masks: 20 # Nombre maximum de masques simultanés dans le registry — (registry.py › add)
   fast_max_drift_s: 0.5 # Duree max de drift de la detection fast (tracker.py › apply_fast_direct)
+  fast_lost_after_s: 0.5
   hash_history_max: 5 # Taille max du buffer phash par mask — comparaison temporelle de stabilité (tracker.py › apply_detections)
   hash_top_k: 3 # Nbr de phash récents (parmi hash_history_max) comparés pour le scoring — limite l'influence des vieilles entrées (hasher.py › best_hash_similarity)
   associator:
@@ -127,7 +128,7 @@ masks:
     dead_zone_rel: 0.02 # Seuil anti-jitter relatif à min(w,h) du mask — déplacement < 3% de la taille = ignoré
     velocity_dead_zone: 10.0 # Vitesse minimale (px/s) en x/y/w/h pour activer la prédiction de vélocité — en dessous, vx/vy/vw/vh restent à 0
     dt_slow_max: 0.5 # Garde anti-bruit vélocité .si écart entre 2 slow consécutives dépasse. Δ/dt est jugé peu fiable ,vélocité reset à 0 (le mask reste vivant, pas de transition d'état). motion.py › apply_detection.
-    teleport_thresh: 300.0 # Distance (pixels) au-delà de laquelle un déplacement est considéré comme un téléport — reset de la vélocité
+    teleport_thresh: 1700.0 # Distance (pixels) au-delà de laquelle un déplacement est considéré comme un téléport — reset de la vélocité
     vx_max: 4000.0 # Vitesse max (px/s) en x — au-delà, la vélocité est clampée
     vy_max: 2000.0 # Vitesse max (px/s) en y — au-delà, la vélocité est clampée
     vw_max: 1000.0 # Vitesse max (px/s) en largeur — au-delà, la vélocité est clampée
@@ -181,7 +182,6 @@ debug:
       enabled: true # Maître : false = aucun writer démarré, quelles que soient les clés fille
       queue_maxsize: 10000 # Taille max de la queue bornée partagée entre writers. Au-delà : ligne droppée + bench.count("bench_writer_dropped") incrémenté
       shutdown_timeout_s: 2.0 # Délai max (s) accordé à chaque writer pour vider sa queue à l'arrêt
-      max_chars: 3990000 # null = illimité (pas de rotation). Sinon : rotation par fichier au-delà de N caractères écrits (\n inclus)
       max_chars: 3000000 # null = illimité (pas de rotation). Sinon : rotation par fichier au-delà de N caractères écrits (\n inclus)
       session_id_format:
         "%Y%m%d_%H%M%S"
