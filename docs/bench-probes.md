@@ -60,18 +60,13 @@ toutes les transitions.
 
 > Les 4 counts (`_total`) sont cumulatifs depuis le démarrage de la session.
 > `registry_lost` (gauge) et `registry_lost_total` (count) sont orthogonaux :
-> la gauge reflète le stock instantané après purge, le count l'historique cumulé
-> des transitions avant éventuelle purge.
-> `_evict_one()` est appelée avant insertion — `registry_evict_total` est émis
-> avant que le nouveau mask entre dans le dict.
-> Les gauges d'état sont posées après toutes les transitions du tick — instantané
-> cohérent de fin de cycle.
->
+> la gauge reflète le stock instantané après purge, le count l'historique cumulé des transitions avant éventuelle purge.
+> `_evict_one()` est appelée avant insertion — `registry_evict_total` est émis avant que le nouveau mask entre dans le dict.
+> Les gauges d'état sont posées après toutes les transitions du tick — instantané cohérent de fin de cycle.
 > Ces gauges (`registry_confirmed/pending/lost`) sont distinctes des gauges
 > `tracker_confirmed/pending/lost` posées dans `tracker.tick()`.
 > Les `registry_*` sont destinées au JSONL et aux analyses post-session.
-> Les `tracker_*` sont la source de vérité consommée par `main.py` au runtime.)`) comme source de vérité runtime — les deux jeux sont distincts
-> et complémentaires.
+> Les `tracker_*` sont la source de vérité consommée par `main.py` au runtime.)`) comme source de vérité runtime — les deux jeux sont distincts et complémentaires.
 
 ## Domaine `tracker` — `tracker/tracker.py`
 

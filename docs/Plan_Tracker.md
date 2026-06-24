@@ -33,10 +33,15 @@
    │    ├── livrable interne : correction compute_predicted_rect (#60)
    │    └── déclencheur humain : footage tagué teleport (pendant B-04)
    ├── B-08  TTL différencié par source (slow/fast)                         ✅
-   ├── B-00b Anomalie config #1 (teleport_thresh)                           🔴
-   ├── B-05  Slow detector : faux positifs en burst                         🔴
-   ├── B-09  TTL différencié par état (PENDING/CONFIRMED)                   🟡 [PRÉVU]
-   └── B-06  Auto-keepalive masks stationnaires (patch tactique)            🔴
+   ├── B-00b Anomalie config #1 (teleport_thresh)                           ✅
+   ├── B-05  Slow detector                                                  ✅
+   ├── B-05a Audit slow detector                                            ✅
+   ├── B-05a-revive Bug `mask_revive_latency_ms` négatif
+   ├── B-05a-instr Instrumentation par-mask
+   ├── B-05a-bis Audit non-consolidation : +95 % des masks LOST non CONFIRMED
+   ├── B-05b Correctifs slow detector
+   ├── B-09  TTL différencié par état (PENDING/CONFIRMED)
+   └── B-06  Auto-keepalive masks stationnaires (patch tactique)
          │
          ▼
 🟦 Phase 0 — Clôture stabilisation noyau
@@ -433,14 +438,14 @@
 
 ---
 
-### 🔴 B-00b — Anomalie config #1 : `teleport_thresh` vs `vx_max × dt_cap`
+### 🟢 B-00b — Anomalie config #1 : `teleport_thresh` vs `vx_max × dt_cap` `[LIVRÉ]`
 
 - **Anomalie** :
   - `motion.teleport_thresh = 300 < vx_max × dt_cap = 4000 × 0.10 = 400`
   - Un déplacement nominal à vitesse max sur `dt_cap` déclenche un faux teleport → reset vélocité → CREATE parasite cohérent avec les bursts observés en B-05.
 
 - **Actions** :
-  1. Extraire percentiles `dist` p95/p99 inter-frames sur session de référence post-B-04.
+  1. Extraire percentiles `dist` p95||p99 inter-frames sur session de référence post-B-04.
   2. Trancher : `vx_max` sur-dimensionné (valeur fictive non atteignable) ou `teleport_thresh` sous-dimensionné ?
   3. Réajuster la valeur incohérente. Cible : `teleport_thresh > vx_max × dt_cap × 1.2` (marge de sécurité 20 %).
   4. Valider sur footage tagué que les vrais teleports restent détectés après réajustement.
@@ -477,117 +482,159 @@
 
 ---
 
-### 🔴 B-05 — Slow detector : faux positifs en burst `[RÉÉCRIT, découpé en B-05a + B-05b]`
+### 🟢 B-05 — Slow detector : ~~faux positifs en burst~~ **non-consolidation des masks** `[RÉÉCRIT, découpé en B-05a + B-05b — DIAGNOSTIC B-05a LIVRÉ]`
 
-> **Note d'honnêteté préservée** : la cause racine exacte n'est pas connue. Le découpage audit/implémentation reflète cette incertitude. B-05a peut révéler que le problème est ailleurs (effet de bord B-04 résiduel, anomalie B-00 #1, etc.), auquel cas B-05b devient sans objet.
+> **Note d'honnêteté préservée** : la cause racine exacte n'est pas connue. Le découpage audit/implémentation reflète cette incertitude.
+>
+> **⚠️ Reformulation post-audit (baseline 6024 frames / 62.5 s @ 96 FPS)** : l'hypothèse fondatrice « faux positifs en burst » est **invalidée par les données**. Taux CREATE/s plat à **~1.66/s (p95=2, max=2), zéro burst > 3/s**. La pathologie réelle est la **non-consolidation** : **0 / 64** masks atteignent CONFIRMED, **~97 %** du stock actif est en LOST en permanence. B-05b est **réorienté**, pas annulé.
 
 ---
 
-### 🔴 B-05a — Audit slow detector
+### 🟢 B-05a — Audit slow detector `[LIVRÉ — baseline MESURÉE haute résolution]`
 
-- **Mesure baseline obligatoire** _(pré-requis à toute action)_ :
-  - **Taux CREATE/s** sur fenêtre glissante 1 s (moyenne, p95, max).
-  - **Ratio masks éphémères** : `count(masks where total_matches == 1 at EXPIRE) / count(created_masks)` sur fenêtre 10 s.
-  - **Taux EXPIRE en cascade** : EXPIRE survenant < 2 s après CREATE / total EXPIRE.
-  - **Localisation des bursts** : timestamps + frames source des rafales > 3 CREATE/s.
+- **Mesure baseline obligatoire** _(LIVRÉE — session 6024 frames / 62.5 s @ 96 FPS, par-frame)_ :
+  - **Analyse evolution masks** `registry.py`, `tracker.py` → ✅ cohérence registry ↔ tracker **parfaite** (0 incohérence / 6024 frames).
+  - **Taux CREATE/s** (fenêtre glissante 1 s) → moyenne **1.66**, p95 **2**, max **2**. ✅ mesuré.
+  - **Ratio masks éphémères** → **~98 %** _(proxy par état — champs par-mask `total_matches` absents, mesure exacte renvoyée à B-05a-instr)_.
+  - **Taux EXPIRE en cascade** (< 2 s après CREATE) → **~100 %** _(proxy par appariement temporel, pas par `mask_id`)_.
+  - **Localisation des bursts** → **aucun burst > 3 CREATE/s sur toute la capture**. Pathologie « burst » non observée.
 
-- **Hypothèses à instruire** _(ordre par coût croissant, recommandé)_ :
-  1. **Tuning `tracker.lifecycle.confirm_after`**
-     - Actuellement = 1 (CREATE immédiat, aucune consolidation temporelle).
-     - Test : passer à 2 puis 3, mesurer impact sur taux masks éphémères.
-     - Coût : 1 ligne config, effet immédiat.
-       > **Valeur retenue** : `confirm_after = 2` (calibrée pour rester très largement sous `lost_after_s = 0.3 s`).
-       > Vérification : à 120 FPS, `2 / 120 ≈ 0.017 s` — soit 5.7 % de la fenêtre TTL. Espace de sécurité
-       >
-       > > 10× → aucun risque de transition LOST pendant la phase de consolidation.
-       >
-       > ```yaml
-       > tracker:
-       >   lifecycle:
-       >     confirm_after: 2 # filtre FP par consolidation temporelle (2 frames)
-       > ```
-       >
-       > **Effort** : 1 ligne config. **Validation** : ratio `slow_ephemeral_ratio_10s` baseline → post-fix.
+- **Résultat d'audit — diagnostic** :
+  - Cycle de vie réel de **tous** les masks : `PENDING → LOST (< 0.3 s) → EXPIRE`. Aucun ne se stabilise.
+  - `registry_confirmed` moyen ≈ **0** (deux pointes fugaces : 30–33 s, 47–48 s) · `registry_lost` moyen **2.19**, max **8** · `mask_lost_latency_ms` moyen **998 ms** (max 3131 ms).
+  - `registry_evict_total = 0` → jamais de saturation `max_masks`. ✅
+  - **Cause racine probable** : le détecteur slow ne re-matche pas les masks assez fréquemment (latence LOST ~1 s) → les masks meurent **avant** consolidation. Pointe vers le **matching / la cadence de re-détection slow** (hypothèses #2/#3), **pas** vers un filtrage de FP.
 
-  2. **Resserrement validation refine (texte)**
+- **Hypothèses — statut post-audit** :
+  1. **Tuning `tracker.lifecycle.confirm_after`** → ⛔ **ÉCARTÉE du périmètre prioritaire (risque d'aggravation démontré)**.
+     - Le levier `confirm_after` filtre des **faux positifs en rafale** — pathologie **absente** ici.
+     - Avec `confirm_after = 1`, déjà **0 / 64** masks atteignent CONFIRMED. Exiger 2 matches consécutifs rendrait la confirmation **encore plus difficile**, aggravant la non-consolidation.
+     - **Ne tester `confirm_after = 2` qu'APRÈS** restauration d'un flux de CONFIRMED non nul. Conservée comme test marginal documenté, hors chemin critique.
+       > _Calibration héritée conservée pour mémoire : `2 / 120 ≈ 0.017 s` = 5.7 % de `lost_after_s = 0.3 s`. Invariant TTL toujours valide, mais non pertinent tant que le flux CONFIRMED est nul._
+  2. **Resserrement validation refine (texte)** → 🎯 **candidat à instruire en priorité** (avec #3).
      - Clés : `detect.refine.min_text_fill` (0.08), `min_transition` (0.10), `min_proj_score` (0.10).
-     - Test : incréments de +0.02 sur chaque clé, mesure ROC TP/FP.
-     - Coût : config seule.
-
-  3. **Resserrement filtres geometry**
+     - ⚠️ **Sens d'investigation inversé vs intention initiale** : ne pas **resserrer** pour filtrer, mais auditer si ces seuils sont **trop stricts** et **empêchent le re-match** des masks existants (cause possible de non-consolidation).
+  3. **Resserrement filtres geometry** → 🎯 **candidat à instruire en priorité** (avec #2).
      - Clés : `detect.geometry.min_fill`, `min_area`, `min_ratio`, `max_ratio`.
-     - Test : audit des blobs créés en burst, identifier la dimension exploitée par les FP.
-     - Coût : config seule.
+     - Même inversion : vérifier si la géométrie rejette des re-détections de masks valides entre deux frames.
+  4. **Resserrement seuils HSV / morpho** → ⏸️ différée (risque diffus sur TP, à n'ouvrir que si #2/#3 insuffisants).
+  5. **Cooldown post-burst** → ⛔ **sans objet** : aucun burst à limiter.
 
-  4. **Resserrement seuils HSV / morpho**
-     - Clés : `detect.hsv.white_core.lower/upper`, `detect.morpho.white_dilate.*`.
-     - Test : analyse pixel-niveau sur frames déclenchant des bursts.
-     - Coût : config + risque plus diffus sur TP.
+- **Livrables B-05a** → ✅ **LIVRÉS** :
+  - Rapport d'audit : baseline mesurée (haute résolution), hypothèse « burst » **invalidée**, pathologie reformulée en **non-consolidation**, recommandation chiffrée (cibler matching/re-détection slow via #2/#3).
+  - Décision go/no-go B-05b : **GO avec périmètre réorienté** (voir B-05b).
+  - Anomalies sorties en tickets dédiés (voir ci-dessous).
 
-  5. **Cooldown post-burst** _(dernier recours)_
-     - Limitation taux CREATE/s côté tracker (pas detector).
-     - Coût : code, à éviter si options 1-4 suffisent.
+- **Réserves documentées (honnêteté)** :
+  - Ratio éphémères (~98 %) et cascade (~100 %) restent des **proxies par état/temporels** — la mesure exacte `total_matches==1 @EXPIRE` exige l'instrumentation par-mask. → **B-05a-instr maintenu**.
+  - Signal néanmoins **sans ambiguïté décisionnelle** : 0 CONFIRMED / 64 ne dépend d'aucun proxy.
 
-- 🔍 **Audit requis — bloquant à la livraison de B-05a** :
-  - Inventaire pipeline slow detector : étapes, seuils actuels, points de filtrage.
-  - Mesure baseline (cf. ci-dessus) sur session de référence.
-  - Identification des frames déclencheuses des bursts (corrélation avec événements scène : transitions, apparitions multiples, mouvements rapides).
-  - Confirmation que la pathologie n'est pas un effet de bord résiduel B-00, B-02, B-03 ou B-04.
-  - Test rapide hypothèse #1 (`confirm_after`) car coût marginal.
+- **Tickets dérivés ouverts par l'audit** :
+  - **B-05a-instr** : instrumentation par-mask — _spécifié en ticket dédié ci-dessous_.
+  - **Ticket `mask_revive_latency_ms` négatif** : timestamp revive systématiquement négatif — _spécifié en ticket dédié ci-dessous_.
 
-- **Livrables B-05a** :
-  - Rapport d'audit : baseline mesurée, hypothèses validées/invalidées, recommandation chiffrée.
-  - Décision go/no-go pour B-05b et périmètre exact (quelle(s) hypothèse(s) implémenter).
-  - Si l'audit révèle que le problème est ailleurs : B-05b annulé, ticket dédié ouvert.
-
-- **Effort estimé B-05a** : 2-4 h.
-
-- **Bloque** : B-05b (et donc B-06).
+- **Effort réel B-05a** : audit livré.
+- **Débloque** : B-05b (réorienté).
 
 ---
 
-### 🔴 B-05b — Correctifs slow detector
+### 🟢 B-05a-revive — Bug `mask_revive_latency_ms` négatif `[LIVRÉ]`
+
+- **Origine** : audit B-05a a mesuré `mask_revive_latency_ms` **systématiquement négatif** : **88 %** des valeurs négatives, min **−243 ms**. Confirmé généralisé (vs cas isolé frame 1551 observé précédemment).
+- **Symptôme** : la latence de revive (délai entre LOST et re-match) ne peut pas être négative physiquement → erreur de signe ou d'ordre des timestamps dans le calcul.
+- **Pistes** :
+  - Ordre d'opération inversé : `lost_ts - revive_ts` au lieu de `revive_ts - lost_ts`.
+  - Timestamp de revive figé/hérité d'un état antérieur (réutilisation d'un `create_ts` ou `last_seen_ts` obsolète).
+  - Horloge source incohérente entre capture et registry (mélange de bases de temps).
+- **Impact potentiel** : peut corrompre la comptabilité de consolidation (lien B-05a-bis #4) → à instruire avant de conclure B-05a-bis.
+- **Critères de succès** :
+  - `mask_revive_latency_ms` ≥ 0 pour 100 % des revives sur session de référence.
+  - Test de non-régression : valeur cohérente avec le délai inter-frame attendu (≥ ~1 frame).
+- **Effort estimé** : 1-2 h.
+- **Distinct de** : B-05 (pathologie non-consolidation). Bug de mesure/timestamp isolé.
+- **Anti-patterns** :
+  - Masquer le négatif par une valeur absolue (`abs()`) sans corriger la cause → fausserait définitivement la métrique.
+
+### 🔴 B-05a-instr — Instrumentation par-mask `[OUVERT par B-05a]`
+
+- **Origine** : les métriques B-05a (ratio éphémères ~98 %, cascade ~100 %) sont des **proxies par état/temporels**. Les champs par-mask sont absents des bench_frame.
+- **Objectif** : émettre, à chaque EXPIRE de mask, un enregistrement par-mask `{mask_id, total_matches, create_ts, expire_ts}` pour passer des proxies à la mesure exacte.
+- **Périmètre** :
+  - Ajouter l'émission d'un event `MASK_EXPIRE` instrumenté dans `registry.py` (ou le point de purge), portant au minimum : `mask_id`, `total_matches` (nombre de matches cumulés sur la vie du mask), `create_ts`, `expire_ts`, `final_state`.
+  - Exposition CSV/JSONL cohérente avec `detect.csv.*` existant.
+- **Métriques exactes débloquées** :
+  - **Ratio éphémères exact** : `count(masks where total_matches == 1 @EXPIRE) / count(created_masks)` (remplace le proxy ~98 %).
+  - **Cascade exacte** : `count(EXPIRE where expire_ts - create_ts < 2 s) / count(EXPIRE)` (remplace le proxy ~100 %).
+  - Distribution `total_matches` par mask (alimente B-05a-bis).
+- **Critères de succès** :
+  - Chaque mask créé produit exactement un enregistrement EXPIRE (0 perte, 0 doublon) vérifié sur session de référence.
+  - Réconciliation : `count(created_masks)` (instrumentation) == `CREATE_PENDING` (compteur existant) sur 6024 frames.
+- **Effort estimé** : 1-3 h.
+- **Bloque** : mesure exacte B-05a (réserves), B-05a-bis (distribution matches).
+- **Anti-patterns** :
+  - Émettre l'event ailleurs qu'au point unique d'EXPIRE (risque doublons/pertes).
+  - Retirer cette instrumentation avant B-07 tranché.
+
+---
+
+### 🔴 B-05a-bis — Audit non-consolidation : pourquoi >95 % des masks finissent LOST et non CONFIRMED `[OUVERT par B-05a]`
+
+- **Origine** : audit B-05a a établi **0 / 64** masks atteignant CONFIRMED et **~97 %** du stock actif en LOST permanent. La cause racine reste à isoler.
+- **Objectif** : identifier le mécanisme précis qui empêche la transition PENDING → CONFIRMED et provoque la chute en LOST avant consolidation.
+- **Pistes à instruire (ordre par coût croissant)** :
+  1. **Latence de re-match** : mesurer le délai entre deux matches successifs d'un même mask. `mask_lost_latency_ms` moyen ~998 ms ≫ `lost_after_s = 0.3 s` → le mask expire avant d'être re-vu. Vérifier la cadence réelle du détecteur slow (FPS effectif du slow path vs capture).
+  2. **Seuils de re-match trop stricts** (lien direct B-05b #2/#3) : refine (`min_text_fill`, `min_transition`, `min_proj_score`) et geometry (`min_fill`, `min_area`, `min_ratio`, `max_ratio`) rejettent-ils des re-détections de masks déjà créés ?
+  3. **Critère de confirmation** : auditer la condition exacte PENDING → CONFIRMED dans `registry.py` / `tracker.py` (`confirm_after`, compteur de matches, fenêtre temporelle). Vérifier si le compteur de matches est remis à zéro à chaque LOST→revive (ce qui interdirait toute accumulation).
+  4. **Effet du bug revive** (lien B-05a-revive) : `mask_revive_latency_ms` négatif pourrait corrompre la comptabilité des matches ou la fenêtre de confirmation. À écarter ou confirmer comme cause contributive.
+- **Métriques à produire** :
+  - Distribution du nombre de matches par mask avant EXPIRE (exige B-05a-instr).
+  - Délai inter-match par mask (p50, p95, max).
+  - FPS effectif du détecteur slow vs capture FPS.
+  - Corrélation entre échecs de re-match et seuils refine/geometry (combien de blobs candidats rejetés par chaque filtre, par frame).
+- **Livrables** : rapport isolant la cause racine unique (ou hiérarchisée), recommandation chiffrée alimentant le périmètre exact de B-05b.
+- **Préconditions** : B-05a-instr livré (mesure exacte des matches par mask).
+- **Bloque** : finalisation B-05b (le périmètre #2/#3 vs #3-confirmation dépend de ce verdict).
+- **Anti-patterns** :
+  - Conclure « seuils trop stricts » sans avoir vérifié la latence de re-match (#1 doit être écartée en premier, coût marginal).
+  - Corriger les seuils avant d'avoir confirmé que le compteur de matches n'est pas réinitialisé au revive (#3).
+
+---
+
+### 🔴 B-05b — Correctifs slow detector `[RÉORIENTÉ par B-05a — cible : non-consolidation, pas FP]`
 
 - **Préconditions dures** :
-  - B-05a livré avec recommandation validée.
-
-- **Périmètre** : implémentation des hypothèses retenues par B-05a (1 à 5, non exclusives).
-
+  - B-05a livré avec recommandation validée. ✅
+- **Périmètre** _(réorienté post-audit)_ : restaurer un flux de masks **CONFIRMED** non nul en traitant la **non-consolidation**. Instruire en priorité **#2 (refine)** et **#3 (geometry)** sous l'angle « **seuils trop stricts empêchant le re-match** », **pas** le filtrage de FP. **#1 (`confirm_after`) hors périmètre prioritaire** (risque d'aggravation). #4 différée, #5 sans objet.
 - **Critères de succès** _(ancrés sur baseline B-05a)_ :
-  - **Réduction relative ≥ 70 %** du ratio masks éphémères vs baseline B-05a.
-    _(Ancrage relatif plutôt qu'absolu : un seuil < 5 % serait arbitraire si la baseline est déjà à 8 % ; un seuil < 5 % serait inatteignable si la baseline est à 50 %.)_
-  - **Sur fenêtre glissante 1 s** : taux CREATE/s < 3 hors événement de scène taggé "apparition multiple" dans la session de référence.
-  - **Taux EXPIRE en cascade** (EXPIRE < 2 s après CREATE) < 10 %.
-  - **Non-régression TP** : taux de détection vrai positif préservé à ±2 % vs baseline, mesuré sur footage tagué incluant transitions de scène.
-
+  - **Flux CONFIRMED restauré** : ratio masks atteignant CONFIRMED **> 0** et stabilisé _(nouveau critère structurant — la baseline est à 0/64)_.
+  - **Réduction relative ≥ 70 %** du ratio masks éphémères vs baseline B-05a (**~98 %**) → cible **≤ ~29 %**.
+  - **Sur fenêtre glissante 1 s** : taux CREATE/s < 3 hors événement de scène taggé "apparition multiple" _(déjà respecté en baseline : 1.66/s — critère non limitant, conservé pour non-régression)_.
+  - **Taux EXPIRE en cascade** (EXPIRE < 2 s après CREATE) < 10 % _(baseline ~100 % → forte amélioration attendue)_.
+  - **Non-régression TP** : taux de détection vrai positif préservé à ±2 % vs baseline.
 - **Instrumentation permanente** _(à conserver jusqu'à B-07 tranché)_ :
   - `slow_create_rate_1s` : CREATE/s glissant 1 s.
   - `slow_ephemeral_ratio_10s` : ratio masks éphémères glissant 10 s.
+  - `slow_confirmed_ratio_10s` : **(NOUVEAU)** ratio masks atteignant CONFIRMED, glissant 10 s — métrique cœur de la pathologie réelle.
   - `slow_burst_events` : compteur cumulé bursts détectés (> 3 CREATE/s sur 1 s).
   - Exposition : HUD + CSV (cohérent avec `detect.csv.*` existant).
   - Ces métriques alimentent B-07 au même titre que `keepalive_*` de B-06. **Ne jamais retirer avant B-07 tranché.**
-
 - **Effort estimé B-05b** : 2-6 h selon hypothèse(s) retenue(s) par B-05a.
-
-- - **Effets de bord à anticiper** :
-  - **Vers B-06** : slow detector pollué fausse le keepalive (un mask stationnaire entouré de faux positifs reçoit des "matches" parasites). B-06 doit s'exécuter sur un slow propre.
-  - **Vers B-07** : la sémantique de `last_seen_ts` dépend de la qualité du flux slow. Bursts de FP polluent les statistiques alimentant l'audit B-07.
-  - **Vers `lost_after_s`** : si `confirm_after` ≥ 2 adopté,
-    latence CREATE augmente. Invariant à vérifier (cf. A-02 catégorie 8) :
-    `confirm_after / capture_fps < 0.3 × lost_after_s`
-    À 120 FPS, `confirm_after = 3` ajoute ~25 ms ; `lost_after_s = 0.3 s` reste très large. ✅ OK pour valeurs nominales.
-  - **Vers `fast_lost_after_s` (B-08)** : selon option retenue, ce paramètre disparaît (F, au profit d'events `missing`/`silence`) ou migre vers `BOOST[source]` différencié (G). Inventaire B-07 livrable #1 le capture mécaniquement par confrontation à la codebase.
-  - **Vers `pending_lost_after_s` (B-09)** : selon option retenue, ce paramètre disparaît (F, règle de quorum spécifique PENDING) ou migre vers `TAU_DECAY` court / `θ_lost` relevé pour masks non confirmés (G). Capturé par l'inventaire B-07.
+- **Effets de bord à anticiper** :
+  - **Vers B-06** : slow detector pollué fausse le keepalive. B-06 doit s'exécuter sur un slow propre. _(Note : la pathologie n'étant pas des FP mais la non-consolidation, le risque B-06 est désormais qu'un mask stationnaire **ne soit jamais CONFIRMED** donc jamais keepalive — à revérifier après B-05b.)_
+  - **Vers B-07** : la sémantique de `last_seen_ts` dépend de la qualité du flux slow. Non-consolidation pollue les statistiques alimentant l'audit B-07.
+  - **Vers `lost_after_s`** : si `confirm_after` ≥ 2 adopté (hors périmètre prioritaire), latence CREATE augmente. Invariant à vérifier (cf. A-02 catégorie 8) : `confirm_after / capture_fps < 0.3 × lost_after_s`. À 120 FPS, vérifié.
+  - **Vers `fast_lost_after_s` (B-08)** : selon option retenue.
+  - **Vers `pending_lost_after_s` (B-09)** : selon option retenue.
   - **Vers session de référence** : footage tagué doit inclure transitions de scène + apparitions multiples + régime statique long + mouvements rapides. Réutilisable pour B-06.
-
 - **Anti-patterns à éviter** :
-  - Implémenter sans audit préalable (B-05a est obligatoire).
+  - Implémenter sans audit préalable (B-05a est obligatoire). ✅ levé.
   - Relever les seuils sans mesurer l'impact sur le taux de vrais positifs.
+  - **(NOUVEAU) Appliquer `confirm_after = 2` à l'aveugle** : démontré aggravant tant que le flux CONFIRMED est nul.
   - Démarrer B-05b avant que B-04 soit validé : un `dt` saturé peut masquer des comportements registry et fausser le diagnostic.
   - Embarquer un fix B-05 dans une refonte sémantique (B-07) : périmètres distincts.
   - Retirer l'instrumentation `slow_*` avant B-07 tranché.
-  - **B-06/B-08/B-09 (patchs TTL) vs B-07 (refonte TTL)** : ne **jamais** confondre. B-06, B-08 et B-09 sont des patchs tactiques sur le mécanisme TTL actuel (paramétrage `lost_after_s` / `fast_lost_after_s` / `pending_lost_after_s`). B-07 est l'audit structurel (plusieurs jours) qui refond ce mécanisme. Sauter de ces patchs directement à F/G/F+G sans audit = anti-pattern. Les trois patchs seront soit migrés (option G), soit retirés (option F) lors de B-07.
-  - Confondre tuning detector (B-05) et tuning tracker (`confirm_after`, qui est côté tracker mais agit comme filtre temporel sur le flux detector — légitime dans le périmètre B-05).
+  - **B-06/B-08/B-09 (patchs TTL) vs B-07 (refonte TTL)** : ne **jamais** confondre.
+  - Confondre tuning detector (B-05) et tuning tracker (`confirm_after`).
 
 ---
 
