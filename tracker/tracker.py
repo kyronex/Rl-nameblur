@@ -29,14 +29,16 @@ class Tracker:
     #  API PUBLIQUE
     # ───────────────────────────────────────────────
 
-    def apply_detections(self, frame: np.ndarray, detections: list, ts: float = None, source: str = "slow") -> tuple[set, set]:
+    def apply_detections(self, frame: np.ndarray, detections: list,detected_frame_ts: float,source: str = "slow") -> tuple:
         """
         Applique une vague de détections (slow OU fast).
         Returns: (matched_uids, created_uids)
         """
         with bench.timer("tracker_apply_detections_ms"):
-            if ts is None:
-                ts = time.perf_counter()
+            if detected_frame_ts is None:
+                detected_frame_ts = time.perf_counter()
+                log.warning("[Tracker.apply_detections] detected_frame_ts fallback hit")
+            ts = time.perf_counter()
             H, W = frame.shape[:2]
             bench.count("tracker_detections_in", len(detections))
             # ── 1. Detection objects + phash ──
@@ -79,14 +81,14 @@ class Tracker:
                     mask.template = det.template
                 if det.scores:
                     mask.scores = det.scores
-                self.registry.mark_matched(mask.uid, ts=ts, source=source)
+                self.registry.mark_matched(mask.uid, ts=ts,detected_frame_ts=detected_frame_ts,source=source)
                 matched_uids.add(mask.uid)
             # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
             created_uids = set()
             if source == "slow":
                 for det_idx in unmatched_dets:
                     det = det_objects[det_idx]
-                    mask = self.registry.create(det.rect, ts, source=det.source)
+                    mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts)
                     if det.phash is not None:
                         mask.hash_history.append(det.phash)
                     mask.confidence = det.confidence
@@ -95,13 +97,16 @@ class Tracker:
                     created_uids.add(mask.uid)
             return matched_uids, created_uids
 
-    def apply_fast_direct(self, frame: np.ndarray, uid_to_rect: dict, ts: float = None) -> set:
+    def apply_fast_direct(self,frame: np.ndarray,uid_to_rect: dict,fast_ts: float,detected_frame_ts: float = None) -> set:
         """
         Commit direct des résultats du fast tracker
         """
         with bench.timer("tracker_apply_fast_direct_ms"):
-            if ts is None:
-                ts = time.perf_counter()
+            if fast_ts is None:
+                fast_ts = time.perf_counter()
+            if detected_frame_ts is None:
+                detected_frame_ts = fast_ts   # fast_ts est déjà un frame_ts
+                log.warning("[Tracker.apply_fast_direct] detected_frame_ts fallback hit - propagation gap")
             H, W = frame.shape[:2]
             matched_uids = set()
             drift_skipped = 0
@@ -112,7 +117,7 @@ class Tracker:
                     continue  # mask purgé entre-temps côté slow
                 # ── Garde-fou drift : fast ne peut prolonger qu'un mask
                 # confirmé récemment par le slow ──
-                drift = ts - mask.last_slow_ts if mask.last_slow_ts > 0 else float('inf')
+                drift = fast_ts - mask.last_slow_ts if mask.last_slow_ts > 0 else float('inf')
                 if drift > self.cfg.fast_max_drift_s:
                     drift_skipped += 1
                     drift_max_seen = max(drift_max_seen, drift if drift != float('inf') else 0)
@@ -124,10 +129,9 @@ class Tracker:
                 w = max(1, min(w, W - x))
                 h = max(1, min(h, H - y))
                 clamped_rect = (x, y, w, h)
-                # Pipeline de mutation strictement aligné sur la branche `matched`
-                # de apply_detections (source="fast" → skip phash, pas de template/scores)
-                apply_detection(mask, clamped_rect, ts, "fast", self.cfg)
-                self.registry.mark_matched(mask.uid, ts=ts,source = "fast")
+                # Pipeline de mutation strictement aligné sur la branche `matched` de apply_detections (source="fast" → skip phash, pas de template/scores)
+                apply_detection(mask, clamped_rect, fast_ts, "fast", self.cfg)
+                self.registry.mark_matched(mask.uid, ts=fast_ts,detected_frame_ts=detected_frame_ts,source="fast")
                 matched_uids.add(mask.uid)
             if drift_skipped:
                 bench.count("tracker_fast_drift_skipped", drift_skipped)
@@ -146,7 +150,7 @@ class Tracker:
                     )
             return matched_uids
 
-    def tick(self, ts: float = None, updated_uids: set = None) -> list:
+    def tick(self,ts: float = None,updated_uids: set = None,detected_frame_ts: float = None) -> list:
         """
         À appeler chaque frame : predict inertiel + TTL + purge.
         Returns: list[Mask] CONFIRMED.
@@ -154,6 +158,9 @@ class Tracker:
         with bench.timer("tracker_tick_ms"):
             if ts is None:
                 ts = time.perf_counter()
+            if detected_frame_ts is None:
+                detected_frame_ts = ts   # fallback : on n'a pas de frame_ts ce tick
+                log.warning("[Tracker.tick] detected_frame_ts fallback hit - propagation gap")
             if updated_uids is None:
                 updated_uids = set()
             # predict pour les non-matchés cette frame
@@ -163,7 +170,7 @@ class Tracker:
                 if mask.state == MaskState.LOST:
                     continue
                 predict_position(mask, ts, self.cfg.screen_w, self.cfg.screen_h, self.cfg)
-            self.registry.tick_and_expire(ts,updated_uids)
+            expired = self.registry.tick_and_expire(ts, updated_uids=updated_uids,detected_frame_ts=detected_frame_ts)
 
             # Comptage unique post-purge (fusionne return + instrumentation)
             confirmed = []

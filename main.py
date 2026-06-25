@@ -92,6 +92,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         last_fast_version     = 0
         last_frame_id         = 0
         fps_timer             = time.perf_counter()
+        last_detected_frame_ts = 0.0
 
         while True:
             tracker.maybe_reload()
@@ -128,6 +129,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 slow_updated = current_version > last_detect_version
                 if slow_updated:
                     last_detect_version = current_version
+                    if detected_frame_ts is not None:
+                        last_detected_frame_ts = detected_frame_ts
 
                 if slow_updated and new_plates:
                     with bench.timer("main_match_ms"):
@@ -153,12 +156,12 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                             if new_rect is not None
                         }
                         if uid_to_rect:
-                            matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts)
+                            matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts, last_detected_frame_ts)
                             updated_uids |= matched
 
                 # ── 4. Tick (predict + TTL + purge) ──
                 with bench.timer("main_predict_ms"):
-                    confirmed_masks = tracker.tick(now, updated_uids)
+                    confirmed_masks = tracker.tick(now, updated_uids, last_detected_frame_ts)
 
                 # ── 5. Blur / debug draw ──
                 with bench.timer("main_prepare_ms"):

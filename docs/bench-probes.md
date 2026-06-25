@@ -185,23 +185,39 @@ sont portées ici — `ncc_match()` dans `detect.py` n'émet aucune sonde.
 Sondes émises par `Mask.transition()` uniquement.
 `to_dict()`, `to_fast_view()`, `__post_init__()` n'émettent aucune sonde.
 
-| Sonde                           | Type  | Description                                                   | Conditionnel                |
-| ------------------------------- | ----- | ------------------------------------------------------------- | --------------------------- |
-| `mask_transition_matched_total` | count | Transitions déclenchées par un match (détection associée)     | Oui — si transition matched |
-| `mask_promote_total`            | count | Transitions PENDING → CONFIRMED                               | Oui — si promotion          |
-| `mask_confirm_latency_ms`       | probe | Délai entre création PENDING et promotion CONFIRMED (ms)      | Oui — si promotion          |
-| `mask_revive_total`             | count | Transitions LOST → CONFIRMED (revive)                         | Oui — si revive détecté     |
-| `mask_revive_latency_ms`        | probe | Délai entre entrée LOST et revive (ms)                        | Oui — si revive détecté     |
-| `mask_transition_missing_total` | count | Transitions déclenchées sans match (mask non matché ce cycle) | Oui — si transition missing |
-| `mask_to_lost_total`            | count | Transitions vers état LOST                                    | Oui — si transition → LOST  |
-| `mask_lost_latency_ms`          | probe | Délai entre dernière détection et transition LOST (ms)        | Oui — si transition → LOST  |
+### Modèle d'horlogerie
 
-> `mask_confirm_latency_ms` et `mask_revive_latency_ms` mesurent des délais
-> calculés à l'instant de la transition — non rétroactifs.
-> `mask_transition_matched_total` et `mask_transition_missing_total` sont
-> complémentaires : chaque appel à `transition()` incrémente l'un ou l'autre.
-> Les sondes conditionnelles sont absentes du JSONL sur les frames
-> sans transition correspondante.
+L'application utilise deux bases de temps distinctes. Toute sonde de latence doit utiliser la base **capture** (timestamps `*_frame_ts`), pas `perf_counter`.
+Les champs `*_ts` (perf_counter) servent uniquement au **TTL** (perte de vue, expiration).
+
+| Sonde                           | Type  | Description                                                   | Base de temps            | Conditionnel                |
+| ------------------------------- | ----- | ------------------------------------------------------------- | ------------------------ | --------------------------- |
+| `mask_transition_matched_total` | count | Transitions déclenchées par un match (détection associée)     | (count)                  | Oui — si transition matched |
+| `mask_promote_total`            | count | Transitions PENDING → CONFIRMED                               | (count)                  | Oui — si promotion          |
+| `mask_confirm_latency_ms`       | probe | Délai entre création PENDING et promotion CONFIRMED (ms)      | **capture** (`frame_ts`) | Oui — si promotion          |
+| `mask_revive_total`             | count | Transitions LOST → CONFIRMED (revive)                         | (count)                  | Oui — si revive détecté     |
+| `mask_revive_latency_ms`        | probe | Délai entre entrée LOST et revive (ms)                        | **capture** (`frame_ts`) | Oui — si revive détecté     |
+| `mask_transition_missing_total` | count | Transitions déclenchées sans match (mask non matché ce cycle) | (count)                  | Oui — si transition missing |
+| `mask_to_lost_total`            | count | Transitions vers état LOST                                    | (count)                  | Oui — si transition → LOST  |
+| `mask_lost_latency_ms`          | probe | Délai entre dernière détection et transition LOST (ms)        | **capture** (`frame_ts`) | Oui — si transition → LOST  |
+
+> les trois sondes `*_latency_ms` utilisent la base de temps **capture** (`last_seen_frame_ts`, `lost_since_frame_ts`).
+> Ne pas confondre avec les timestamps perf_counter (`last_seen_ts`, `lost_since_ts`) utilisés pour le TTL (`lost_after_s`, `expire_after_lost_s`).
+> `mask_confirm_latency_ms` et `mask_revive_latency_ms` mesurent des délais calculés à l'instant de la transition — non rétroactifs.
+> `mask_transition_matched_total` et `mask_transition_missing_total` sont complémentaires : chaque appel à `transition()` incrémente l'un ou l'autre.
+> Les sondes conditionnelles sont absentes du JSONL sur les frames sans transition correspondante.
+> `mask_revive_latency_ms` est calculée en base CAPTURE :(detected_frame_ts − prev_lost_since_frame_ts).
+> Émise seulement si prev_lost_since_frame_ts is not None. Au match, lost_since_frame_ts est remis à None (symétrie avec lost_since_ts). NE PAS utiliser lost_since_ts (base perf_counter) — cf. Plan_Timer Stratégie 3-A
+
+### Champs Mask liés (Plan_Timer)
+
+| Champ                 | Base de temps | Usage                                                  |
+| --------------------- | ------------- | ------------------------------------------------------ |
+| `last_seen_ts`        | perf_counter  | TTL : `lost_after_s`, fraîcheur masque                 |
+| `lost_since_ts`       | perf_counter  | TTL : `expire_after_lost_s`                            |
+| `created_ts`          | perf_counter  | TTL confirm + référence latences capture               |
+| `last_seen_frame_ts`  | capture       | Latences revive/confirm (via `last_detected_frame_ts`) |
+| `lost_since_frame_ts` | capture       | Latence revive (`prev_lost_since_frame_ts`)            |
 
 ## Domaine `selector` — `capture/selector.py`
 

@@ -73,20 +73,16 @@ class TrackerConfig:
             raise ValueError(f"fast_lost_after_s ({self.fast_lost_after_s}) doit être >= fast_max_drift_s ({self.fast_max_drift_s}) : le mask doit survivre au moins le temps qu'une détection fast reste acceptable.")
 
 
-
 @dataclass(frozen=True, slots=True)
 class MatchScore:
     """
     Résultat d'évaluation d'une paire (mask, detection) par l'associator.
-
     Contrat :
         - iou, hash, total ∈ [0.0, 1.0]
         - total = w_iou * iou + w_hash * hash (poids selon detection.source)
         - gated=True ⇒ paire rejetée par gating géométrique (total non significatif)
         - reason : étiquette courte de décision ("ok", "iou_only", "geo_gate", ...)
-
-    Construction : utiliser les factories `gated_score()`, `iou_only()`, `composite()`
-    plutôt que le constructeur direct.
+    Construction : utiliser les factories `gated_score()`, `iou_only()`, `composite()` plutôt que le constructeur direct.
     """
     iou:    float
     hash:   float

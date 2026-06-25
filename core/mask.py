@@ -77,8 +77,13 @@ class Mask:
     lost_since_ts:      Optional[float]= None
     created_ts:         float          = 0.0
 
+    # --- Cycle de vie : timestamps capture (latences: mask_revive_latency_ms, mask_confirm_latency_ms) ---
+    last_seen_frame_ts:       float          = 0.0
+    lost_since_frame_ts:      Optional[float]= None
+
     confirm_after:      int            = field(default=2, repr=False)
     lost_after_s:       float          = field(default=1.0, repr=False)
+    expire_after_lost_s: float         = field(default=10.0, repr=False)
     hash_history_max:   int            = field(default=5, repr=False)
 
     hash_history:       Deque[int]     = field(init=False)
@@ -90,45 +95,46 @@ class Mask:
         if self.created_ts == 0.0:
             self.created_ts = self.last_detected_ts
 
-    def transition(self, event: str, ts: float) -> MaskState:
+    def transition(self, event: str, ts: float, detected_frame_ts: float) -> MaskState:
         """Fait progresser l'état du mask en fonction d'un événement.
             Contrat temporel (Plan_Bench L1.2) :
             `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` et joue le rôle de `last_match_ts`. Aucun champ distinct
             `last_match_ts` n'est défini ni requis ; toute sonde mesurant l'âge du dernier match (ex. `mask_last_match_age_s`) doit lire `last_seen_ts`.
-
+            Stratégie 3-A (Plan_Timer) — Séparation stricte des deux bases de temps :
+            - Timestamps capture (`*_frame_ts`) → latences (capture − capture)
+            - Timestamps perf_counter (`*_ts`)  → TTL (perf_counter − perf_counter)
+            Règle : ne JAMAIS mêler les deux bases dans un même calcul de latence. NO abs(), NO clamp() pour masquer un signe négatif — corriger la cause.
             Sondes bench L3.9 :
-                Volumétrie événements (`mask_transition_matched_total`,
-                `mask_transition_missing_total`) + transitions cycle de vie
-                (`mask_promote_total`, `mask_revive_total`, `mask_to_lost_total`)
-                + latences (`mask_confirm_latency_ms`, `mask_revive_latency_ms`,
-                `mask_lost_latency_ms`).
+                Volumétrie événements (`mask_transition_matched_total`,`mask_transition_missing_total`) + transitions cycle de vie (`mask_promote_total`, `mask_revive_total`, `mask_to_lost_total`)+ latences (`mask_confirm_latency_ms`, `mask_revive_latency_ms`,`mask_lost_latency_ms`).
         """
         if event == "matched":
             bench.count("mask_transition_matched_total")
-            prev_lost_since_ts = self.lost_since_ts
+            prev_lost_since_frame_ts = self.lost_since_frame_ts
             self.frames_matched += 1
             self.last_seen_ts = ts
+            self.last_seen_frame_ts = detected_frame_ts
             self.lost_since_ts = None
 
             if self.state == MaskState.PENDING and self.frames_matched >= self.confirm_after:
                 self.state = MaskState.CONFIRMED
                 bench.count("mask_promote_total")
-                bench.probe("mask_confirm_latency_ms", (ts - self.created_ts) * 1000.0)
+                bench.probe("mask_confirm_latency_ms", (detected_frame_ts - self.created_ts) * 1000.0)
             elif self.state == MaskState.LOST:
-                if prev_lost_since_ts is not None:
-                    bench.probe("mask_revive_latency_ms", (ts - prev_lost_since_ts) * 1000.0)
+                if prev_lost_since_frame_ts is not None:
+                    bench.probe("mask_revive_latency_ms", (detected_frame_ts - prev_lost_since_frame_ts) * 1000.0)
                 self.state = MaskState.CONFIRMED
+                self.last_seen_frame_ts = detected_frame_ts
                 self.frames_matched = 1
                 bench.count("mask_revive_total")
         elif event == "missing":
             bench.count("mask_transition_missing_total")
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
-                if (ts - self.last_seen_ts) >= self.lost_after_s:
-                    self.state = MaskState.LOST
-                    self.lost_since_ts = ts
-                    self.frames_matched = 0
-                    bench.count("mask_to_lost_total")
-                    bench.probe("mask_lost_latency_ms", (ts - self.created_ts) * 1000.0)
+                self.state = MaskState.LOST
+                self.lost_since_ts = ts
+                self.lost_since_frame_ts = detected_frame_ts
+                self.frames_matched = 0
+                bench.count("mask_to_lost_total")
+                bench.probe("mask_lost_latency_ms", (detected_frame_ts - self.created_ts) * 1000.0)
         return self.state
 
     def to_fast_view(self) -> FastMaskView:
