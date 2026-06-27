@@ -204,6 +204,11 @@ debug:
       enabled: true
       path: "logs/json/bench_fast.jsonl"
       interval_s: 1.0 # Période entre deux snapshots fast (s)
+
+    # ── Canal LifeCycle (snapshot_events, 1 ligne / events capturée)
+    events:
+      enabled: true
+      path: "logs/json/bench_events.jsonl"
     # ── Analyse comparative (bench_compare.py) ───────────────────
     compare:
       buckets:

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 from tracker.models import TrackerConfig
 from bench import bench
+from bench.lifecycle import LifecycleEvent
 
 log = logging.getLogger("tracker.registry")
 
@@ -61,6 +62,7 @@ class MaskRegistry:
         )
         added = self._add(mask)
         bench.count("registry_create_total")
+        bench.emit_lifecycle(LifecycleEvent.CREATED, added, reason=None)
         return added
 
     def remove(self, uid: int) -> Optional[Mask]:
@@ -88,9 +90,7 @@ class MaskRegistry:
         if detected_frame_ts is None:
             detected_frame_ts = ts   # fallback
         expired: List[Mask] = []
-
         expire_after_lost_s = self.cfg.expire_after_lost_s
-
         for mask in list(self._masks.values()):
             is_matched_this_tick = mask.uid in updated_uids
 
@@ -107,7 +107,7 @@ class MaskRegistry:
                     expired.append(mask)
                     del self._masks[mask.uid]
                     bench.count("registry_expire_total")
-
+                    bench.emit_lifecycle(LifecycleEvent.EXPIRED, mask, reason="ttl_expired")
         # L3.2 — gauges états courants (fin de boucle, après toutes transitions)
         confirmed = sum(1 for m in self._masks.values() if m.state == MaskState.CONFIRMED)
         pending   = sum(1 for m in self._masks.values() if m.state == MaskState.PENDING)
@@ -134,4 +134,5 @@ class MaskRegistry:
             f"(état={worst.state.name}, masks={len(self._masks)}/{self.cfg.max_masks})"
         )
         del self._masks[worst.uid]
+        bench.emit_lifecycle(LifecycleEvent.EVICTED, worst, reason="max_capacity")
         bench.count("registry_evict_total")

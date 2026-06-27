@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("bench.jsonl_writer")
 
 # ── Modes de snapshot supportés ──────────────────────────────────────────────
-_VALID_MODES = ("agg", "frame", "fast")
+_VALID_MODES = ("agg", "frame", "fast", "events")
 
 # ── Sections autorisées par canal (cf. docs/bench-jsonl-schema.md §7) ────────
 # Matrice de validation défensive : toute section présente dans le snap mais
@@ -26,22 +26,21 @@ _ALLOWED_SECTIONS: dict[str, frozenset[str]] = {
     "agg":   frozenset({"probes", "gauges", "rates"}),
     "frame": frozenset({"probes", "gauges", "counts"}),
     "fast":  frozenset({"probes", "gauges", "rates"}),
+    "events": frozenset({"events"}),
 }
 
 class BenchJsonlWriter:
     """Thread daemon qui écrit périodiquement un snapshot bench en JSONL.
-
     Trois modes :
-      - "agg"   → appelle bench.snapshot_all(window_s)   — 1 ligne / interval_s
-      - "frame" → appelle bench.snapshot_frame()         — 1 ligne / frame (push externe)
-      - "fast"  → appelle bench.snapshot_fast()          — 1 ligne / interval_s
-
+      - "agg"     → appelle bench.snapshot_all(window_s)   — 1 ligne / interval_s
+      - "frame"   → appelle bench.snapshot_frame()         — 1 ligne / frame (push externe)
+      - "fast"    → appelle bench.snapshot_fast()          — 1 ligne / interval_s
+      - "events"  → appelle bench.snapshot_events()        — 1 ligne / events (push externe)
     Architecture queue :
       - Queue bornée (maxsize configurable).
       - Producteur : _enqueue() appelé par _tick() ou push_frame() — put_nowait().
       - Consommateur : _writer_loop() — thread daemon dédié.
       - Saturation : ligne droppée + bench.count("bench_writer_dropped") incrémenté.
-
     Cycle de vie :
       - start() → ouvre fichier + démarre thread → True si OK, False si OSError.
       - stop()  → vide la queue (drain) + join(timeout) + ferme fichier.
@@ -204,6 +203,19 @@ class BenchJsonlWriter:
         snap = self._bench.snapshot_frame()
         if not snap:
             self._bench.count("bench_writer_frame_empty_snap")
+            return
+        self._enqueue(snap)
+
+    def push_events(self):
+        """
+        No-op si mode != 'events'.
+        Proxy événementiel : draine le buffer du registry et enfile.
+        """
+        if self._mode != "events":
+            return
+        snap = self._bench.snapshot_events()
+        if not snap:
+            self._bench.count("bench_writer_events_empty_snap")
             return
         self._enqueue(snap)
 

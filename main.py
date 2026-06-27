@@ -188,6 +188,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     bench.count("main_frames_total")
                     bench.gauge("main_masks_total", len(confirmed_masks))
                 bench.push_frame()
+                bench.push_events()
                 # ── 8. FPS print toutes les 2s ──
                 elapsed = time.perf_counter() - fps_timer
                 if elapsed >= 2.0:

@@ -555,13 +555,13 @@
 - **Anti-patterns** :
   - Masquer le négatif par une valeur absolue (`abs()`) sans corriger la cause → fausserait définitivement la métrique.
 
-### 🔴 B-05a-instr — Instrumentation par-mask `[OUVERT par B-05a]`
+### 🟢 B-05a-instr — Instrumentation par-mask `[LIVRÉ]`
 
 - **Origine** : les métriques B-05a (ratio éphémères ~98 %, cascade ~100 %) sont des **proxies par état/temporels**. Les champs par-mask sont absents des bench_frame.
 - **Objectif** : émettre, à chaque EXPIRE de mask, un enregistrement par-mask `{mask_id, total_matches, create_ts, expire_ts}` pour passer des proxies à la mesure exacte.
 - **Périmètre** :
   - Ajouter l'émission d'un event `MASK_EXPIRE` instrumenté dans `registry.py` (ou le point de purge), portant au minimum : `mask_id`, `total_matches` (nombre de matches cumulés sur la vie du mask), `create_ts`, `expire_ts`, `final_state`.
-  - Exposition CSV/JSONL cohérente avec `detect.csv.*` existant.
+  - Exposition CSV/JSONL cohérente avec `detect.csv.*` existant (ou autre).
 - **Métriques exactes débloquées** :
   - **Ratio éphémères exact** : `count(masks where total_matches == 1 @EXPIRE) / count(created_masks)` (remplace le proxy ~98 %).
   - **Cascade exacte** : `count(EXPIRE where expire_ts - create_ts < 2 s) / count(EXPIRE)` (remplace le proxy ~100 %).

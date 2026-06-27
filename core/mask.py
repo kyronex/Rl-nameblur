@@ -6,7 +6,8 @@ from enum import Enum, auto
 from typing import Optional, List , Deque
 import numpy as np
 from core.box import Box
-from bench import bench
+from bench.bench     import bench
+from bench.lifecycle import LifecycleEvent
 
 class MaskState(Enum):
     PENDING   = auto()   # vient d'apparaître, pas encore confirmé
@@ -71,6 +72,7 @@ class Mask:
     # --- Cycle de vie : état + compteurs ---
     state:              MaskState      = MaskState.PENDING
     frames_matched:     int            = 0
+    total_matches_cumul: int           = 0
 
     # --- Cycle de vie : timestamps
     last_seen_ts:       float          = 0.0
@@ -111,6 +113,7 @@ class Mask:
             bench.count("mask_transition_matched_total")
             prev_lost_since_frame_ts = self.lost_since_frame_ts
             self.frames_matched += 1
+            self.total_matches_cumul += 1
             self.last_seen_ts = ts
             self.last_seen_frame_ts = detected_frame_ts
             self.lost_since_ts = None
@@ -119,6 +122,7 @@ class Mask:
                 self.state = MaskState.CONFIRMED
                 bench.count("mask_promote_total")
                 bench.probe("mask_confirm_latency_ms", (detected_frame_ts - self.created_ts) * 1000.0)
+                bench.emit_lifecycle(LifecycleEvent.CONFIRMED, self, reason=None)
             elif self.state == MaskState.LOST:
                 if prev_lost_since_frame_ts is not None:
                     bench.probe("mask_revive_latency_ms", (detected_frame_ts - prev_lost_since_frame_ts) * 1000.0)
@@ -126,6 +130,7 @@ class Mask:
                 self.last_seen_frame_ts = detected_frame_ts
                 self.frames_matched = 1
                 bench.count("mask_revive_total")
+                bench.emit_lifecycle(LifecycleEvent.REVIVE, self, reason=None)
         elif event == "missing":
             bench.count("mask_transition_missing_total")
             if self.state in (MaskState.PENDING, MaskState.CONFIRMED):
@@ -135,6 +140,7 @@ class Mask:
                 self.frames_matched = 0
                 bench.count("mask_to_lost_total")
                 bench.probe("mask_lost_latency_ms", (detected_frame_ts - self.created_ts) * 1000.0)
+                bench.emit_lifecycle(LifecycleEvent.LOST, self, reason=None)
         return self.state
 
     def to_fast_view(self) -> FastMaskView:
@@ -176,6 +182,7 @@ class Mask:
             "scores":            _serialize_scores(self.scores),
             "state":             self.state.name,
             "frames_matched":    self.frames_matched,
+            "total_matches_cumul":  self.total_matches_cumul,
             "last_seen_ts":      round(self.last_seen_ts, 4),
             "created_ts":        round(self.created_ts, 4),
             "lost_since_ts":     round(self.lost_since_ts, 4) if self.lost_since_ts is not None else None,

@@ -18,13 +18,13 @@
 3. [Canal `agg`](#3-canal-agg)
 4. [Canal `fast`](#4-canal-fast)
 5. [Canal `frame`](#5-canal-frame)
-6. [Contrat des sections imbriquées](#6-contrat-des-sections-imbriquées)
-   - 6.1 [`probes`](#61-probes)
-   - 6.2 [`gauges`](#62-gauges)
-   - 6.3 [`rates`](#63-rates)
-   - 6.4 [`counts`](#64-counts)
-7. [Matrice des sections par canal](#7-matrice-des-sections-par-canal)
-8. [Règles d'évolution](#8-règles-dévolution)
+6. [Canal `events`](#6-canal-events)
+7. [Contrat des sections imbriquées](#7-contrat-des-sections-imbriquées)
+   - 7.1 [`probes`](#71-probes)
+   - 7.2 [`gauges`](#72-gauges)
+   - 7.3 [`rates`](#73-rates)
+   - 7.4 [`counts`](#74-counts)
+8. [Matrice des sections par canal](#8-matrice-des-sections-par-canal)
 9. [Référence d'implémentation](#9-référence-dimplémentation)
 10. [Paramètres de configuration](#10-paramètres-de-configuration)
 
@@ -52,13 +52,13 @@ Trois canaux indépendants, un fichier par canal et par session :
 
 Chaque ligne JSONL, tous canaux confondus, contient au minimum :
 
-| Champ            | Type   | Description                                              |
-| ---------------- | ------ | -------------------------------------------------------- |
-| `schema_version` | int    | Version du contrat (valeur courante : `1`).              |
-| `ts`             | float  | Timestamp wall-clock UNIX (`time.time()`), secondes.     |
-| `mono`           | float  | Horloge monotone (`time.perf_counter()`), secondes.      |
-| `session_id`     | string | Identifiant unique de session, propagé sur les 3 canaux. |
-| `mode`           | string | Canal d'origine : `"frame"` / `"agg"` / `"fast"`.        |
+| Champ            | Type   | Description                                                    |
+| ---------------- | ------ | -------------------------------------------------------------- |
+| `schema_version` | int    | Version du contrat (valeur courante : `1`).                    |
+| `ts`             | float  | Timestamp wall-clock UNIX (`time.time()`), secondes.           |
+| `mono`           | float  | Horloge monotone (`time.perf_counter()`), secondes.            |
+| `session_id`     | string | Identifiant unique de session, propagé sur les 3 canaux.       |
+| `mode`           | string | Canal d'origine : `"frame"` / `"agg"` / `"fast"` / `"events"`. |
 
 ### 2.2 Règles d'évolution du `schema_version`
 
@@ -166,9 +166,57 @@ Mêmes exclusions que §3.3 (`fast_*` et `bench_writer_*`).
 
 ---
 
-## 6. Contrat des sections imbriquées
+## 6. Canal `events`
 
-### 6.1 `probes`
+### 6.1 Structure
+
+```json
+{
+  "schema_version": <int>,
+  "ts": <float>,
+  "mono": <float>,
+  "session_id": <string>,
+  "mode": "events",
+  "events": {
+    "records": [<LifecycleRecord>, ...]
+  }
+}
+```
+
+### 6.2 Section `events.records` — présence
+
+La section `events` est **conditionnellement présente** :
+
+- `events.records` est une **liste** (peut être vide).
+- La ligne JSONL est émise uniquement si `events` est non vide (au moins un record). Si `events` est absent ou `records` est vide, `snapshot_events()` retourne `{}` et aucune ligne n'est écrite.
+- Conséquence côté consommateur : la présence de `events` signifie « au moins un événement lifecycle sur cette fenêtre ». L'absence signifie « aucun événement ».
+
+### 6.3 LifecycleRecord — champs
+
+Chaque élément de `records` contient **exactement** les champs suivants :
+
+| Champ                 | Type     | Description                                                                                                                                      |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `event`               | `string` | Valeur attendue : `"LifecycleEvent.CREATED"` / `"EXPIRED"` / `"LOST"` / `"REVIVE"` (format long). CONFIRMED et EVICTED absents du corpus actuel. |
+| `mask_id`             | `int`    | UID unique du mask.                                                                                                                              |
+| `rx`, `ry`            | `float`  | Coin supérieur-gauche du rectangle de détection.                                                                                                 |
+| `rw`, `rh`            | `float`  | Largeur / hauteur du rectangle.                                                                                                                  |
+| `confidence`          | `float`  | Score de confiance (0.0 – 1.0).                                                                                                                  |
+| `created_ts`          | `float`  | Timestamp `perf_counter` de création du mask.                                                                                                    |
+| `event_ts`            | `float`  | Timestamp `perf_counter` de l'événement.                                                                                                         |
+| `total_matches_cumul` | `int`    | Compteur cumulatif de toutes les détections.                                                                                                     |
+| `source`              | `string` | `"slow"` ou `"fast"` — **uniquement pour CREATED** ; `null` sinon.                                                                               |
+| `frames_matched`      | `int`    | Frames consécutifs avec match (1 sur CREATED/REVIVE, 0 sur LOST/EXPIRED).                                                                        |
+| `lost_since_ts`       | `float`  | Timestamp du passage à LOST — `null` pour CREATED/REVIVE.                                                                                        |
+| `state`               | `string` | État machine : `"PENDING"` (CREATED) / `"CONFIRMED"` (REVIVE) / `"LOST"` / `"EXPIRED"`.                                                          |
+| `reason`              | `string` | `null` pour CREATED/LOST/REVIVE ; `"timeout_after_lost"` pour EXPIRED.                                                                           |
+| `revived`             | `bool`   | Toujours `null` (pas encore peuplé côté producteur).                                                                                             |
+
+---
+
+## 7. Contrat des sections imbriquées
+
+### 7.1 `probes`
 
 Chaque entrée est un objet de statistiques agrégées sur la fenêtre temporelle du canal.
 
@@ -190,7 +238,7 @@ Chaque entrée est un objet de statistiques agrégées sur la fenêtre temporell
 
 **Invariant** : une probe avec `count == 0` n'est **jamais** émise — elle est filtrée à la source par les méthodes `snapshot_*()`.
 
-### 6.2 `gauges`
+### 7.2 `gauges`
 
 État instantané — dernière valeur posée via `bench.gauge(name, value)`.
 
@@ -200,7 +248,7 @@ Chaque entrée est un objet de statistiques agrégées sur la fenêtre temporell
 
 Aucun agrégat : la valeur publiée est celle au moment du snapshot.
 
-### 6.3 `rates`
+### 7.3 `rates`
 
 Débit moyen sur la fenêtre du canal.
 
@@ -213,7 +261,7 @@ Débit moyen sur la fenêtre du canal.
 
 **Invariant** : un rate de valeur `0.0` n'est **jamais** émis — filtré à la source.
 
-### 6.4 `counts`
+### 7.4 `counts`
 
 Compteur différentiel sur la fenêtre entre deux appels à `snapshot_frame()`.
 
@@ -227,7 +275,7 @@ La valeur est remise à zéro après chaque appel à `snapshot_frame()` — elle
 
 ---
 
-## 7. Matrice des sections par canal
+## 8. Matrice des sections par canal
 
 | Section  | `frame` | `agg` | `fast` |
 | -------- | ------- | ----- | ------ |
@@ -240,16 +288,6 @@ Légende :
 
 - ✅ = section autorisée (présente si non vide).
 - ❌ = section interdite (rejetée par `_validate_snap` côté writer).
-
----
-
-## 8. Règles d'évolution
-
-1. **Ajout d'un champ** dans une section existante (`probes`, `gauges`, `rates`, `counts`) → autorisé sans bump si les consommateurs existants l'ignorent silencieusement.
-2. **Renommage / suppression** d'un champ → bump `schema_version` obligatoire.
-3. **Ajout d'une nouvelle section** dans un canal → mise à jour de §7 (matrice) + §9 (référence d'implémentation) + `_ALLOWED_SECTIONS` dans `jsonl_writer.py`.
-4. **Ajout d'un nouveau canal** → nouveau bloc §X dédié + mise à jour §1 et §7.
-5. **Changement de sémantique** (ex. `counts` cumulatif au lieu de différentiel) → bump `schema_version` obligatoire + note explicite dans §11.
 
 ---
 

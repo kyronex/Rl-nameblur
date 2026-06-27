@@ -6,6 +6,7 @@ from datetime import datetime
 
 from config import cfg
 from bench.jsonl_writer import BenchJsonlWriter
+from bench.lifecycle import LifecycleRecord, LifecycleEvent
 
 """
 Bench — registre centralisé de métriques runtime (probes / counts / gauges).
@@ -53,6 +54,7 @@ class BenchRegistry:
                     # Buffer frame : sondes accumulées entre 2 appels snapshot_frame()
                     inst._frame_probes = defaultdict(list)
                     inst._frame_counts = defaultdict(int)
+                    inst._events = {}
                     cls._instance = inst
         return cls._instance
 
@@ -189,6 +191,51 @@ class BenchRegistry:
     def _is_fast_probe(name: str) -> bool:
         return any(name.startswith(p) for p in _FAST_PROBE_PREFIXES)
 
+    def emit_lifecycle(self, event: str, mask, reason: str | None = None):
+        from core.mask import MaskState
+        """Émet un événement lifecycle pour un mask.
+        Tous les champs du record sont peuplés conformément à LifecycleRecord (lifecycle.py).
+        session_id est ajouté par le writer._enqueue() — non dupliqué ici.
+        """
+        # ── Accès thread-safe aux attributs du mask (peuvent être un Mask ou un int) ──
+        try:
+            mask_id = int(getattr(mask, "uid", mask))
+        except Exception:
+            mask_id = int(mask) if mask is not None else 0
+
+        event_ts    = time.perf_counter()
+        state       = getattr(mask, "state", None)
+        state_val   = getattr(state, "name", str(state)) if state is not None else ""
+        rect        = getattr(mask, "rect", ()) or ()
+        conf        = getattr(mask, "confidence", 0.0)
+        created_ts  = getattr(mask, "created_ts", 0.0)
+        total_cumul = getattr(mask, "total_matches_cumul", 0)
+        frames_m    = getattr(mask, "frames_matched", 0)
+        last_src    = getattr(mask, "last_source", None)
+        lost_since  = getattr(mask, "lost_since_ts", None)
+
+        record: LifecycleRecord = {
+            "event":               str(event),
+            "mask_id":             mask_id,
+            "state":               state_val,
+            "rx":                  float(rect[0]) if len(rect) > 0 else 0.0,
+            "ry":                  float(rect[1]) if len(rect) > 1 else 0.0,
+            "rw":                  float(rect[2]) if len(rect) > 2 else 0.0,
+            "rh":                  float(rect[3]) if len(rect) > 3 else 0.0,
+            "confidence":          float(conf),
+            "created_ts":          float(created_ts),
+            "event_ts":            float(event_ts),
+            "total_matches_cumul": int(total_cumul),
+            "frames_matched":      int(frames_m),
+            "source":              last_src if last_src is not None else None,
+            "lost_since_ts":       float(lost_since) if lost_since is not None else None,
+            "reason":              reason if reason is not None else None,
+            "revived":             True if (str(event) == str(LifecycleEvent.REVIVE) and
+                                             state_val == str(MaskState.CONFIRMED)) else None,
+        }
+        with self._probe_lock:
+            self._events[mask_id] = record
+
     def snapshot_all(self, window_s: float) -> dict:
         """Snapshot agrégé canal 'agg' — exclut les sondes fast et writer."""
         if not self._enabled:
@@ -323,6 +370,14 @@ class BenchRegistry:
             return {}
         return {"probes": probes, "gauges": gauges, "rates": rates}
 
+    def snapshot_events(self):
+        if not self._enabled:
+            return {}
+        with self._probe_lock:
+            drained = list(self._events.values())
+            self._events.clear()
+        return {"events": {"records": drained}}
+
     # ─────────────────────────────────────────────────────────────
     #  Frame push (proxy vers writer frame)
     # ─────────────────────────────────────────────────────────────
@@ -332,6 +387,12 @@ class BenchRegistry:
         writer = self._writers.get("frame")
         if writer is not None:
             writer.push_frame()
+
+    def push_events(self):
+        """Appelé par main.py à chaque frame capturée. No-op si writer frame inactif."""
+        writer = self._writers.get("events")
+        if writer is not None:
+            writer.push_events()
 
     # ─────────────────────────────────────────────────────────────
     #  Résumé console
@@ -412,7 +473,7 @@ class BenchRegistry:
         max_chars_cfg = cfg.get("debug.bench.writer.max_chars", None)
         max_chars = int(max_chars_cfg) if max_chars_cfg is not None else None
 
-        for mode in ("agg", "frame", "fast"):
+        for mode in ("agg", "frame", "fast", "events"):
             if not cfg.get(f"debug.bench.{mode}.enabled", False):
                 continue
             path = cfg.get(f"debug.bench.{mode}.path", f"logs/json/bench_{mode}.jsonl")
