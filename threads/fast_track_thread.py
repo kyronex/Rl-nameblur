@@ -5,14 +5,32 @@ import threading
 import math
 import logging
 from typing import List, Optional
+from dataclasses import dataclass
 from config import cfg as _global_cfg
 from core.mask import FastMaskView
 from detection.detect import ncc_match
 from core.optical_flow import of_track
 from threads.fast_track_config import FastTrackConfig
 from bench import bench
+from bench.lifecycle import LifecycleEvent
 
 log = logging.getLogger("threads.fast_track_thread")
+
+class _FastLifecyclePayload:
+    """
+    Thin wrapper around a FastMaskView so bench.emit_lifecycle() can read
+    all required attributes plus the per-source counters (cumul=0 for fast).
+
+    LifecycleEvent values: CREATED, CONFIRMED, LOST, REVIVE, EXPIRED, EVICTED
+    """
+    def __init__(self, view: FastMaskView, source: str = "fast"):
+        self.uid                = view.uid
+        self.state              = view.state
+        self.rect               = view.rect
+        self.confidence         = view.confidence
+        self.total_matches_cumul = 0   # fast thread doesn't track cumul
+        self.frames_matched     = 0    # fast thread doesn't track per-frame
+        self.last_source             = source
 
 class FastTrackThread:
     """
@@ -127,50 +145,38 @@ class FastTrackThread:
         while self._running:
             with self._cfg_lock:
                 snap = self.cfg
-
             triggered = self._new_frame_event.wait(timeout=snap.event_timeout_s)
             if not self._running:
                 break
             self._new_frame_event.clear()
             if not triggered:
                 continue
-
-            # Mesure latence event→réveil (basée sur ts de la frame déposée)
-            wakeup_t = time.perf_counter()
-
             try:
                 # Filet de sécurité hot-reload (au cas où main n'appelle pas)
                 self.maybe_reload()
                 with self._cfg_lock:
                     snap = self.cfg
-
                 # ── 1. Récupérer frame + views ──
                 with self._frame_lock:
                     frame = self._latest_frame
                     frame_ts = self._latest_frame_ts
                     views = self._latest_views
-
                 if frame is None or not views:
                     self._prev_gray = None
                     continue
-
                 if frame_ts <= self._last_processed_ts:
                     continue
                 self._last_processed_ts = frame_ts
-
                 # Lag = délai entre dépôt de la frame et début effectif du traitement.
                 lag_ms = (time.perf_counter() - frame_ts) * 1000.0
                 bench.probe("fast_wakeup_lag_ms", lag_ms)
                 bench.count("fast_tick_total")
                 bench.probe("fast_n_masks", float(len(views)))
-
                 # ── Tick complet ──
                 with bench.timer("fast_tick_ms"):
-
                     # ── 2. Convertir en gris ──
                     with bench.timer("fast_cvt_ms"):
                         curr_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-
                     # ── 3. Pas de prev_gray → init ──
                     if self._prev_gray is None:
                         self._prev_gray = curr_gray
@@ -183,15 +189,12 @@ class FastTrackThread:
                             self._results_ts = frame_ts
                             self._result_version += 1
                         continue
-
                     # ── 4. Tracking par view ──
                     results = []
                     active_ids = set()
                     max_stale = snap.max_stale_frames
-
                     # Stockage temporaire pour séparer phases OF / NCC dans les sondes
-                    of_outcomes = []  # [(view, candidate_rect, of_ok)]
-
+                    of_outcomes = []
                     # ── 4a. Phase OF (toutes les views) ──
                     with bench.timer("fast_of_total_ms"):
                         for v in views:
@@ -199,15 +202,12 @@ class FastTrackThread:
                             if v.uid not in self._last_known:
                                 self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
                             last_state = self._last_known[v.uid]
-
                             candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
                             bench.count("fast_mask_processed_total")
                             if not of_succeeded:
                                 bench.count("fast_of_failed_total")
                                 candidate_rect = last_state["rect"]
-
                             of_outcomes.append((v, last_state, candidate_rect))
-
                     # ── 4b. Phase NCC + fallback stale ──
                     with bench.timer("fast_ncc_total_ms"):
                         for v, last_state, candidate_rect in of_outcomes:
@@ -219,27 +219,27 @@ class FastTrackThread:
                                 bench.probe("fast_ncc_score", score)
                             else:
                                 ncc_rect, score = None, 0.0
-
                             if ncc_rect is not None:
                                 bench.count("fast_ncc_confirmed_total")
                                 last_state["rect"] = ncc_rect
                                 last_state["stale"] = 0
                                 results.append((v.uid, ncc_rect, score))
+                                # ── Lifecycle: NCC a confirmé le mask (source=fast) ──
+                                bench.emit_lifecycle(LifecycleEvent.CONFIRMED, _FastLifecyclePayload(v, source="fast"), reason="ncc_fast")
                             else:
                                 last_state["stale"] += 1
                                 if last_state["stale"] > max_stale:
                                     bench.count("fast_mask_lost_total")
+                                    # ── Lifecycle: mask expiré en stale (source=fast) ──
+                                    bench.emit_lifecycle(LifecycleEvent.LOST, _FastLifecyclePayload(v, source="fast"), reason="stale_expire")
                                 else:
                                     bench.count("fast_stale_skipped_total")
-
                     # ── 5. Purger masques disparus ──
                     for old_id in list(self._last_known.keys()):
                         if old_id not in active_ids:
                             del self._last_known[old_id]
-
                     # ── 6. Mémoriser frame courante ──
                     self._prev_gray = curr_gray
-
                     # ── 7. Publier ──
                     with self._results_lock:
                         self._results = results

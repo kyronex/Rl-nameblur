@@ -25,21 +25,22 @@
 
 ```text
 🚨 P0 — Bugs bloquants (séquentiel strict)
-   ├── B-01  Quick-fix zombies via plafonnement fast_max_drift_s            ✅
-   ├── B-02  Correction association fast tracker (cause racine)             ✅
-   ├── B-03  TTL temporel (cycle de vie en secondes côté Tracker)           ✅
-   ├── B-00  Anomalies config #2, #3, #4                                    ✅
-   ├── B-04  Investigation dérive dt + nettoyage post-B-03                  ✅
+   ├── B-01  Quick-fix zombies via plafonnement fast_max_drift_s                      ✅
+   ├── B-02  Correction association fast tracker (cause racine)                       ✅
+   ├── B-03  TTL temporel (cycle de vie en secondes côté Tracker)                     ✅
+   ├── B-00  Anomalies config #2, #3, #4                                              ✅
+   ├── B-04  Investigation dérive dt + nettoyage post-B-03                            ✅
    │    ├── livrable interne : correction compute_predicted_rect (#60)
    │    └── déclencheur humain : footage tagué teleport (pendant B-04)
-   ├── B-08  TTL différencié par source (slow/fast)                         ✅
-   ├── B-00b Anomalie config #1 (teleport_thresh)                           ✅
-   ├── B-05  Slow detector                                                  ✅
-   ├── B-05a Audit slow detector                                            ✅
-   ├── B-05a-revive Bug `mask_revive_latency_ms` négatif
-   ├── B-05a-instr Instrumentation par-mask
-   ├── B-05a-bis Audit non-consolidation : +95 % des masks LOST non CONFIRMED
-   ├── B-05b Correctifs slow detector
+   ├── B-08  TTL différencié par source (slow/fast)                                   ✅
+   ├── B-00b Anomalie config #1 (teleport_thresh)                                     ✅
+   ├── B-05  Slow detector                                                            ✅
+   ├── B-05a Audit slow detector                                                      ✅
+   ├── B-05a-revive Bug `mask_revive_latency_ms` négatif                              ✅
+   ├── B-05a-instr Instrumentation par-mask                                           ✅
+   ├── B-05a-bis Audit non-consolidation : +95 % des masks LOST non CONFIRMED         ✅
+   ├── B-05c Recalibrage matching NCC (suite B-05a-bis)
+   ├── B-05b Correctifs slow detector (réorienté — levier NCC, pas TTL)
    ├── B-09  TTL différencié par état (PENDING/CONFIRMED)
    └── B-06  Auto-keepalive masks stationnaires (patch tactique)
          │
@@ -577,26 +578,80 @@
 
 ---
 
-### 🔴 B-05a-bis — Audit non-consolidation : pourquoi >95 % des masks finissent LOST et non CONFIRMED `[OUVERT par B-05a]`
+### 🟢 B-05a-bis — Audit non-consolidation : pourquoi >95 % des masks finissent LOST et non CONFIRMED `[RÉSOLU — audit A/B livré]`
 
-- **Origine** : audit B-05a a établi **0 / 64** masks atteignant CONFIRMED et **~97 %** du stock actif en LOST permanent. La cause racine reste à isoler.
-- **Objectif** : identifier le mécanisme précis qui empêche la transition PENDING → CONFIRMED et provoque la chute en LOST avant consolidation.
-- **Pistes à instruire (ordre par coût croissant)** :
-  1. **Latence de re-match** : mesurer le délai entre deux matches successifs d'un même mask. `mask_lost_latency_ms` moyen ~998 ms ≫ `lost_after_s = 0.3 s` → le mask expire avant d'être re-vu. Vérifier la cadence réelle du détecteur slow (FPS effectif du slow path vs capture).
-  2. **Seuils de re-match trop stricts** (lien direct B-05b #2/#3) : refine (`min_text_fill`, `min_transition`, `min_proj_score`) et geometry (`min_fill`, `min_area`, `min_ratio`, `max_ratio`) rejettent-ils des re-détections de masks déjà créés ?
-  3. **Critère de confirmation** : auditer la condition exacte PENDING → CONFIRMED dans `registry.py` / `tracker.py` (`confirm_after`, compteur de matches, fenêtre temporelle). Vérifier si le compteur de matches est remis à zéro à chaque LOST→revive (ce qui interdirait toute accumulation).
-  4. **Effet du bug revive** (lien B-05a-revive) : `mask_revive_latency_ms` négatif pourrait corrompre la comptabilité des matches ou la fenêtre de confirmation. À écarter ou confirmer comme cause contributive.
-- **Métriques à produire** :
-  - Distribution du nombre de matches par mask avant EXPIRE (exige B-05a-instr).
-  - Délai inter-match par mask (p50, p95, max).
-  - FPS effectif du détecteur slow vs capture FPS.
-  - Corrélation entre échecs de re-match et seuils refine/geometry (combien de blobs candidats rejetés par chaque filtre, par frame).
-- **Livrables** : rapport isolant la cause racine unique (ou hiérarchisée), recommandation chiffrée alimentant le périmètre exact de B-05b.
-- **Préconditions** : B-05a-instr livré (mesure exacte des matches par mask).
-- **Bloque** : finalisation B-05b (le périmètre #2/#3 vs #3-confirmation dépend de ce verdict).
-- **Anti-patterns** :
-  - Conclure « seuils trop stricts » sans avoir vérifié la latence de re-match (#1 doit être écartée en premier, coût marginal).
-  - Corriger les seuils avant d'avoir confirmé que le compteur de matches n'est pas réinitialisé au revive (#3).
+- **Origine** : audit B-05a a établi **0 / 64** masks atteignant CONFIRMED et **~97 %** du stock actif en LOST permanent. La cause racine est désormais isolée par test A/B (TTL `lost_after_s` 0.3/0.5 → 1.2/1.2, 4 fichiers session consolidés).
+- **Objectif initial** : identifier le mécanisme précis qui empêche la transition PENDING → CONFIRMED.
+- **Pistes à instruire — verdict** :
+  1. ~~**Latence de re-match**~~ → **ÉCARTÉE comme levier de fond**. Le TTL a bien un effet mécanique attendu (lifetime moyen +31,6 %, 2,158 s → 2,839 s) mais il est **en amont** : allonger le TTL garde plus longtemps en vie des masks qui ne seront **jamais** confirmés. Le goulot est sur le matching NCC, pas sur le TTL.
+  2. **Seuils de re-match / matching NCC** → **CONFIRMÉ cause racine**. NCC médiane 0,291 → 0,249 ; % matchs NCC < 0,4 = 55,4 % → 65,5 %. La majorité des masks sont **rejetés au matching** avant de pouvoir accumuler assez de confirmations pour atteindre CONFIRMED. Agir sur les seuils refine/geometry ou sur le descripteur NCC (pHash) est le levier à privilégier.
+  3. **Critère de confirmation** → **non instruit** par le test A/B (hors périmètre TTL). Restera à auditer dans le code `registry.py` / `tracker.py` — voir B-05c.
+  4. **Effet du bug revive** → **non instruit** (champ `revived = null` des deux côtés ; métrique non exploitable).
+
+---
+
+- **Verdict (audit A/B livré)**
+
+| Métrique              | AVANT (0.3/0.5) | APRÈS (1.2/1.2) | Lecture                |
+| --------------------- | --------------- | --------------- | ---------------------- |
+| Durée session         | 58,88 s         | 65,14 s         | comparables            |
+| Cadence capture       | 90,85 Hz        | 129,16 Hz       | ×1,42 (non iso-source) |
+| Slow events           | 5,45 Hz         | 5,82 Hz         | iso-timing             |
+| Fast events           | 8,92 Hz         | 43,31 Hz        | artefact cadence       |
+| Terminal LOST         | **100 %**       | **98,4 %**      | marginal               |
+| Terminal CONFIRMED    | 0 %             | 2 / 125 (1,6 %) | quasi-nul              |
+| EXPIRED (ttl_expired) | 98 %            | 98,4 %          | inchangé               |
+| Lifetime moy.         | 2,158 s         | 2,839 s         | **+31,6 %**            |
+| NCC médiane           | 0,291           | 0,249           | cause racine           |
+| NCC < 0,4             | 55,4 %          | 65,5 %          | +10 pp                 |
+
+- **Conclusion** : le TTL **ne corrige pas** la non-consolidation. Effet mécanique réel mais marginal sur LOST. Cause racine : matching NCC en amont (piste #2). Toute action sur le TTL sans traiter le matching NCC est un anti-pattern.
+- **Bloque** : B-05b (réorienté : levier NCC, pas TTL).
+
+---
+
+- **Réserves méthodologiques**
+
+- `revived` = `null` des deux côtés → métrique REVIVE **non exploitable** ; les "23 revive" antérieurs ne sont pas fiables.
+- Sessions **non iso-capture** : cadence 90,85 Hz (AVANT) vs 129,16 Hz (APRÈS), ×1,42. Comparatif valide en **tendance/relatif** uniquement. L'écart fast events (8,9→43 Hz) est un **artefact**, pas un effet de la config.
+- **Condition préalable à tout A/B définitif** : rejouer les deux configs sur **la même source vidéo à cadence identique** (iso-capture à ±1 Hz) pour neutraliser l'artefact.
+
+---
+
+### 🔵 B-05c — Recalibrage du matching NCC (suite B-05a-bis) `[OUVERT par B-05a-bis]`
+
+- **Origine** : ouvert par le verdict B-05a-bis. L'audit A/B a confirmé que la **cause racine** de la non-consolidation est **en amont du TTL** : le matching NCC rejette la majorité des masks avant qu'ils n'atteignent CONFIRMED. Le TTL ne peut pas être le levier.
+- **Objectif** : faire remonter le taux de consolidation PENDING → CONFIRMED de façon significative (cible : Terminal LOST ≤ 80 %, Terminal CONFIRMED à deux chiffres), en agissant sur le **matching NCC** et ses seuils.
+
+- **Préconisations** :
+  1. **Geler le TTL à 1.2/1.2** (ou toute valeur stabilisée). Effet marginal mais **non nuisible** : lifetime +31,6 % sans coût significatif. Ne pas y consacrer plus d'effort.
+  2. **Pivoter l'effort sur le seuil / coût NCC** : 65,5 % des matchs sont sous 0,4 (APRES). Deux axes :
+     - (a) **Abaisser le seuil de confirmation NCC** de façon calibrée (risque : faux positifs si descripteur insuffisamment robuste — valider sur footage tagué).
+     - (b) **Améliorer la qualité du descripteur** (pHash → multi-hash, ou augmentation de la résolution du patch NCC) pour réduire le bruit de matching indépendamment du seuil.
+  3. **Auditer `confirm_after` dans `registry.py` / `tracker.py`** : vérifier si le compteur de matches est réinitialisé au revive (`LOST → CREATE`), ce qui interdirait toute accumulation vers CONFIRMED. Piste #3 de B-05a-bis — non instruite par le test A/B, à traiter dans le code.
+
+- **Métriques cibles / critères de succès** :
+  - Terminal LOST **< 80 %** (vs 98,4 % post-audit — descente franche, pas marginale).
+  - Terminal CONFIRMED **≥ 10 %** (vs 1,6 % quasi-nul).
+  - Ratio masks NCC < 0,4 en baisse (bruit de matching réduit).
+  - Non-régression TP : taux de détection vrai positif préservé à ±2 %.
+
+- **Préconditions** :
+  - B-05a-bis livré. ✅
+  - **Footage tagué** : transitions de scène + apparitions multiples + régime statique long + mouvements rapides.
+  - Session iso-capture disponible pour A/B définitif.
+
+- **Bloque** :
+  - Finalisation B-05b (liée à B-05c : les seuils NCC sont le périmètre #2/#3 de B-05b).
+
+- **Effet de bord à anticiper** :
+  - Abaisser le seuil NCC sans améliorer le descripteur → risque de faux positifs CONFIRMED sur masks non stables → pollue B-06 keepalive.
+  - Si `confirm_after` est réinitialisé au revive → tout ajustement de seuil NCC sera sans effet tant que la logique de reset n'est pas corrigée.
+
+- **Anti-patterns à éviter** :
+  - **Re-toucher au TTL en croyant que c'est le levier** : l'audit A/B l'a formellement écarté. Allonger le TTL sans traiter le matching NCC ne fait que prolonger l'agonie de masks qui ne seront jamais consolidés.
+  - Corriger les seuils NCC avant d'avoir audité `confirm_after` dans le code (#3 doit précéder #2 si la réinitialisation du compteur est confirmée).
+  - Appliquer un fix B-05 dans une refonte sémantique (B-07) : périmetres distincts.
 
 ---
 
