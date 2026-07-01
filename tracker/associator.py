@@ -63,7 +63,7 @@ class Associator:
         if not mask.hash_history or det.phash is None:
             return MatchScore.iou_only(iou, continuity=cont, bonus_max=bmax)
 
-        hsim = compute_hash_similarity(det.phash, mask, top_k=self.cfg.hash_top_k)
+        hsim = _compute_hash_similarity(det.phash, mask, top_k=self.cfg.hash_top_k)
         w_iou, w_hash = self._get_weights(det)
         return MatchScore.composite(iou, hsim, w_iou, w_hash,continuity=cont, bonus_max=bmax)
 
@@ -140,7 +140,7 @@ def compute_iou(rect1: tuple, rect2: tuple) -> float:
     union = w1 * h1 + w2 * h2 - inter
     return inter / union if union > 0 else 0.0
 
-def compute_hash_similarity(det_hash: Optional[int], mask: Mask, top_k: Optional[int] = None) -> float:
+def _compute_hash_similarity(det_hash: Optional[int], mask: Mask, top_k: Optional[int] = None) -> float:
     if det_hash is None:
         return 0.0
     if len(mask.hash_history) == 0:

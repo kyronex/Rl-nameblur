@@ -6,7 +6,54 @@ from config import cfg
 from detection.tools import write_circles , write_rects , get_color
 from core.box import Box
 
+from dataclasses import dataclass, field
+from typing import Final
+
+# ── ScoreRecipe — constants for _decide_final ──
+@dataclass(frozen=True, slots=True)
+class ScoreRecipe:
+    """
+    Value object containing all magic-number constants used inside
+    ``_decide_final`` (score weights, normalizer, and FP penalties).
+    """
+    # ── Score weights ────────────────────────────────────────
+    w_s_td:   Final[float] = 1.0   # cheap["s_td"]
+    w_s_vp:   Final[float] = 0.5   # heavy["s_vp"]
+    w_s_dens: Final[float] = 0.5   # cheap["s_dens"]
+    w_s_hreg: Final[float] = 1.5   # cheap["s_hreg"]
+    w_s_pf:   Final[float] = 0.8   # heavy["s_pf"]
+    w_s_cc:   Final[float] = 1.0   # cheap["s_cc"]
+
+    # ── Normalizer ──────────────────────────────────────────
+    _normalizer: Final[float] = 5.3   # / 5.3
+
+    # ── False-positive penalties ─────────────────────────────
+    fp_ar_narrow_no_trans:          Final[float] = 0.10   # ar<2.0, no trans
+    fp_density_too_high:           Final[float] = 0.20   # density_raw>0.85
+    fp_vproj_dead:                 Final[float] = 0.15   # vproj<0.01
+    fp_trans_out_of_range:         Final[float] = 0.15   # trans<0.05 or >0.75
+    fp_height_too_small:           Final[float] = 0.10   # h<6
+    fp_vproj_hreg_dead_combo:      Final[float] = 0.15   # vproj<0.01 AND hreg<0.10
+    fp_vproj_hreg_false_regular:   Final[float] = 0.10  # vproj<0.01 AND hreg>0.90 AND pf<0.75
+    fp_single_blob_no_hreg:        Final[float] = 0.05   # cc_raw<=1 AND hreg<0.50
+    fp_hreg_null:                  Final[float] = 0.10   # s_hreg==0.0
+    fp_vproj_low_hreg_high:        Final[float] = 0.15   # vproj<0.03 AND hreg>0.90
+    fp_trans_dead_hreg_dead_combo: Final[float] = 0.20   # s_td==0 AND hreg<0.30
+    fp_rowfill_low_hreg_low:       Final[float] = 0.10   # row_fill<0.90 AND hreg<0.20
+    fp_cc_extreme_hreg_low:        Final[float] = 0.15   # cc_raw>6 AND hreg<0.20
+    fp_pf_low_hreg_low:            Final[float] = 0.10   # s_pf<0.18 AND hreg<0.15
+    fp_ar_square_trans_weak:       Final[float] = 0.10   # ar<2.5 AND trans<0.18 AND hreg<0.30
+    fp_rowfill_trans_hreg_triple:   Final[float] = 0.15  # row_fill<0.95 AND trans<0.20 AND hreg<0.15
+
+
+# Singleton instance — imported by _decide_final
+DEFAULT_RECIPE: Final[ScoreRecipe] = ScoreRecipe()
+
 log = logging.getLogger("detection.boxes")
+
+def _target_score(value: float, target: float, weight: float) -> float:
+    """Score de proximité [0,1] — vaut 1 quand value==target, décroit avec |delta|*weight."""
+    return max(0.0, 1.0 - abs(value - target) * weight)
 
 # ── _extract_raw_boxes ──
 def _extract_raw_boxes(masked, params):
@@ -198,8 +245,8 @@ def _projection_fill_score(crop):
     # ── Compacité ──
     compactness = fill_ratio / max(proj_ratio, 0.01)
     # ── Score final (sans round = ~10% plus rapide) ──
-    s_proj = max(0.0, 1.0 - abs(proj_ratio - 0.70) * 2.5)   # 1/0.40 = 2.5
-    s_comp = max(0.0, 1.0 - abs(compactness - 0.40) * 2.857) # 1/0.35 ≈ 2.857
+    s_proj = _target_score(proj_ratio, 0.70, 2.5)   # 1/0.40 = 2.5
+    s_comp = _target_score(compactness, 0.40, 2.857) # 1/0.35 ≈ 2.857
     s_pf = s_proj * s_comp
     return {
         "proj_ratio":  proj_ratio,
@@ -233,7 +280,7 @@ def _cc_metrics_from_stats(cc_stats, gx1, gy1, gx2, gy2):
     if mean_h < 1.0:
         return cc, 0.0, mean_h
     var_norm = float(np.var(heights)) / (mean_h * mean_h)
-    hreg = max(0.0, 1.0 - var_norm * 5.0)
+    hreg = _target_score(var_norm, 0.0, 5.0)
     return cc, hreg, mean_h
 
 # ══════════════════════════════════════════════════════════════
@@ -269,9 +316,9 @@ def _compute_cheap_metrics(crop, cc_stats, x1, y1, x2, y2, min_fill):
         if t.size > 0 and cv2.countNonZero(t) / t.size >= min_fill
     )
     # scores normalisés cheap
-    s_td   = max(0.0, 1.0 - abs(transition_density - 0.45) * 3.33)
-    s_dens = max(0.0, 1.0 - abs(density_raw - 0.50) * 2)
-    s_cc   = max(0.0, 1.0 - abs(cc_raw - 8) * 0.125)
+    s_td   = _target_score(transition_density, 0.45, 3.33)
+    s_dens = _target_score(density_raw, 0.50, 2)
+    s_cc   = _target_score(cc_raw, 8, 0.125)
     return {
         "transition_density": transition_density,
         "s_td":               s_td,
@@ -298,7 +345,7 @@ def _compute_heavy_metrics(crop):
     col_sum = np.sum(crop, axis=0)
     col_norm = col_sum / max(h * 255.0, 1.0)
     vproj = float(np.var(col_norm))
-    s_vp    = max(0.0, 1.0 - abs(vproj - 0.08) / 0.10)
+    s_vp = _target_score(vproj, 0.08, 10.0)
     # projection fill score
     pf      = _projection_fill_score(crop)
     return {
@@ -346,58 +393,52 @@ def _decide_final(crop, cheap, heavy, min_proj_score):
     """
     h, w = crop.shape
     score_brut = (
-        cheap["s_td"]   * 1.0 +
-        heavy["s_vp"]   * 0.5 +
-        cheap["s_dens"] * 0.5 +
-        cheap["s_hreg"] * 1.5 +
-        heavy["s_pf"]   * 0.8 +
-        cheap["s_cc"]   * 1.0
-    ) / 5.3
+        cheap["s_td"]   * DEFAULT_RECIPE.w_s_td +
+        heavy["s_vp"]   * DEFAULT_RECIPE.w_s_vp +
+        cheap["s_dens"] * DEFAULT_RECIPE.w_s_dens +
+        cheap["s_hreg"] * DEFAULT_RECIPE.w_s_hreg +
+        heavy["s_pf"]   * DEFAULT_RECIPE.w_s_pf +
+        cheap["s_cc"]   * DEFAULT_RECIPE.w_s_cc
+    ) / DEFAULT_RECIPE._normalizer
+
     # pénalité FP zones grises
     fp_penalty = 0.0
     ar = w / max(h, 1)
-    if ar < 2.0 and cheap["transition_density"] < 0.15:
-        fp_penalty += 0.10  # blob carré sans transitions
-    if cheap["density_raw"] > 0.85:
-        fp_penalty += 0.20   # trop dense → blob solide, pas du texte
-    if heavy["vproj"] < 0.01:
-        fp_penalty += 0.15   # projection verticale morte → aucune structure colonne
-    if cheap["transition_density"] < 0.05 or cheap["transition_density"] > 0.75:
-        fp_penalty += 0.15    # transition_density hors range texte
-    if h < 6:
-        fp_penalty += 0.10    # hauteur trop petite
-    if heavy["vproj"] < 0.01 and cheap["s_hreg"] < 0.10:
-        fp_penalty += 0.15    # combo : vproj mort ET s_hreg mort → aucune structure
-    if heavy["vproj"] < 0.01 and cheap["s_hreg"] > 0.90 and heavy["s_pf"] < 0.75:
-        fp_penalty += 0.10    # fausse régularité : s_hreg élevé mais vproj mort
-    # cc_raw = 1 → blob unique, pas multi-caractères
-    if cheap["cc_raw"] <= 1 and cheap["s_hreg"] < 0.50:
-        fp_penalty += 0.05
-    # s_hreg nul → aucune régularité horizontale
-    if cheap["s_hreg"] == 0.0:
-        fp_penalty += 0.10
-    # vproj faible + hreg élevé → fausse structure
-    if heavy["vproj"] < 0.03 and cheap["s_hreg"] > 0.90:
-        fp_penalty += 0.15
-    # Combo : transitions mortes + hreg mort → blob sans structure texte
-    if cheap["s_td"] == 0.0 and cheap["s_hreg"] < 0.30:
-        fp_penalty += 0.20
-    # row_fill < 1.0 + hreg faible → zone fragmentée non-texte
-    if cheap["row_fill"] < 0.90 and cheap["s_hreg"] < 0.20:
-        fp_penalty += 0.10
-    # cc_raw extrême haut (> 6) + hreg faible → bruit/texture
-    if cheap["cc_raw"] > 6 and cheap["s_hreg"] < 0.20:
-        fp_penalty += 0.15
-    # s_pf très bas + hreg mort → aucune structure colonne/ligne
-    if heavy["s_pf"] < 0.18 and cheap["s_hreg"] < 0.15:
-        fp_penalty += 0.10
-    # aspect ratio carré + transitions faibles (élargi)
-    if ar < 2.5 and cheap["transition_density"] < 0.18 and cheap["s_hreg"] < 0.30:
-        fp_penalty += 0.10
-
+    if ar < 2.0 and cheap["transition_density"] < 0.15:  # blob carré sans transitions
+        fp_penalty += DEFAULT_RECIPE.fp_ar_narrow_no_trans
+    if cheap["density_raw"] > 0.85:  # trop dense → blob solide, pas du texte
+        fp_penalty += DEFAULT_RECIPE.fp_density_too_high
+    if heavy["vproj"] < 0.01:   # projection verticale morte → aucune structure colonne
+        fp_penalty += DEFAULT_RECIPE.fp_vproj_dead
+    if cheap["transition_density"] < 0.05 or cheap["transition_density"] > 0.75:    # transition_density hors range texte
+        fp_penalty += DEFAULT_RECIPE.fp_trans_out_of_range
+    if h < 6:   # hauteur trop petite
+        fp_penalty += DEFAULT_RECIPE.fp_height_too_small
+    if heavy["vproj"] < 0.01 and cheap["s_hreg"] < 0.10:    # combo : vproj mort ET s_hreg mort → aucune structure
+        fp_penalty += DEFAULT_RECIPE.fp_vproj_hreg_dead_combo
+    if heavy["vproj"] < 0.01 and cheap["s_hreg"] > 0.90 and heavy["s_pf"] < 0.75:   # fausse régularité : s_hreg élevé mais vproj mort
+        fp_penalty += DEFAULT_RECIPE.fp_vproj_hreg_false_regular
+    if cheap["cc_raw"] <= 1 and cheap["s_hreg"] < 0.50:    # cc_raw = 1 → blob unique, pas multi-caractères
+        fp_penalty += DEFAULT_RECIPE.fp_single_blob_no_hreg
+    if cheap["s_hreg"] == 0.0:  # s_hreg nul → aucune régularité horizontale
+        fp_penalty += DEFAULT_RECIPE.fp_hreg_null
+    if heavy["vproj"] < 0.03 and cheap["s_hreg"] > 0.90:    # vproj faible + hreg élevé → fausse structure
+        fp_penalty += DEFAULT_RECIPE.fp_vproj_low_hreg_high
+    if cheap["s_td"] == 0.0 and cheap["s_hreg"] < 0.30:   # Combo : transitions mortes + hreg mort → blob sans structure texte
+        fp_penalty += DEFAULT_RECIPE.fp_trans_dead_hreg_dead_combo
+    if cheap["row_fill"] < 0.90 and cheap["s_hreg"] < 0.20:    # row_fill < 1.0 + hreg faible → zone fragmentée non-texte
+        fp_penalty += DEFAULT_RECIPE.fp_rowfill_low_hreg_low
+    if cheap["cc_raw"] > 6 and cheap["s_hreg"] < 0.20:    # cc_raw extrême haut (> 6) + hreg faible → bruit/texture
+        fp_penalty += DEFAULT_RECIPE.fp_cc_extreme_hreg_low
+    if heavy["s_pf"] < 0.18 and cheap["s_hreg"] < 0.15:    # s_pf très bas + hreg mort → aucune structure colonne/ligne
+        fp_penalty += DEFAULT_RECIPE.fp_pf_low_hreg_low
+    if ar < 2.5 and cheap["transition_density"] < 0.18 and cheap["s_hreg"] < 0.30:    # aspect ratio carré + transitions faibles (élargi)
+        fp_penalty += DEFAULT_RECIPE.fp_ar_square_trans_weak
     if cheap["row_fill"] < 0.95 and cheap["transition_density"] < 0.20 and cheap["s_hreg"] < 0.15:
-        fp_penalty += 0.15
+        fp_penalty += DEFAULT_RECIPE.fp_rowfill_trans_hreg_triple
+
     score = max(0.0, score_brut - fp_penalty)
+
     scores = {
         "score":              score,
         "score_brut":         score_brut,

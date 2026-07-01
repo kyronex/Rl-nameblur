@@ -618,40 +618,42 @@
 
 ---
 
-### 🔵 B-05c — Recalibrage du matching NCC (suite B-05a-bis) `[OUVERT par B-05a-bis]`
+### 🔵 B-05c — Recalibrage de la fenêtre de revive & ré-association LOST (suite B-05a-bis) `[OUVERT par B-05a-bis — REORIENTÉ par audit code mask/registry/tracker]`
 
-- **Origine** : ouvert par le verdict B-05a-bis. L'audit A/B a confirmé que la **cause racine** de la non-consolidation est **en amont du TTL** : le matching NCC rejette la majorité des masks avant qu'ils n'atteignent CONFIRMED. Le TTL ne peut pas être le levier.
-- **Objectif** : faire remonter le taux de consolidation PENDING → CONFIRMED de façon significative (cible : Terminal LOST ≤ 80 %, Terminal CONFIRMED à deux chiffres), en agissant sur le **matching NCC** et ses seuils.
+- **Origine** : ouvert par B-05a-bis (NCC suspecté). Réorienté par audit code des leviers #3 (mask.py) puis #1 (registry/tracker/config). Hypothèse initiale « le matching NCC de consolidation pilote le Terminal LOST » **invalidée par le code**.
 
-- **Préconisations** :
-  1. **Geler le TTL à 1.2/1.2** (ou toute valeur stabilisée). Effet marginal mais **non nuisible** : lifetime +31,6 % sans coût significatif. Ne pas y consacrer plus d'effort.
-  2. **Pivoter l'effort sur le seuil / coût NCC** : 65,5 % des matchs sont sous 0,4 (APRES). Deux axes :
-     - (a) **Abaisser le seuil de confirmation NCC** de façon calibrée (risque : faux positifs si descripteur insuffisamment robuste — valider sur footage tagué).
-     - (b) **Améliorer la qualité du descripteur** (pHash → multi-hash, ou augmentation de la résolution du patch NCC) pour réduire le bruit de matching indépendamment du seuil.
-  3. **Auditer `confirm_after` dans `registry.py` / `tracker.py`** : vérifier si le compteur de matches est réinitialisé au revive (`LOST → CREATE`), ce qui interdirait toute accumulation vers CONFIRMED. Piste #3 de B-05a-bis — non instruite par le test A/B, à traiter dans le code.
+- **Acquis d'audit (faits établis, sourcés — à ne pas re-débattre)** :
+  1. `confirm_after = 1` (`config.yaml:91`→`models.py:13`→`registry.py:51`). Promotion normale sur **1 frame** ; default dataclass `2` (`mask.py:96`) non utilisé. → poids NCC de consolidation marginal.
+  2. Cycle de vie : `lost_after_s = 1.2 s` (`config.yaml:87`, `registry.py:87-90`) → LOST ; `expire_after_lost_s = 1.0 s` (`config.yaml:88`, `registry.py:92-96`) → purge. **Fenêtre de revive réelle = 1,0 s, courte.**
+  3. Revive `LOST→CONFIRMED` **inconditionnel** (`mask.py:127-131`), seul filtre = associator (`tracker.py:47-49`, `match_score_min_slow=0.25`/`fast=0.30`). Reset `frames_matched=1` (`mask.py:131`) **non bloquant** (levier #3 clos).
+  4. Compteur `mask_revive_total` présent (`mask.py:130`) → mesure instrumentable sans patch.
+  5. Cause racine : masks **purgés à 1,0 s sans ré-appariement**, pas masks bloqués en consolidation.
 
-- **Métriques cibles / critères de succès** :
-  - Terminal LOST **< 80 %** (vs 98,4 % post-audit — descente franche, pas marginale).
-  - Terminal CONFIRMED **≥ 10 %** (vs 1,6 % quasi-nul).
-  - Ratio masks NCC < 0,4 en baisse (bruit de matching réduit).
-  - Non-régression TP : taux de détection vrai positif préservé à ±2 %.
+- **Objectif (réorienté)** : faire baisser le Terminal LOST en **augmentant le taux de ré-appariement avant purge** — leviers : `expire_after_lost_s` (fenêtre de revive) et/ou seuils d'association de l'associator. **Descripteur (ex-#2b) et seuil NCC de consolidation (ex-#2a) hors chemin critique.**
+
+- **Préconisations (ordre imposé)** :
+  1. **Quantifier d'abord (mesure avant code)** sur JSONL capturés : `mask_revive_total` vs `registry_expire_total` vs `registry_lost_total`. Établir le ratio **masks LOST purgés sans revive / total LOST**. Driver confirmé si ce ratio domine.
+  2. **A/B sur `expire_after_lost_s`** (1,0 s → ex. 1,5–2,0 s) iso-capture : impact sur Terminal LOST vs coût mémoire/faux maintien.
+  3. **Si revive insuffisant même fenêtre élargie** : auditer le taux de rejet associator au revive (score IoU+hash < seuil) — c'est là, et non dans `confirm_after`, que le NCC peut éventuellement re-rentrer.
+  4. **Garde-fou** : surveiller faux positifs liés au revive inconditionnel si la fenêtre est élargie (lien B-06 keepalive).
+
+- **Métriques cibles** :
+  - Terminal LOST **< 80 %** (vs 98,4 %).
+  - Terminal CONFIRMED **≥ 10 %** (vs 1,6 %).
+  - Ratio **masks LOST ré-appariés / masks LOST** en hausse (driver réel).
+  - Non-régression TP ±2 % **+ garde-métrique faux positifs au revive**.
 
 - **Préconditions** :
-  - B-05a-bis livré. ✅
-  - **Footage tagué** : transitions de scène + apparitions multiples + régime statique long + mouvements rapides.
-  - Session iso-capture disponible pour A/B définitif.
+  - B-05a-bis livré ✅ ; audit leviers #3 + #1 (mask/registry/tracker/config) livré ✅.
+  - Footage tagué (transitions, apparitions multiples, statique long, mouvements rapides) + session iso-capture.
 
-- **Bloque** :
-  - Finalisation B-05b (liée à B-05c : les seuils NCC sont le périmètre #2/#3 de B-05b).
-
-- **Effet de bord à anticiper** :
-  - Abaisser le seuil NCC sans améliorer le descripteur → risque de faux positifs CONFIRMED sur masks non stables → pollue B-06 keepalive.
-  - Si `confirm_after` est réinitialisé au revive → tout ajustement de seuil NCC sera sans effet tant que la logique de reset n'est pas corrigée.
+- **Bloque** : Finalisation B-05b.
 
 - **Anti-patterns à éviter** :
-  - **Re-toucher au TTL en croyant que c'est le levier** : l'audit A/B l'a formellement écarté. Allonger le TTL sans traiter le matching NCC ne fait que prolonger l'agonie de masks qui ne seront jamais consolidés.
-  - Corriger les seuils NCC avant d'avoir audité `confirm_after` dans le code (#3 doit précéder #2 si la réinitialisation du compteur est confirmée).
-  - Appliquer un fix B-05 dans une refonte sémantique (B-07) : périmetres distincts.
+  - Refondre le descripteur / abaisser le seuil NCC de consolidation : hors chemin critique (`confirm_after=1`, revive court-circuite).
+  - Confondre `lost_after_s` (déjà A/B en B-05a-bis) avec `expire_after_lost_s` (la **vraie** fenêtre de revive, non instruite jusqu'ici).
+  - Traiter le reset `frames_matched=1` comme bug bloquant (levier #3 clos : non bloquant).
+  - Appliquer un fix B-05 dans une refonte sémantique (B-07).
 
 ---
 

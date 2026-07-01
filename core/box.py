@@ -12,7 +12,7 @@ class Box:
     w: int
     h: int
     scores: dict = field(default_factory=dict)
-    template: np.ndarray = field(default=None, repr=False)
+    template: Optional[np.ndarray] = field(default=None, repr=False)
 
     @property
     def rect(self):

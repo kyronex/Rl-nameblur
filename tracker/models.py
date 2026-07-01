@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
+import numpy as np
 from config import cfg
 
 @dataclass
@@ -118,5 +119,5 @@ class Detection:
     phash: Optional[int] = None
     source: str = "slow"
     confidence: float = 1.0
-    template: Optional[object] = None
+    template: Optional[np.ndarray] = None
     scores: dict = field(default_factory=dict)

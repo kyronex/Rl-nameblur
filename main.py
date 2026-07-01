@@ -141,7 +141,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                             template=box.template,
                             scores=box.scores,
                         ) for box in new_plates]
-                        matched, created = tracker.apply_detections(frame, dets, detected_frame_ts, "slow")
+                        matched, created = tracker.apply_slow_detections(frame, dets, detected_frame_ts)
                         updated_uids |= matched | created
 
                 # ── 3b. Fast track ──
@@ -156,7 +156,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                             if new_rect is not None
                         }
                         if uid_to_rect:
-                            matched = tracker.apply_fast_direct(frame, uid_to_rect, fast_ts, last_detected_frame_ts)
+                            matched = tracker.apply_fast_detections(frame, uid_to_rect, fast_ts, last_detected_frame_ts)
                             updated_uids |= matched
 
                 # ── 4. Tick (predict + TTL + purge) ──

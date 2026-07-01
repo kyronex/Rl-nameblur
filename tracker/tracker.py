@@ -29,20 +29,20 @@ class Tracker:
     #  API PUBLIQUE
     # ───────────────────────────────────────────────
 
-    def apply_detections(self, frame: np.ndarray, detections: list,detected_frame_ts: float,source: str = "slow") -> tuple:
+    def apply_slow_detections(self, frame: np.ndarray, detections: list,detected_frame_ts: float) -> tuple:
         """
-        Applique une vague de détections (slow OU fast).
+        Applique une vague de détections SLOW.
+        Calcule le phash, met à jour les masks matchés et crée les nouveaux masks.
         Returns: (matched_uids, created_uids)
         """
-        with bench.timer("tracker_apply_detections_ms"):
+        with bench.timer("tracker_apply_slow_detections_ms"):
             if detected_frame_ts is None:
                 detected_frame_ts = time.perf_counter()
-                log.warning("[Tracker.apply_detections] detected_frame_ts fallback hit")
+                log.warning("[Tracker.apply_slow_detections] detected_frame_ts fallback hit")
             ts = time.perf_counter()
             H, W = frame.shape[:2]
             bench.count("tracker_detections_in", len(detections))
             # ── 1. Detection objects + phash ──
-            skip_phash = (source == "fast")
             det_objects = []
             for d in detections:
                 x, y, w, h = (int(v) for v in d.rect)
@@ -52,15 +52,12 @@ class Tracker:
                 w = max(1, min(w, W - x))    # w >= 1, et x+w <= W
                 h = max(1, min(h, H - y))
                 clamped_rect = (x, y, w, h)
-                if skip_phash:
-                    phash = None
-                else:
-                    crop = frame[y:y+h, x:x+w]
-                    phash = compute_phash(crop)
+                crop = frame[y:y+h, x:x+w]
+                phash = compute_phash(crop)
                 det_objects.append(Detection(
                     rect=clamped_rect,
                     phash=phash,
-                    source=d.source or source,
+                    source=d.source or "slow",
                     confidence=d.confidence,
                     template=d.template,
                     scores=d.scores,
@@ -81,32 +78,31 @@ class Tracker:
                     mask.template = det.template
                 if det.scores:
                     mask.scores = det.scores
-                self.registry.mark_matched(mask.uid, ts=ts,detected_frame_ts=detected_frame_ts,source=source)
+                self.registry.mark_matched(mask.uid, ts=ts,detected_frame_ts=detected_frame_ts,source="slow")
                 matched_uids.add(mask.uid)
             # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
             created_uids = set()
-            if source == "slow":
-                for det_idx in unmatched_dets:
-                    det = det_objects[det_idx]
-                    mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts)
-                    if det.phash is not None:
-                        mask.hash_history.append(det.phash)
-                    mask.confidence = det.confidence
-                    mask.template = det.template
-                    mask.scores = det.scores
-                    created_uids.add(mask.uid)
+            for det_idx in unmatched_dets:
+                det = det_objects[det_idx]
+                mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts)
+                if det.phash is not None:
+                    mask.hash_history.append(det.phash)
+                mask.confidence = det.confidence
+                mask.template = det.template
+                mask.scores = det.scores
+                created_uids.add(mask.uid)
             return matched_uids, created_uids
 
-    def apply_fast_direct(self,frame: np.ndarray,uid_to_rect: dict,fast_ts: float,detected_frame_ts: float = None) -> set:
+    def apply_fast_detections(self,frame: np.ndarray,uid_to_rect: dict,fast_ts: float,detected_frame_ts: float = None) -> set:
         """
         Commit direct des résultats du fast tracker
         """
-        with bench.timer("tracker_apply_fast_direct_ms"):
+        with bench.timer("tracker_apply_fast_detections_ms"):
             if fast_ts is None:
                 fast_ts = time.perf_counter()
             if detected_frame_ts is None:
                 detected_frame_ts = fast_ts   # fast_ts est déjà un frame_ts
-                log.warning("[Tracker.apply_fast_direct] detected_frame_ts fallback hit - propagation gap")
+                log.warning("[Tracker.apply_fast_detections] detected_frame_ts fallback hit - propagation gap")
             H, W = frame.shape[:2]
             matched_uids = set()
             drift_skipped = 0

@@ -66,7 +66,6 @@ class Mask:
     confidence:         float          = 0.0
     template:           Optional[np.ndarray] = None
     fast_miss_count:    int            = 0
-    box:                Optional[Box]  = None
     scores:             dict           = field(default_factory=dict)
 
     # --- Cycle de vie : état + compteurs ---
@@ -83,7 +82,7 @@ class Mask:
     last_seen_frame_ts:       float          = 0.0
     lost_since_frame_ts:      Optional[float]= None
 
-    confirm_after:      int            = field(default=2, repr=False)
+    confirm_after:      int            = field(default=1, repr=False)
     lost_after_s:       float          = field(default=1.0, repr=False)
     expire_after_lost_s: float         = field(default=10.0, repr=False)
     hash_history_max:   int            = field(default=5, repr=False)

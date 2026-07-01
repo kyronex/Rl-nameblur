@@ -116,7 +116,6 @@ class FastTrackThread:
         dt = now - mask.last_detected_ts
         if dt < 0:
             dt = 0
-
         margin = snap.am_base + speed * dt * snap.am_factor
         return int(max(snap.am_min, min(margin, snap.am_max)))
 
