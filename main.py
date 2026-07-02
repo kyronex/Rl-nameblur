@@ -151,8 +151,8 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     if fast_version > last_fast_version:
                         last_fast_version = fast_version
                         uid_to_rect = {
-                            uid: pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT)
-                            for uid, new_rect, _score in fast_results
+                            uid: (pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT), vx_f, vy_f)
+                            for uid, new_rect, _score, vx_f, vy_f in fast_results
                             if new_rect is not None
                         }
                         if uid_to_rect:

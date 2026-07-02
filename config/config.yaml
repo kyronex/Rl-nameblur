@@ -33,6 +33,7 @@ detect:
     max_stale_frames: 15 # Nbr de frames consécutives où le tracking NCC échoue avant d'émettre rect=None  — (fast_track_thread.py › _worker).
     ncc_threshold: 0.4 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
     event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker)..
+    max_v_px_per_s: 2000.0 # Vélocité max (px/s) pour clamp de vx_f/vy_f — (fast_track_thread.py › _worker phase NCC).
   hsv:
     white_core: # Seuils HSV du blanc "strict" (cœur du cartouche) — Zone haute luminance, saturation très basse.
       lower: [0, 0, 200]

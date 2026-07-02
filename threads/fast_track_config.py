@@ -25,6 +25,8 @@ class FastTrackConfig:
     am_min:    int   = field(default_factory=lambda: cfg.get("masks.adaptive_margin.min"))
     am_max:    int   = field(default_factory=lambda: cfg.get("masks.adaptive_margin.max"))
 
+    max_v_px_per_s: float = field(default_factory=lambda: cfg.get("detect.fast.max_v_px_per_s"))
+
     def __post_init__(self):
         # Bornes adaptive_margin cohérentes
         if not (self.am_min <= self.am_base <= self.am_max):
@@ -53,6 +55,12 @@ class FastTrackConfig:
                 f"FastTrackConfig: event_timeout_s doit être > 0 "
                 f"(reçu {self.event_timeout_s})"
             )
+        #/ Vélocité max (px/s) — clamp anti-explosion pour vx_f/vy_f
+        if self.max_v_px_per_s <= 0:
+            raise ValueError(
+                f"FastTrackConfig: max_v_px_per_s doit être > 0 "
+                f"(reçu {self.max_v_px_per_s})"
+                )
         # Écran cohérent
         if self.screen_w <= 0 or self.screen_h <= 0:
             raise ValueError(

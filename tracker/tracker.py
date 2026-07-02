@@ -107,7 +107,7 @@ class Tracker:
             matched_uids = set()
             drift_skipped = 0
             drift_max_seen = 0.0
-            for uid, rect in uid_to_rect.items():
+            for uid, (rect, vx_f, vy_f) in uid_to_rect.items():
                 mask = self.registry.get(uid)
                 if mask is None:
                     continue  # mask purgé entre-temps côté slow
@@ -125,8 +125,9 @@ class Tracker:
                 w = max(1, min(w, W - x))
                 h = max(1, min(h, H - y))
                 clamped_rect = (x, y, w, h)
+                mask.last_slow_ts = fast_ts
                 # Pipeline de mutation strictement aligné sur la branche `matched` de apply_detections (source="fast" → skip phash, pas de template/scores)
-                apply_detection(mask, clamped_rect, fast_ts, "fast", self.cfg)
+                apply_detection(mask, clamped_rect, fast_ts, "fast", self.cfg, vx_f=vx_f, vy_f=vy_f)
                 self.registry.mark_matched(mask.uid, ts=fast_ts,detected_frame_ts=detected_frame_ts,source="fast")
                 matched_uids.add(mask.uid)
             if drift_skipped:

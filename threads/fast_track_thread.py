@@ -58,7 +58,7 @@ class FastTrackThread:
         self._results_lock = threading.Lock()
         # État interne worker
         self._prev_gray = None
-        self._last_known = {}
+        self._last_known = {} # {uid: {"rect": rect, "stale": int, "ts": float, "vx_f": float, "vy_f": float}}
         self._last_processed_ts = -1.0
         # Lifecycle
         self._running = False
@@ -181,8 +181,8 @@ class FastTrackThread:
                         self._prev_gray = curr_gray
                         results = []
                         for v in views:
-                            self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
-                            results.append((v.uid, v.rect, 1.0))
+                            self._last_known[v.uid] = {"rect": v.rect, "stale": 0, "ts": frame_ts}
+                            results.append((v.uid, v.rect, 1.0,0.0,0.0))
                         with self._results_lock:
                             self._results = results
                             self._results_ts = frame_ts
@@ -199,7 +199,7 @@ class FastTrackThread:
                         for v in views:
                             active_ids.add(v.uid)
                             if v.uid not in self._last_known:
-                                self._last_known[v.uid] = {"rect": v.rect, "stale": 0}
+                                self._last_known[v.uid] = {"rect": v.rect, "stale": 0, "ts": frame_ts}
                             last_state = self._last_known[v.uid]
                             candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
                             bench.count("fast_mask_processed_total")
@@ -220,9 +220,26 @@ class FastTrackThread:
                                 ncc_rect, score = None, 0.0
                             if ncc_rect is not None:
                                 bench.count("fast_ncc_confirmed_total")
+                                # ── Vélocité inter-tick : centre(ncc_rect) − centre(last_state["rect"]) / dt ──
+                                prev_ts = last_state.get("ts", frame_ts)
+                                dt = frame_ts - prev_ts
+                                log.info("dt = %f", dt)
+                                if dt > 1e-6:
+                                    dx = ncc_rect[0] - last_state["rect"][0]
+                                    dy = ncc_rect[1] - last_state["rect"][1]
+                                    vx_f = max(-snap.max_v_px_per_s, min(dx / dt, snap.max_v_px_per_s))
+                                    vy_f = max(-snap.max_v_px_per_s, min(dy / dt, snap.max_v_px_per_s))
+                                    bench.probe("fast_v_px_per_s", math.hypot(vx_f, vy_f))
+                                else:
+                                    vx_f = 0.0
+                                    vy_f = 0.0
+                                    bench.probe("fast_v_px_per_s", 0.0)
                                 last_state["rect"] = ncc_rect
                                 last_state["stale"] = 0
-                                results.append((v.uid, ncc_rect, score))
+                                last_state["ts"]   = frame_ts
+                                last_state["vx_f"] = vx_f
+                                last_state["vy_f"] = vy_f
+                                results.append((v.uid, ncc_rect, score, vx_f, vy_f))
                                 # ── Lifecycle: NCC a confirmé le mask (source=fast) ──
                                 bench.emit_lifecycle(LifecycleEvent.CONFIRMED, _FastLifecyclePayload(v, source="fast"), reason="ncc_fast")
                             else:

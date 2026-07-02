@@ -28,7 +28,7 @@ from bench.bench             import bench
 
 log = logging.getLogger("tracker.motion")
 
-def apply_detection(mask, new_rect, detect_ts, source, config):
+def apply_detection(mask, new_rect, detect_ts, source, config, vx_f=0.0, vy_f=0.0):
     """
     Met à jour un mask avec une nouvelle détection.
     EMA smoothing + vélocité position ET taille (calculée uniquement sur source 'slow').
@@ -118,6 +118,10 @@ def apply_detection(mask, new_rect, detect_ts, source, config):
                     mask.vw = raw_vw
                     mask.vh = raw_vh
                     bench.probe("motion_velocity_pps", (raw_vx ** 2 + raw_vy ** 2) ** 0.5)
+        elif source == "fast":
+            # P3 : vélocité déjà calculée inter-tick par le worker (px/s) — injection directe, pas de recalcul.
+            mask.vx = vx_f
+            mask.vy = vy_f
         # ── EMA smoothing ──
         alpha = config.smooth_alpha
         sx = ox + alpha * (nx - ox)
