@@ -223,7 +223,6 @@ class FastTrackThread:
                                 # ── Vélocité inter-tick : centre(ncc_rect) − centre(last_state["rect"]) / dt ──
                                 prev_ts = last_state.get("ts", frame_ts)
                                 dt = frame_ts - prev_ts
-                                log.info("dt = %f", dt)
                                 if dt > 1e-6:
                                     dx = ncc_rect[0] - last_state["rect"][0]
                                     dy = ncc_rect[1] - last_state["rect"][1]

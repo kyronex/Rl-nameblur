@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 import math
 from scipy.optimize import linear_sum_assignment
-from core.mask import Mask
+from core.mask import Mask , MaskState
 from tracker.hasher import best_hash_similarity
 from tracker.models import Detection, TrackerConfig, MatchScore
 from tracker.motion import compute_predicted_rect
@@ -85,6 +85,8 @@ class Associator:
                 ms = self._compute_score(det, mask, predicted_rects[j], ts)
                 if ms.total < min_score:
                     bench.count("associator_score_rejected_total")
+                    if mask.state == MaskState.LOST:
+                        bench.count("associator_reject_in_lost_window")
                     continue
                 scores[i][j] = ms
                 cost[i, j] = 1.0 - ms.total
@@ -111,6 +113,8 @@ class Associator:
                 ms = scores[di][mi]
                 if ms.gated:
                     bench.count("associator_hungarian_rejected_total")
+                    if masks[mi].state == MaskState.LOST:
+                        bench.count("associator_reject_in_lost_window")
                     continue
                 min_score = self._get_min_score(detections[di])
                 if ms.total >= min_score:
@@ -124,6 +128,27 @@ class Associator:
             bench.count("associator_matched_total", len(matches))
             bench.count("associator_unmatched_det_total", len(unmatched_dets))
             bench.count("associator_unmatched_mask_total", len(unmatched_masks))
+
+            # ── Probes IoU-ambiguïté (Slow) — instrumentation pure, n'altère pas le tracking ── TODO
+            # Counts forcés sur canal frame, pattern bench.count("nom", n=...) (cf. :124-126).
+            # Unité homogène : 1 unité = 1 détection multi-candidat non-gated.
+            IOU_AMBIG_FLOOR = 0.30   # plancher : top-1 géométriquement crédible
+            IOU_AMBIG_EPS   = 0.05   # marge top1-top2 sous laquelle l'IoU seul ne tranche pas
+            multi_candidate = 0   # dénominateur homogène
+            ambiguous       = 0   # numérateur homogène (sous-ensemble strict de multi_candidate)
+            for i in range(n_det):
+                # candidats réels = paires NON gatées (gated est le discriminant exclusif, models.py:90)
+                ious = [scores[i][j].iou for j in range(n_mask) if not scores[i][j].gated]
+                if len(ious) < 2:
+                    continue                      # mono-candidat → exclu des DEUX compteurs
+                multi_candidate += 1
+                ious.sort(reverse=True)
+                top1, top2 = ious[0], ious[1]
+                if top1 >= IOU_AMBIG_FLOOR and (top1 - top2) < IOU_AMBIG_EPS:
+                    ambiguous += 1
+            bench.count("associator_multi_candidate_det_total", n=multi_candidate)  # dénominateur
+            bench.count("associator_iou_ambiguous_total",       n=ambiguous)
+
             return matches, sorted(unmatched_dets), sorted(unmatched_masks)
 
 
