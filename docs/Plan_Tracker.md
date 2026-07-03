@@ -618,65 +618,73 @@
 
 ---
 
-### 🔵 B-05c — Recalibrage de la fenêtre de revive & ré-association LOST (suite B-05a-bis) `[OUVERT par B-05a-bis — REORIENTÉ par audit code — DRIVER QUANTIFIÉ 2026-07-02 — DÉCOMPOSÉ 2026-07-03]`
+### 🟢 B-05c — Recalibrage de la fenêtre de revive & ré-association LOST (suite B-05a-bis) `[CLOS 2026-07-03 — A/B #3a livré iso-footage — fenêtre figée 1,5 s — driver résiduel bascule sur B-05d]`
 
-- **Origine** : ouvert par B-05a-bis (NCC suspecté). Réorienté par audit code des leviers #3 (mask.py) puis #1 (registry/tracker/config). Hypothèse initiale « le matching NCC de consolidation pilote le Terminal LOST » **invalidée par le code**.
+- **Origine / Acquis d'audit** : inchangés (confirm_after=1, fenêtre réelle = expire_after_lost_s, revive inconditionnel filtré associator match_score_min_slow=0.25/fast=0.30). Ne pas re-débattre.
 
-- **Acquis d'audit (faits établis, sourcés — à ne pas re-débattre)** :
-  1. `confirm_after = 1` (`config.yaml:91`→`models.py:13`→`registry.py:51`). Promotion normale sur **1 frame** ; default dataclass `2` (`mask.py:96`) non utilisé. → poids NCC de consolidation marginal.
-  2. Cycle de vie : `lost_after_s = 1.2 s` (`config.yaml:87`, `registry.py:87-90`) → LOST ; `expire_after_lost_s = 1.0 s` (`config.yaml:88`, `registry.py:92-96`) → purge. **Fenêtre de revive réelle = 1,0 s, courte.**
-  3. Revive `LOST→CONFIRMED` **inconditionnel** (`mask.py:127-131`), seul filtre = associator (`tracker.py:47-49`, `match_score_min_slow=0.25`/`fast=0.30`). Reset `frames_matched=1` (`mask.py:131`) **non bloquant** (levier #3 clos).
-  4. Compteur `mask_revive_total` présent (`mask.py:130`) → mesure instrumentable sans patch.
-  5. Cause racine : masks **purgés sans ré-appariement**, pas masks bloqués en consolidation.
+- **`2026-07-02` — DRIVER QUANTIFIÉ (session 20260702_162941)** : ratio A (purge/LOST)=0,81, ratio B (revive/LOST)=0,19. Driver confirmé (81 % purgés sans revive). Préco #1 close.
+- **`2026-07-03` — DÉCOMPOSITION #3b (session 20260703_124416 puis répliquée 134658)** :
+  `associator_reject_in_lost_window` / `registry_lost_total` = 32,0 % @124416, 32,9 % @134658.
+  → Driver **MIXTE** confirmé par réplication inter-session : ~68 % fenêtre / ~32 % matching. Invariant revive=13 stable.
+- **`2026-07-03` — A/B #3a bras A vs B (MÊME FOOTAGE TAGUÉ REJOUÉ — iso confirmé)** :
 
-- **`2026-07-02` — DRIVER QUANTIFIÉ (préco #1 close, session `20260702_162941`)** :
-  - Compteurs (conservation vérifiée `68 = 13 + 55 + 0`) : `registry_lost_total = 68`, `registry_expire_total = 55`, `mask_revive_total = 13`, `registry_create_total = 60`.
-  - **ratio A** (purge / total LOST) = 55/68 = **0,81** ; **ratio B** (revive / total LOST) = 13/68 = **0,19**.
-  - **Verdict** : driver de B-05c **confirmé par la donnée** — purges sans ré-appariement dominent (81 %). Préco #1 **close**.
+  | Métrique                    | A `134658` (1,0 s) | B `143412` (1,5 s) | Δ                     |
+  | --------------------------- | ------------------ | ------------------ | --------------------- |
+  | registry_expire_total       | 68                 | 64                 | −5,9 %                |
+  | ratio A (purge/LOST)        | 82,9 %             | 82,1 %             | −0,9 pt               |
+  | ratio B (revive/LOST)       | 15,9 %             | 16,7 %             | +0,8 pt               |
+  | Terminal LOST               | 94,4 %             | 92,8 %             | −1,7 pt               |
+  | **ratio #3b (reject/LOST)** | **32,9 %**         | **52,6 %**         | **+19,6 pt (CAUSAL)** |
+  | mask_revive_total = REVIVE  | 13 = 13            | 13 = 13            | invariant ✅          |
 
-- **`2026-07-02` — Variable amont introduite (hors chemin critique B-05c)** :
-  - Vélocité fast réactivée (patch `"ts": frame_ts`, validé session `20260702_162941`). Effet **potentiel** sur le taux de revive (meilleure prédiction → meilleur IoU au revive), **non mesuré**. La baseline chiffrée est capturée **APRÈS** ce patch → référence de tout A/B ultérieur, pas de confusion gain-vélocité / gain-fenêtre.
+  Conservation : A `82=13+68+1` · B `78=13+64+1` ✅
 
-- **`2026-07-02` — Instrumentation posée (préco #2, avant tout patch de comportement)** :
-  - Compteur **`associator_reject_in_lost_window`** ajouté en instrumentation pure — 2 points dans `associator.py` (rejet sous-seuil `ms.total < min_score` + rejet gated post-LSA `ms.gated`), gardés par `mask.state == MaskState.LOST`. Faisabilité vérifiée : associator reçoit `List[Mask]`, `.state` accessible aux deux points, `MaskState` déjà importé. **Aucune branche de comportement touchée.**
+- **VERDICT (footage iso → attribution causale)** :
+  1. La fenêtre 1,5 s améliore dans le bon sens (expire −5,9 %, Terminal LOST −1,7 pt) **sans casser l'invariant revive (13=13)**.
+  2. **La préco #2 (fenêtre) sature** : le +19,6 pt causal du ratio #3b prouve que le goulot se **déplace** vers le matching associator en état LOST. Allonger davantage (2,0 s) empilerait des masks non ré-appariables.
+  3. **Préco #2 close/saturée. La composante #3 (qualité de ré-appariement LOST) devient le chemin critique → B-05d.**
 
-- **`2026-07-03` — DÉCOMPOSITION DU DRIVER (session `20260703_124416`, canal frame)** :
-  - `associator_reject_in_lost_window` = **24** ; `registry_lost_total` = 76 → **ratio ≈ 32 %**.
-  - **Fait établi** : ~1/3 des masks LOST ont un candidat détecté mais rejeté en association ; ~2/3 n'ont aucun candidat avant purge.
-  - **Driver requalifié : MIXTE** — dominante **fenêtre** (préco #3a, purges hors-fenêtre) ≈ 68 %, composante **matching LOST** (préco #3b) ≈ 32 %. L'hypothèse « pur fenêtre » est **nuancée** : un A/B `expire_after_lost_s` seul plafonnera à ~68 % du gain théorique.
-  - **⚠️ Réserve de mesure (non-régression) — À LEVER AVANT A/B** : `mask_revive_total` (canal frame) = **8** sur cette session ≠ **13 événements REVIVE / 11 masks** (canal events). Écart de granularité **déjà observé antérieurement** (comptage frame plus restrictif que les events). Il **n'affecte pas** le ratio 32 % (calculé entièrement sur le canal frame, dénominateurs homogènes), mais il rend l'invariant anti-régression « revives ~13/15 » **inmesurable de façon fiable tant que les deux canaux ne sont pas réconciliés**.
+- **DÉCISION ACTÉE** : `expire_after_lost_s` **figé à 1,5 s** (config.yaml). Seul paramètre touché ; lost_after_s=1,2 et confirm_after=1 inchangés.
+- **Métriques atteintes vs cibles** : Terminal LOST 94,4→92,8 % (cible <80 % **non atteinte** — nécessite B-05d) ; ratio B 0,19→0,167 (footage distinct des baselines antérieures) ; invariant revive ✅.
+- **Bloque** : Finalisation B-05b (inchangé).
+- **Anti-patterns** (inchangés) + **NOUVEAU** : ne pas pousser expire_after_lost_s à 2,0 s tant que B-05d n'a pas capté la composante matching (le +19,6 pt causal démontre la saturation fenêtre).
 
-- **Objectif (réorienté)** : faire baisser le Terminal LOST en **augmentant le taux de ré-appariement avant purge** — leviers : `expire_after_lost_s` (fenêtre) et/ou seuils d'association LOST. **Descripteur (ex-#2b) et seuil NCC de consolidation (ex-#2a) hors chemin critique.**
+---
 
-- **Préconisations (ordre imposé, mis à jour `2026-07-03`)** :
-  1. ~~Quantifier le driver~~ **✅ CLOSE `2026-07-02`** : ratio A=0,81 / B=0,19.
-  2. ~~Instrumenter fenêtre vs matching~~ **✅ CLOSE `2026-07-03`** : `associator_reject_in_lost_window`=24/76 ≈ 32 % → driver **mixte**.
-  3. **BLOQUANT — Réconcilier `mask_revive_total`(frame=8) vs REVIVE(events=13/11 masks)** : comparer les conditions d'incrément (`mask.py:130` vs point d'émission event REVIVE, probable `registry.py`). Sans cette réconciliation, l'invariant anti-régression « revives » n'est pas fiable → **aucun A/B ne démarre.**
-  4. **3a — A/B `expire_after_lost_s`** (1,0 → 1,5–2,0 s) iso-capture → cible les ~68 % sans candidat. Mesurer : Terminal LOST évités vs coût mémoire/faux maintien.
-  5. **3b — En parallèle NON couplé** : instruire un assouplissement gating/seuil associator **spécifique état LOST** → cible les 32 % rejetés. **Ne pas mélanger avec 3a** (attribution séparée, captures distinctes).
-  6. **Garde-fou** : surveiller faux positifs liés au revive inconditionnel si fenêtre élargie (lien B-06 keepalive) ; maintenir revive slow ≥ ~13.
+### 🔵 B-05d — Assouplissement du ré-appariement associator spécifique état LOST + optimisation prédiction Slow↔Fast `[OUVERT 2026-07-03 par saturation fenêtre B-05c — DRIVER : ratio #3b = 52,6 % causal]`
 
-- **Métriques cibles (baseline chiffrée `2026-07-02`)** :
-  - Terminal LOST **< 80 %** (vs 98,4 %) ; Terminal CONFIRMED **≥ 10 %** (vs 1,6 %).
-  - **ratio B (revive/LOST) : 0,19 → viser ≥ 0,35** ; **ratio A (purge/LOST) : 0,81 → viser < 0,65**.
-  - **ratio rejet-en-LOST : 0,32 → suivi (baisse attendue via 3b, pas via 3a)**.
-  - Non-régression TP ±2 % **+ garde-métrique faux positifs au revive** + revive slow ≥ ~13 (**sous réserve préco #3 levée**).
+- **Origine** : ouvert par la clôture de B-05c. L'A/B #3a iso-footage a prouvé causalement (+19,6 pt sur ratio #3b) que la fenêtre élargie sature et déplace le goulot vers le **rejet associator en fenêtre LOST**. Cible : la composante matching (~52 % du pool LOST post-1,5 s).
 
-- **Préconditions** :
-  - B-05a-bis livré ✅ ; audit leviers #3 + #1 livré ✅.
-  - `2026-07-02` : baseline cycle de vie post-patch vélocité ✅ ; compteur `associator_reject_in_lost_window` ✅ (posé + capturé `2026-07-03`).
-  - `2026-07-03` : réconciliation compteur revive frame/events **à faire** (préco #3, bloquant A/B).
-  - Footage tagué (transitions, apparitions multiples, statique long, mouvements rapides) + session iso-capture.
+- **Acquis chiffrés (baseline B-05d = état post-figeage 1,5 s, session 20260703_143412)** :
+  - `associator_reject_in_lost_window` / `registry_lost_total` = **52,6 %** (candidat présent mais rejeté avant purge).
+  - Reste ~47 % sans candidat (résiduel fenêtre, hors périmètre — ne pas ré-ouvrir #2).
 
-- **Bloque** : Finalisation B-05b.
+- **Objectif** : faire baisser le ratio #3b (candidats présents mais rejetés) en améliorant la **qualité de prédiction fast pendant l'état LOST**, pour que les candidats présentés à l'associator repassent au-dessus du seuil (IoU+hash), SANS abaisser globalement match_score_min (risque FP, lien B-06).
 
-- **Anti-patterns à éviter** :
-  - Refondre le descripteur / abaisser le seuil NCC de consolidation : hors chemin critique (`confirm_after=1`, revive court-circuite).
-  - Confondre `lost_after_s` (déjà A/B en B-05a-bis) avec `expire_after_lost_s` (la **vraie** fenêtre de revive).
-  - Traiter le reset `frames_matched=1` comme bug bloquant (levier #3 clos).
-  - Appliquer un fix B-05 dans une refonte sémantique (B-07).
-  - `2026-07-02` : lancer l'A/B `expire_after_lost_s` **avant** le compteur `associator_reject_in_lost_window` (attribution fenêtre/matching impossible + confusion gain vélocité amont).
-  - `2026-07-03` : traiter le driver comme « pur fenêtre » (invalidé — 32 % hors périmètre 3a) ; **coupler 3a et 3b** dans une même capture ; lancer un A/B **avant** d'avoir réconcilié `mask_revive_total` frame vs events.
+- **Deux leviers, NON couplés (attribution séparée, captures distinctes)** :
+  1. **#3-optim (Slow↔Fast)** : exploiter la vélocité fast déjà réactivée (`"ts": frame_ts`, validé 20260702_162941) + l'ancrage géométrique (`last_slow_ts` rebaptisé « dernier ancrage fiable ») pour **maintenir une prédiction de position fast pendant LOST** → meilleur IoU au revive. Point de modif pressenti : mask.py (consommation vélocité en état LOST) / associator.py. **Spec seule d'abord, aucun code avant mesure.**
+  2. **#3-gating (si #3-optim insuffisant)** : assouplissement du gating/seuil associator **spécifique état LOST uniquement** (pas global). Garde-fou FP obligatoire.
+
+- **Préconisations (ordre imposé)** :
+  1. **Réconcilier `mask_revive_total` (frame) vs REVIVE (events)** — restée bloquante depuis B-05c décomposé. Ici 13=13 sur A et B, mais verrouiller la règle avant tout A/B #3.
+  2. Instruire #3-optim (spec), capture iso même footage tagué, mesurer ratio #3b.
+  3. Si insuffisant → #3-gating, capture iso séparée.
+
+- **Métriques cibles** :
+  - ratio #3b **52,6 % → < 35 %**.
+  - Terminal LOST **< 80 %** (cible B-05c non atteinte, reportée ici).
+  - **Invariant anti-régression : mask_revive_total = REVIVE events ≥ 13** (toute baisse = rollback).
+  - Non-régression TP ±2 % + garde-métrique FP au revive.
+
+- **Préconditions** : B-05c clos ✅ ; expire_after_lost_s=1,5 figé ✅ ; footage tagué rejouable identique ✅ ; compteur associator_reject_in_lost_window posé ✅.
+
+- **Bloque** : Finalisation B-05b (chaîne inchangée : B-05c → B-05d → B-05b).
+
+- **Anti-patterns** :
+  - Ré-ouvrir la fenêtre (#2) : close, saturée (les ~47 % sans candidat sont hors périmètre matching).
+  - Abaisser match_score_min **global** au lieu du gating spécifique LOST (FP).
+  - Coupler #3-optim et #3-gating dans une même capture (attribution impossible).
+  - Lancer l'A/B avant réconciliation revive frame/events (préco #1).
 
 ---
 
