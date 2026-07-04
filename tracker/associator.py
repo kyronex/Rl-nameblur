@@ -52,6 +52,10 @@ class Associator:
         speed = (mask.vx * mask.vx + mask.vy * mask.vy) ** 0.5
         radius = self.cfg.geo_gate_base_radius_px + self.cfg.geo_gate_velocity_k * speed * self.cfg.geo_gate_dt_ref
         passes = dist <= radius
+        # Étape 0 — sonde near-miss : ne calcule ratio que si rejeté ET mask LOST
+        if not passes and mask.state == MaskState.LOST:
+            ratio = dist / radius if radius > 0 else float('inf')
+            bench.probe("associator_geo_gate_nearmiss_ratio", ratio)
         return passes
 
     # ── score composite (retourne MatchScore traçable) ───
@@ -92,7 +96,6 @@ class Associator:
                 cost[i, j] = 1.0 - ms.total
         return cost, scores
 
-
     # ── assignation hongroise ─────────────────────────────
     def associate(self,detections: List[Detection],masks: List[Mask],ts) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
         with bench.timer("associator_tick_ms"):
@@ -128,26 +131,6 @@ class Associator:
             bench.count("associator_matched_total", len(matches))
             bench.count("associator_unmatched_det_total", len(unmatched_dets))
             bench.count("associator_unmatched_mask_total", len(unmatched_masks))
-
-            # ── Probes IoU-ambiguïté (Slow) — instrumentation pure, n'altère pas le tracking ── TODO
-            # Counts forcés sur canal frame, pattern bench.count("nom", n=...) (cf. :124-126).
-            # Unité homogène : 1 unité = 1 détection multi-candidat non-gated.
-            IOU_AMBIG_FLOOR = 0.30   # plancher : top-1 géométriquement crédible
-            IOU_AMBIG_EPS   = 0.05   # marge top1-top2 sous laquelle l'IoU seul ne tranche pas
-            multi_candidate = 0   # dénominateur homogène
-            ambiguous       = 0   # numérateur homogène (sous-ensemble strict de multi_candidate)
-            for i in range(n_det):
-                # candidats réels = paires NON gatées (gated est le discriminant exclusif, models.py:90)
-                ious = [scores[i][j].iou for j in range(n_mask) if not scores[i][j].gated]
-                if len(ious) < 2:
-                    continue                      # mono-candidat → exclu des DEUX compteurs
-                multi_candidate += 1
-                ious.sort(reverse=True)
-                top1, top2 = ious[0], ious[1]
-                if top1 >= IOU_AMBIG_FLOOR and (top1 - top2) < IOU_AMBIG_EPS:
-                    ambiguous += 1
-            bench.count("associator_multi_candidate_det_total", n=multi_candidate)  # dénominateur
-            bench.count("associator_iou_ambiguous_total",       n=ambiguous)
 
             return matches, sorted(unmatched_dets), sorted(unmatched_masks)
 

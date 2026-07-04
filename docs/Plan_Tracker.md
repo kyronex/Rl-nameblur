@@ -39,7 +39,8 @@
    ├── B-05a-revive Bug `mask_revive_latency_ms` négatif                              ✅
    ├── B-05a-instr Instrumentation par-mask                                           ✅
    ├── B-05a-bis Audit non-consolidation : +95 % des masks LOST non CONFIRMED         ✅
-   ├── B-05c Recalibrage matching NCC (suite B-05a-bis)
+   ├── B-05c Recalibrage de la fenêtre de revive & ré-association LOST                ✅
+   ├── B-05d — Audit code-ancré & réorganisation du couple `Mask` / `FastMaskView`
    ├── B-05b Correctifs slow detector (réorienté — levier NCC, pas TTL)
    ├── B-09  TTL différencié par état (PENDING/CONFIRMED)
    └── B-06  Auto-keepalive masks stationnaires (patch tactique)
@@ -651,40 +652,139 @@
 
 ---
 
-### 🔵 B-05d — Assouplissement du ré-appariement associator spécifique état LOST + optimisation prédiction Slow↔Fast `[OUVERT 2026-07-03 par saturation fenêtre B-05c — DRIVER : ratio #3b = 52,6 % causal]`
+### 🔵 B-05d — Audit code-ancré & réorganisation du couple `Mask` / `FastMaskView` (départ `main.py`) — cadrage
 
-- **Origine** : ouvert par la clôture de B-05c. L'A/B #3a iso-footage a prouvé causalement (+19,6 pt sur ratio #3b) que la fenêtre élargie sature et déplace le goulot vers le **rejet associator en fenêtre LOST**. Cible : la composante matching (~52 % du pool LOST post-1,5 s).
+> **Statut** : `🔵` (cadrage figé — audit réel à exécuter une fois ce plan gelé)
+> **Ouvert** : 2026-07-03 — **Réécrit** : 2026-07-04 (bascule du levier « gating géométrique K » vers « réorganisation du couple Mask/FastMaskView »)
+> **Driver** : le ratio `#3b = 52,6 %` (session 20260703_143412) n'est pas causé par la largeur du gate mais par la **prédiction qui l'alimente** — données figées ou de mauvais référentiels exposées au fast. La distribution near-miss (avg `ratio ≈ 4,69`) prouve qu'aucun `K` borné `[1.0, 3.0]` ne rattrape le retard de prédiction. Le levier géométrique K est donc **abandonné comme levier principal** et rétrogradé en ajustement fin post-réorganisation.
 
-- **Acquis chiffrés (baseline B-05d = état post-figeage 1,5 s, session 20260703_143412)** :
-  - `associator_reject_in_lost_window` / `registry_lost_total` = **52,6 %** (candidat présent mais rejeté avant purge).
-  - Reste ~47 % sans candidat (résiduel fenêtre, hors périmètre — ne pas ré-ouvrir #2).
+---
 
-- **Objectif** : faire baisser le ratio #3b (candidats présents mais rejetés) en améliorant la **qualité de prédiction fast pendant l'état LOST**, pour que les candidats présentés à l'associator repassent au-dessus du seuil (IoU+hash), SANS abaisser globalement match_score_min (risque FP, lien B-06).
+#### 🎯 Reformulation du besoin
 
-- **Deux leviers, NON couplés (attribution séparée, captures distinctes)** :
-  1. **#3-optim (Slow↔Fast)** : exploiter la vélocité fast déjà réactivée (`"ts": frame_ts`, validé 20260702_162941) + l'ancrage géométrique (`last_slow_ts` rebaptisé « dernier ancrage fiable ») pour **maintenir une prédiction de position fast pendant LOST** → meilleur IoU au revive. Point de modif pressenti : mask.py (consommation vélocité en état LOST) / associator.py. **Spec seule d'abord, aucun code avant mesure.**
-  2. **#3-gating (si #3-optim insuffisant)** : assouplissement du gating/seuil associator **spécifique état LOST uniquement** (pas global). Garde-fou FP obligatoire.
+Le vrai objet du travail n'est pas d'élargir un gate, mais de **garantir la cohérence et la fraîcheur des données de mask tout au long de leur cycle de vie**, depuis leur production dans le workflow (`main.py` → threads slow/fast) jusqu'à leur consommation par l'associator. La question centrale : **quelles valeurs exposées au fast via `FastMaskView` sont réellement à jour, lesquelles se figent, et lesquelles sont écrites dans le mauvais référentiel ?**
 
-- **Préconisations (ordre imposé)** :
-  1. **Réconcilier `mask_revive_total` (frame) vs REVIVE (events)** — restée bloquante depuis B-05c décomposé. Ici 13=13 sur A et B, mais verrouiller la règle avant tout A/B #3.
-  2. Instruire #3-optim (spec), capture iso même footage tagué, mesurer ratio #3b.
-  3. Si insuffisant → #3-gating, capture iso séparée.
+Décision de cadrage : **réorganisation totale ou partielle du couple `Mask` / `FastMaskView`**, tranchée par l'audit. Ce bloc pose la méthode d'audit ; l'audit réel sera conduit après gel du plan.
 
-- **Métriques cibles** :
-  - ratio #3b **52,6 % → < 35 %**.
-  - Terminal LOST **< 80 %** (cible B-05c non atteinte, reportée ici).
-  - **Invariant anti-régression : mask_revive_total = REVIVE events ≥ 13** (toute baisse = rollback).
-  - Non-régression TP ±2 % + garde-métrique FP au revive.
+---
 
-- **Préconditions** : B-05c clos ✅ ; expire_after_lost_s=1,5 figé ✅ ; footage tagué rejouable identique ✅ ; compteur associator_reject_in_lost_window posé ✅.
+#### 🔬 Hypothèses ancrées (issues des relectures antérieures — à CONFIRMER par l'audit)
 
-- **Bloque** : Finalisation B-05b (chaîne inchangée : B-05c → B-05d → B-05b).
+| #   | Hypothèse                                                                          | Point de code présumé                                             | Effet suspecté                                     |
+| --- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| H1  | `template` figé à la création slow, jamais rafraîchi                               | `tracker.py` (création mask)                                      | Dérive d'apparence → `fast_mask_lost_total` ↑      |
+| H2  | `vx/vy` remis à 0 au dernier match slow puis tués par damping                      | `motion.py` (`apply_detection`, damping `1 − dt×2.0`)             | Vitesse exposée « morte » après ~0,5 s             |
+| H3  | `last_slow_ts` **écrasé par le fast**                                              | `tracker.py` (`apply_fast_detections`) / `motion.py`              | Prédiction LOST biaisée — cœur du bug `#3b`        |
+| H4  | `vx` (slow, inter-détection) et `vx_f` (fast, inter-frame) partagent le même champ | gate `_geo_gate_passes` lit `mask.vx/vy` sans connaître la source | Référentiels de vitesse hétérogènes (D3)           |
+| H5  | Le fast ne voit jamais un mask `LOST` (filtre `state == CONFIRMED`)                | `tracker.py` (sélection des vues)                                 | Mask ré-ancrable exclu exactement quand nécessaire |
 
+> **Note de cohérence (historique)** : l'hypothèse « `vx_f` jamais persisté » (ex-C1) est **infirmée** — `apply_detection(source="fast")` réécrit bien `mask.vx/vy`. Le défaut réel est en amont (H2 : remise à zéro au match slow suivant) et le mélange de référentiels (H4).
+
+---
+
+#### 🧭 Méthode d'audit — parcours descendant depuis `main.py`
+
+L'audit suit le **flux de données réel**, pas la structure des fichiers, pour tracer la fraîcheur de chaque champ de bout en bout.
+
+**Étape A0 — Cartographie du point d'entrée (`main.py`)**
+
+- Identifier où la frame et les vues sont produites (`give_frame_and_views` ou équivalent) et à quelle cadence.
+- Établir la liste exhaustive des champs de `FastMaskView` réellement construits à chaque tick et leur source dans `Mask`.
+- Livrable : table `champ vue → champ Mask → moment d'écriture → fraîcheur`.
+
+**Étape A1** — Traçage du cycle de vie d'un `Mask`
+
+- Pour chaque champ (`rect`, `vx`, `vy`, `template`, `last_slow_ts`, `last_fast_ts` s'il existe, `state`) : lister TOUS les points d'écriture (slow, fast, motion, associator) et l'ordre d'exécution par tick.
+- Objectif : détecter les écrasements inter-sources et les référentiels mélangés (confirmer H2, H3, H4).
+- Livrable : diagramme d'écriture par champ + repérage des conflits.
+
+**Étape A2** — Vérification de la cohérence de consommation
+
+- Confirmer ce que lit `_geo_gate_passes` / `compute_predicted_rect` et si la valeur lue correspond au référentiel attendu.
+- Confirmer H1 (template) et H5 (filtre state) côté production des vues.
+- Livrable : liste des incohérences avérées, classées « figée » / « mauvais référentiel » / « écrasée ».
+
+**Étape A3** — Décision réorganisation totale vs partielle
+
+- Sur la base de A0-A2, trancher : ajout ciblé de champs (partiel) OU refonte du schéma d'échange Mask↔vue (total).
+- Contrainte : minimiser la surface de changement tant que la cohérence est atteignable par ajout.
+
+---
+
+#### 🔧 Axes de réorganisation candidats (à valider par l'audit — PAS de patch dans ce bloc)
+
+| Axe       | Intervention                                                                          | Corrige        | Type                                       |
+| --------- | ------------------------------------------------------------------------------------- | -------------- | ------------------------------------------ |
+| **Axe 1** | Dédoubler le référentiel temporel : `last_fast_ts` distinct de `last_slow_ts`         | H3 (bug `#3b`) | **Levier principal candidat**              |
+| **Axe 2** | Exposer `vx_f/vy_f` comme champs propres de `FastMaskView`, séparés de `vx/vy` slow   | H4 (D3)        | Complément structurel                      |
+| **Axe 3** | `live_rect` thread-safe pour la ROI NCC + rafraîchissement conditionnel du `template` | H1             | Optionnel — après A/B                      |
+| **Axe 4** | Réévaluer le filtre `state == CONFIRMED` pour l'exposition des vues (visibilité LOST) | H5             | Sous réserve — attribution non brouillable |
+
+> Ordre anti-big-bang pressenti : **Axe 1 → Axe 2 → (A/B) → Axe 3 / Axe 4**. Chaque axe isolé, A/B iso-footage 143412, garde FP posée AVANT tout élargissement de pool.
+
+---
+
+#### 📌 Vigilance cohérence des données (fil rouge)
+
+- Un champ ne doit avoir **qu'une seule source d'autorité** par sémantique (temporel slow ≠ temporel fast ; vitesse slow ≠ vitesse fast).
+- Toute valeur exposée au fast doit être **datée** (savoir de quand elle date) pour éviter de consumir une donnée morte.
+- Aucun champ ne doit être écrasé silencieusement par une source d'un autre référentiel.
+
+---
+
+#### 🔒 Contrats & invariants préservés (inchangés vs historique)
+
+| Contrat / invariant                                                     | Action                                                              |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Contrat public `tick()`                                                 | **NON touché**                                                      |
+| Schéma `Mask` public                                                    | ajout de champs autorisé (Axe 1/2), **aucun renommage/suppression** |
+| `expire_after_lost_s = 1,5 s`                                           | borne temporelle dure — **non extensible** par la réorganisation    |
+| `match_score_min_slow = 0,25` / `match_score_min_fast = 0,30`           | discriminant FP final — **inchangés**                               |
+| `ncc_threshold = 0,65`                                                  | **inchangé**                                                        |
+| `lost_after_s = 1,2 s` / `confirm_after = 1` / `fast_max_drift_s = 0,5` | **inchangés**                                                       |
+| Invariant `mask_revive_total == count(REVIVE)`                          | réconciliation **maintenue**                                        |
+
+---
+
+#### ⚠️ Prérequis bloquants (indépendants du levier)
+
+| ID  | Prérequis                                                                                                                                         | État |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| PR1 | Sonde near-miss instrumentée en **buckets bruts** (pour un vrai p75)                                                                              | ⏳   |
+| PR2 | Garde FP `associator_revive_fp_suspect` réellement **émise** avant tout élargissement de pool                                                     | ⏳   |
+| PR3 | Footage iso 143412 rejouable identique                                                                                                            | ✅   |
+| PR4 | Audit des schémas non encore audités : `tracker/models.py`(`Detection`,`TrackerConfig`,`MatchScore`)+source `give_frame_and_views` dans `main.py` | ⏳   |
+
+---
+
+#### ✅ Critères de sortie / DoD (du cadrage)
+
+- [ ] A0 : cartographie `main.py` → vues → Mask livrée (table champ→source→fraîcheur).
+- [ ] A1 : diagramme d'écriture par champ + conflits inter-sources identifiés.
+- [ ] A2 : liste des incohérences avérées (figée / mauvais référentiel / écrasée), H1-H5 confirmées ou infirmées.
+- [ ] A3 : décision réorganisation totale vs partielle argumentée.
+- [ ] Périmètre des axes retenus figé, avec ordre anti-big-bang.
+- [ ] Contrat `tick()` et schéma public vérifiés non cassés.
+- [ ] PR1 et PR2 levés avant tout A/B.
+
+---
+
+#### 🔗 Chaînage & Anti-patterns
+
+- **Précédé de** : B-05c (clos ✅)
+- **Bloque** : B-05b (chaîne inchangée : B-05c → B-05d → B-05b)
 - **Anti-patterns** :
-  - Ré-ouvrir la fenêtre (#2) : close, saturée (les ~47 % sans candidat sont hors périmètre matching).
-  - Abaisser match_score_min **global** au lieu du gating spécifique LOST (FP).
-  - Coupler #3-optim et #3-gating dans une même capture (attribution impossible).
-  - Lancer l'A/B avant réconciliation revive frame/events (préco #1).
+  - Élargir le gate (K géométrique) comme levier principal — écarté par la donnée.
+  - Toucher le contrat `tick()` ou renommer un champ du schéma public.
+  - Élargir le pool de candidats avant émission effective de la garde FP (PR2).
+  - Coupler plusieurs axes dans une même capture A/B (attribution brouillée).
+  - Étendre la fenêtre temporelle `expire_after_lost_s` par un effet de bord de réorganisation.
+
+---
+
+#### 📝 Note de bascule (traçabilité)
+
+Ancien corps B-05d = « Gating LOST-spécifique de l'associator (gate × K) » avec séquencement 4 étapes (sonde near-miss → calibration K → garde FP → A/B). Ce corps est **remplacé** : le levier K devient un ajustement fin optionnel post-réorganisation. La sonde near-miss (Étape 0) et la garde FP (Étape 2) sont **conservées comme prérequis** (PR1/PR2). Rollback conceptuel : `geo_gate_lost_k = 1.0` reste le no-op de référence si le levier K devait être réactivé.
 
 ---
 
