@@ -62,7 +62,6 @@ class MaskRegistry:
         )
         added = self._add(mask)
         bench.count("registry_create_total")
-        bench.emit_lifecycle(LifecycleEvent.CREATED, added, reason=None)
         return added
 
     def remove(self, uid: int) -> Optional[Mask]:

@@ -14,6 +14,7 @@ from tracker.motion import apply_detection, predict_position
 from tracker.hasher import compute_phash
 from core.mask import MaskState
 from bench.bench             import bench
+from bench.lifecycle import LifecycleEvent
 
 log = logging.getLogger("tracker.tracker")
 
@@ -54,6 +55,7 @@ class Tracker:
                 clamped_rect = (x, y, w, h)
                 crop = frame[y:y+h, x:x+w]
                 phash = compute_phash(crop)
+                #log.info("phash=%s ", phash)
                 det_objects.append(Detection(
                     rect=clamped_rect,
                     phash=phash,
@@ -61,7 +63,10 @@ class Tracker:
                     confidence=d.confidence,
                     template=d.template,
                     scores=d.scores,
+                    frame_id=d.frame_id
                 ))
+            for det in det_objects:
+                bench.emit_detection(det)
             active = self.registry.masks
             # ── 2. Association ──
             matches, unmatched_dets, unmatched_masks = self.associator.associate(det_objects, active, ts)
@@ -78,18 +83,20 @@ class Tracker:
                     mask.template = det.template
                 if det.scores:
                     mask.scores = det.scores
+                bench.emit_lifecycle(LifecycleEvent.DETECTED, mask, reason="slow_detections")
                 self.registry.mark_matched(mask.uid, ts=ts,detected_frame_ts=detected_frame_ts,source="slow")
                 matched_uids.add(mask.uid)
-            # ── 4. Nouveaux masks (slow uniquement — fast ne crée pas) ──
+            # ── 4. Nouveaux masks ──
             created_uids = set()
             for det_idx in unmatched_dets:
                 det = det_objects[det_idx]
-                mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts)
+                mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts,frame_id=det.frame_id)
                 if det.phash is not None:
                     mask.hash_history.append(det.phash)
                 mask.confidence = det.confidence
                 mask.template = det.template
                 mask.scores = det.scores
+                bench.emit_lifecycle(LifecycleEvent.CREATED, mask, reason=None)
                 created_uids.add(mask.uid)
             return matched_uids, created_uids
 
@@ -125,9 +132,9 @@ class Tracker:
                 w = max(1, min(w, W - x))
                 h = max(1, min(h, H - y))
                 clamped_rect = (x, y, w, h)
-                mask.last_slow_ts = fast_ts
                 # Pipeline de mutation strictement aligné sur la branche `matched` de apply_detections (source="fast" → skip phash, pas de template/scores)
                 apply_detection(mask, clamped_rect, fast_ts, "fast", self.cfg, vx_f=vx_f, vy_f=vy_f)
+                bench.emit_lifecycle(LifecycleEvent.DETECTED, mask, reason="fast_detections")
                 self.registry.mark_matched(mask.uid, ts=fast_ts,detected_frame_ts=detected_frame_ts,source="fast")
                 matched_uids.add(mask.uid)
             if drift_skipped:

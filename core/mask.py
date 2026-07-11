@@ -9,10 +9,55 @@ from core.box import Box
 from bench.bench     import bench
 from bench.lifecycle import LifecycleEvent
 
+
 class MaskState(Enum):
     PENDING   = auto()   # vient d'apparaître, pas encore confirmé
     CONFIRMED = auto()   # vu assez de fois → on blur
     LOST      = auto()   # plus détecté, en sursis
+
+@dataclass(frozen=True, slots=True)
+class MaskKinematics:
+    """Sous-objet cinematique FAST d'un Mask — resoud le conflit slow/fast (B-05d Axe 2-b).
+    - slow (vx, vy, vw, vh, last_slow_ts) RESTE sur Mask.
+    - fast ecrit UNIQUEMENT dans ce sous-objet.
+    - last_fast_ts est mis a jour quand NCC confirme ET ncc_v_gate >= 0.55 (LOT 4a-1).
+    Le slow ne write JAMAIS dans fast_kin.
+    """
+    vx_f:         float = 0.0
+    vy_f:         float = 0.0
+    last_fast_ts: float = 0.0
+
+@dataclass( slots=True)
+class FastMaskView:
+    """
+    Évolution du contrat fast :
+        Tout nouveau champ requis par le fast tracker doit être ajouté explicitement ici. Cela force la revue du contrat slow→fast à chaque évolution (résout B21).
+    """
+    uid:              int
+    rect:             tuple
+    template:         Optional[np.ndarray]
+    last_detected_ts: float
+    vx:               float
+    vy:               float
+    vw:               float
+    vh:               float
+    state:            MaskState
+    confidence:       float
+    frame_id:           int            = -1
+    fast_kin:  Optional[MaskKinematics] = None
+    current_rect: Optional[tuple] = None
+
+
+    # -- proprietes compat lecture: .vx_f/.vy_f/.last_fast_ts delegues a fast_kin --
+    @property
+    def vx_f(self) -> float:
+        return self.fast_kin.vx_f if self.fast_kin is not None else 0.0
+    @property
+    def vy_f(self) -> float:
+        return self.fast_kin.vy_f if self.fast_kin is not None else 0.0
+    @property
+    def last_fast_ts(self) -> float:
+        return self.fast_kin.last_fast_ts if self.fast_kin is not None else 0.0
 
 def _serialize_scores(scores: dict) -> dict:
     """Sérialise le dict scores (hétérogène) pour export/log."""
@@ -26,28 +71,6 @@ def _serialize_scores(scores: dict) -> dict:
             out[k] = repr(v)
     return out
 
-@dataclass(frozen=True, slots=True)
-class FastMaskView:
-    """Snapshot immuable d'un Mask, frontière thread slow→fast.
-    Le thread fast tracker reçoit uniquement ces champs et ne peut
-    pas les muter (frozen=True).
-
-    Évolution du contrat fast :
-        Tout nouveau champ requis par le fast tracker doit être
-        ajouté explicitement ici. Cela force la revue du contrat
-        slow→fast à chaque évolution (résout B21).
-    """
-    uid:              int
-    rect:             tuple
-    template:         Optional[np.ndarray]
-    last_detected_ts: float
-    vx:               float
-    vy:               float
-    vw:               float
-    vh:               float
-    state:            MaskState
-    confidence:       float
-
 @dataclass
 class Mask:
     # --- Identité & géométrie ---
@@ -55,17 +78,21 @@ class Mask:
     rect:               tuple   # (x, y, w, h)
     last_detected_rect: tuple
     last_detected_ts:   float
+    frame_id:           int            = -1
     last_slow_ts:       float          = 0.0
     last_source:        str            = "new"
+    last_fast_rect:     Optional[tuple] = None
 
     # --- Cinématique ---
     vx:                 float          = 0.0
     vy:                 float          = 0.0
     vw:                 float          = 0.0
     vh:                 float          = 0.0
+    # --- Cinématique fast ---
     confidence:         float          = 0.0
     template:           Optional[np.ndarray] = None
     fast_miss_count:    int            = 0
+    fast_kin: MaskKinematics = field(default_factory=lambda: MaskKinematics())
     scores:             dict           = field(default_factory=dict)
 
     # --- Cycle de vie : état + compteurs ---
@@ -98,15 +125,11 @@ class Mask:
 
     def transition(self, event: str, ts: float, detected_frame_ts: float) -> MaskState:
         """Fait progresser l'état du mask en fonction d'un événement.
-            Contrat temporel (Plan_Bench L1.2) :
-            `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` et joue le rôle de `last_match_ts`. Aucun champ distinct
-            `last_match_ts` n'est défini ni requis ; toute sonde mesurant l'âge du dernier match (ex. `mask_last_match_age_s`) doit lire `last_seen_ts`.
-            Stratégie 3-A (Plan_Timer) — Séparation stricte des deux bases de temps :
+            `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` toute sonde mesurant l'âge du dernier match doit lire `last_seen_ts`.
+            Séparation stricte des deux bases de temps :
             - Timestamps capture (`*_frame_ts`) → latences (capture − capture)
             - Timestamps perf_counter (`*_ts`)  → TTL (perf_counter − perf_counter)
             Règle : ne JAMAIS mêler les deux bases dans un même calcul de latence. NO abs(), NO clamp() pour masquer un signe négatif — corriger la cause.
-            Sondes bench L3.9 :
-                Volumétrie événements (`mask_transition_matched_total`,`mask_transition_missing_total`) + transitions cycle de vie (`mask_promote_total`, `mask_revive_total`, `mask_to_lost_total`)+ latences (`mask_confirm_latency_ms`, `mask_revive_latency_ms`,`mask_lost_latency_ms`).
         """
         if event == "matched":
             bench.count("mask_transition_matched_total")
@@ -148,6 +171,7 @@ class Mask:
         """
         return FastMaskView(
             uid=self.uid,
+            frame_id=self.frame_id,
             rect=self.rect,
             template=self.template,
             last_detected_ts=self.last_detected_ts,
@@ -157,6 +181,8 @@ class Mask:
             vh=self.vh,
             state=self.state,
             confidence=self.confidence,
+            fast_kin=self.fast_kin,
+            current_rect=self.rect
         )
 
     def to_dict(self) -> dict:

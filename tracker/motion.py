@@ -25,6 +25,7 @@ Sonde `motion_staleness_slow_ms` :
 
 import logging
 from bench.bench             import bench
+from core.mask               import MaskKinematics
 
 log = logging.getLogger("tracker.motion")
 
@@ -119,9 +120,8 @@ def apply_detection(mask, new_rect, detect_ts, source, config, vx_f=0.0, vy_f=0.
                     mask.vh = raw_vh
                     bench.probe("motion_velocity_pps", (raw_vx ** 2 + raw_vy ** 2) ** 0.5)
         elif source == "fast":
-            # P3 : vélocité déjà calculée inter-tick par le worker (px/s) — injection directe, pas de recalcul.
-            mask.vx = vx_f
-            mask.vy = vy_f
+            mask.fast_kin = MaskKinematics(vx_f=vx_f,vy_f=vy_f,last_fast_ts=detect_ts)
+            mask.last_fast_rect = new_rect
         # ── EMA smoothing ──
         alpha = config.smooth_alpha
         sx = ox + alpha * (nx - ox)
@@ -139,9 +139,24 @@ def apply_detection(mask, new_rect, detect_ts, source, config, vx_f=0.0, vy_f=0.
 def compute_predicted_rect(mask, ts, config):
     """
     Version PURE de la prédiction : retourne le rect prédit à `ts` sans muter le mask et SANS alimenter de sonde.
-    Ancrage = last_detected_rect (pas de dérive cumulative).
-    Appelée par l'associator (gating IoU), par predict_position et par apply_detection (calcul motion_residual_px avant mutation).
+    Sélection de source :
+        - triplet FAST  (last_fast_rect + fast_kin.last_fast_ts + vx_f/vy_f) si fast_kin.last_fast_ts > last_slow_ts ET last_fast_rect is not None
+        - triplet SLOW  (last_detected_rect + last_slow_ts + vx/vy/vw/vh) sinon.
+    Les deux bases temporelles ne sont JAMAIS mélangées dans un même calcul.
     """
+    # ── Bascule FAST : triplet 100% cohérent (rect+temps+vitesse tous fast) ──
+    if (mask.fast_kin is not None
+            and mask.fast_kin.last_fast_ts > mask.last_slow_ts
+            and mask.last_fast_rect is not None):
+        dt = ts - mask.fast_kin.last_fast_ts
+        dt_capped = max(-config.dt_cap, min(dt, config.dt_cap))
+        damping = max(0.0, 1.0 - abs(dt) * config.damping_rate)
+        lx, ly, lw, lh = mask.last_fast_rect
+        return (lx + mask.fast_kin.vx_f * dt_capped * damping,
+                ly + mask.fast_kin.vy_f * dt_capped * damping,
+                lw,          # pas de vitesse taille en fast → dimensions figées à l'ancre
+                lh)
+    # ── Triplet SLOW
     if mask.last_slow_ts <= 0.0:
         return mask.rect
     dt = ts - mask.last_slow_ts
@@ -170,6 +185,13 @@ def predict_position(mask, now, screen_w, screen_h, config):
                 bench.count("motion_staleness_capped")
 
         x, y, w, h = compute_predicted_rect(mask, now, config)
+        # Bascule source (même condition que compute_predicted_rect L148-150)
+        if (mask.fast_kin is not None
+                and mask.fast_kin.last_fast_ts > mask.last_slow_ts
+                and mask.last_fast_rect is not None):
+            bench.count("motion_predict_source_fast")
+        else:
+            bench.count("motion_predict_source_slow")
         # Taille minimum
         min_size = config.min_mask_size
         w = max(min_size, w)

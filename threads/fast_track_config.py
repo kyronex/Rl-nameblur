@@ -26,6 +26,7 @@ class FastTrackConfig:
     am_max:    int   = field(default_factory=lambda: cfg.get("masks.adaptive_margin.max"))
 
     max_v_px_per_s: float = field(default_factory=lambda: cfg.get("detect.fast.max_v_px_per_s"))
+    ncc_v_gate: float = field(default_factory=lambda: cfg.get("detect.fast.ncc_v_gate"))
 
     def __post_init__(self):
         # Bornes adaptive_margin cohérentes

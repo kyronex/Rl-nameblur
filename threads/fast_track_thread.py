@@ -28,6 +28,7 @@ class _FastLifecyclePayload:
         self.state              = view.state
         self.rect               = view.rect
         self.confidence         = view.confidence
+        self.frame_id           = view.frame_id
         self.total_matches_cumul = 0   # fast thread doesn't track cumul
         self.frames_matched     = 0    # fast thread doesn't track per-frame
         self.last_source             = source
@@ -104,7 +105,24 @@ class FastTrackThread:
             #self._latest_frame = frame.copy()
             self._latest_frame_ts = frame_ts
             self._latest_views = list(views)
+        # A5-1 + R2-B: reset_from_snapshot called BEFORE worker triggers
+        self.reset_from_snapshot(views)
         self._new_frame_event.set()
+
+    def reset_from_snapshot(self, views: List[FastMaskView]):
+        for v in views:
+            self._last_known[v.uid] = {
+                "rect": v.rect,
+                "stale": 0,
+                "ts": self._latest_frame_ts if self._latest_frame_ts else time.time(),
+                "vx_f": v.vx_f if v.fast_kin is not None else 0.0,
+                "vy_f": v.vy_f if v.fast_kin is not None else 0.0,
+            }
+        # Purge uids no longer in the slow snapshot
+        snapshot_ids = {v.uid for v in views}
+        for uid in list(self._last_known.keys()):
+            if uid not in snapshot_ids:
+                del self._last_known[uid]
 
     def get_results(self):
         with self._results_lock:
@@ -112,6 +130,10 @@ class FastTrackThread:
 
     # ──────────── NCC sur ROI ────────────
     def _adaptive_margin(self, mask: FastMaskView, now: float, snap: FastTrackConfig) -> int:
+        if mask.fast_kin is not None and mask.fast_kin.last_fast_ts > 0.0:
+            vx, vy = mask.fast_kin.vx_f, mask.fast_kin.vy_f
+        else:
+            vx, vy = 0.0, 0.0
         speed = math.sqrt(mask.vx * mask.vx + mask.vy * mask.vy)
         dt = now - mask.last_detected_ts
         if dt < 0:
@@ -169,8 +191,11 @@ class FastTrackThread:
                 # Lag = délai entre dépôt de la frame et début effectif du traitement.
                 lag_ms = (time.perf_counter() - frame_ts) * 1000.0
                 bench.probe("fast_wakeup_lag_ms", lag_ms)
+                bench.probe("F_wakeup_lag_ms", lag_ms)
                 bench.count("fast_tick_total")
+                bench.count("F_tick_total")
                 bench.probe("fast_n_masks", float(len(views)))
+                bench.probe("F_n_masks", float(len(views)))
                 # ── Tick complet ──
                 with bench.timer("fast_tick_ms"):
                     # ── 2. Convertir en gris ──
@@ -203,8 +228,10 @@ class FastTrackThread:
                             last_state = self._last_known[v.uid]
                             candidate_rect, of_succeeded = of_track(self._prev_gray, curr_gray, last_state["rect"])
                             bench.count("fast_mask_processed_total")
+                            bench.count("F_mask_processed_total")
                             if not of_succeeded:
                                 bench.count("fast_of_failed_total")
+                                bench.count("F_of_failed_total")
                                 candidate_rect = last_state["rect"]
                             of_outcomes.append((v, last_state, candidate_rect))
                     # ── 4b. Phase NCC + fallback stale ──
@@ -214,12 +241,15 @@ class FastTrackThread:
                                 with bench.timer("fast_margin_ms"):
                                     margin = self._adaptive_margin(v, frame_ts, snap)
                                 bench.probe("fast_margin_px", float(margin))
+                                bench.probe("F_margin_px", float(margin))
                                 ncc_rect, score = self._ncc_on_roi(curr_gray, candidate_rect, v.template, snap, margin=margin)
                                 bench.probe("fast_ncc_score", score)
+                                bench.probe("F_ncc_score", score)
                             else:
                                 ncc_rect, score = None, 0.0
                             if ncc_rect is not None:
                                 bench.count("fast_ncc_confirmed_total")
+                                bench.count("F_ncc_confirmed_total")
                                 # ── Vélocité inter-tick : centre(ncc_rect) − centre(last_state["rect"]) / dt ──
                                 prev_ts = last_state.get("ts", frame_ts)
                                 dt = frame_ts - prev_ts
@@ -229,26 +259,34 @@ class FastTrackThread:
                                     vx_f = max(-snap.max_v_px_per_s, min(dx / dt, snap.max_v_px_per_s))
                                     vy_f = max(-snap.max_v_px_per_s, min(dy / dt, snap.max_v_px_per_s))
                                     bench.probe("fast_v_px_per_s", math.hypot(vx_f, vy_f))
+                                    bench.probe("F_v_px_per_s", math.hypot(vx_f, vy_f))
                                 else:
                                     vx_f = 0.0
                                     vy_f = 0.0
                                     bench.probe("fast_v_px_per_s", 0.0)
+                                    bench.probe("F_v_px_per_s", 0.0)
+                                ncc_v_gate = snap.ncc_v_gate if hasattr(snap, 'ncc_v_gate') else 0.55
+                                #log.info(f"uid={v.uid} score={score} vx={vx_f} vy={vy_f} ncc_v_gate={ncc_v_gate}")
+                                if score >= ncc_v_gate:
+                                    last_state["vx_f"] = vx_f
+                                    last_state["vy_f"] = vy_f
                                 last_state["rect"] = ncc_rect
                                 last_state["stale"] = 0
                                 last_state["ts"]   = frame_ts
-                                last_state["vx_f"] = vx_f
-                                last_state["vy_f"] = vy_f
-                                results.append((v.uid, ncc_rect, score, vx_f, vy_f))
+                                results.append((v.uid, ncc_rect, score,last_state.get("vx_f", 0.0),last_state.get("vy_f", 0.0)))
+                                v.current_rect = ncc_rect
                                 # ── Lifecycle: NCC a confirmé le mask (source=fast) ──
                                 bench.emit_lifecycle(LifecycleEvent.CONFIRMED, _FastLifecyclePayload(v, source="fast"), reason="ncc_fast")
                             else:
                                 last_state["stale"] += 1
                                 if last_state["stale"] > max_stale:
                                     bench.count("fast_mask_lost_total")
+                                    bench.count("F_mask_lost_total")
                                     # ── Lifecycle: mask expiré en stale (source=fast) ──
                                     bench.emit_lifecycle(LifecycleEvent.LOST, _FastLifecyclePayload(v, source="fast"), reason="stale_expire")
                                 else:
                                     bench.count("fast_stale_skipped_total")
+                                    bench.count("F_stale_skipped_total")
                     # ── 5. Purger masques disparus ──
                     for old_id in list(self._last_known.keys()):
                         if old_id not in active_ids:

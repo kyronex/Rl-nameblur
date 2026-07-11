@@ -6,8 +6,8 @@ from typing import Optional, TypedDict
 
 
 class LifecycleEvent(str, Enum):
-
     CREATED   = "CREATED"
+    DETECTED  = "DETECTED"
     CONFIRMED = "CONFIRMED"
     LOST      = "LOST"
     REVIVE    = "REVIVE"
@@ -51,7 +51,7 @@ class LifecycleRecord(TypedDict, total=False):
     # ── Provenance ──────────────────────────────────────────────
     # source alimenté par mask.last_source  (valeurs typiques : "new",
     # "slow", "fast" — voir Mask.last_source dans mask.py)
-    source:             Optional[str]
+    source:             str
 
     # ── Contexte LOST ───────────────────────────────────────────
     # Positionné pour CONFIRMED/LOST/REVIVE/EXPIRED ; None pour CREATED
@@ -62,9 +62,23 @@ class LifecycleRecord(TypedDict, total=False):
 
     # ── Flag revive ────────────────────────────────────────────
     revived:            Optional[bool]  # True si LOST→CONFIRMED (re-détection), None sinon
+    frame_id:          int
 
+    scores:       dict
+    hash_history: list
 
 if __name__ == "__main__":
     members = [e.name for e in LifecycleEvent]
     print(members)
     assert len(members) == 6, f"attendu 6, obtenu {len(members)}"
+
+class DetectionRecord(TypedDict, total=False):
+    frame_id:   int
+    rx: float
+    ry: float
+    rw: float
+    rh: float
+    phash:      Optional[int]
+    source:     str              # "slow"
+    confidence: float
+    scores:     dict

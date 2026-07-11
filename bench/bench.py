@@ -3,10 +3,16 @@ import time
 import threading
 from collections import defaultdict, deque
 from datetime import datetime
+import numpy as np
+import logging
+
+from dataclasses import asdict, is_dataclass
 
 from config import cfg
 from bench.jsonl_writer import BenchJsonlWriter
 from bench.lifecycle import LifecycleRecord, LifecycleEvent
+
+log = logging.getLogger("bench.bench")
 
 """
 Bench — registre centralisé de métriques runtime (probes / counts / gauges).
@@ -55,6 +61,7 @@ class BenchRegistry:
                     inst._frame_probes = defaultdict(list)
                     inst._frame_counts = defaultdict(int)
                     inst._events = {}
+                    inst._detections = defaultdict(list)
                     cls._instance = inst
         return cls._instance
 
@@ -191,6 +198,30 @@ class BenchRegistry:
     def _is_fast_probe(name: str) -> bool:
         return any(name.startswith(p) for p in _FAST_PROBE_PREFIXES)
 
+    @staticmethod
+    def _jsonable_val(v):
+        """Réduit une valeur à un primitif JSON-safe. Fallback str() → jamais de crash."""
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            return v
+        if isinstance(v, (np.floating, np.integer)):
+            return v.item()
+        return str(v)
+
+    def _jsonable_scores(self, scores):
+        """Convertit un dict {str: MatchScore|primitive} en dict 100% JSON-safe.
+        MatchScore est @dataclass(frozen=True, slots=True) → PAS de __dict__ :
+        on passe par dataclasses.asdict() (compatible slots), jamais par vars().
+        """
+        if not scores:
+            return {}
+        out = {}
+        for k, v in scores.items():
+            if is_dataclass(v) and not isinstance(v, type):
+                out[str(k)] = {kk: self._jsonable_val(vv) for kk, vv in asdict(v).items()}
+            else:
+                out[str(k)] = self._jsonable_val(v)
+        return out
+
     def emit_lifecycle(self, event: str, mask, reason: str | None = None):
         from core.mask import MaskState
         """Émet un événement lifecycle pour un mask.
@@ -213,9 +244,12 @@ class BenchRegistry:
         frames_m    = getattr(mask, "frames_matched", 0)
         last_src    = getattr(mask, "last_source", None)
         lost_since  = getattr(mask, "lost_since_ts", None)
+        frame_id    = getattr(mask, "frame_id", -1)
+        hash_hist   = getattr(mask, "hash_history", None)
+        scores      = getattr(mask, "scores", None)
 
         record: LifecycleRecord = {
-            "event":               str(event),
+            "event":               event.value,
             "mask_id":             mask_id,
             "state":               state_val,
             "rx":                  float(rect[0]) if len(rect) > 0 else 0.0,
@@ -230,11 +264,29 @@ class BenchRegistry:
             "source":              last_src if last_src is not None else None,
             "lost_since_ts":       float(lost_since) if lost_since is not None else None,
             "reason":              reason if reason is not None else None,
-            "revived":             True if (str(event) == str(LifecycleEvent.REVIVE) and
-                                             state_val == str(MaskState.CONFIRMED)) else None,
+            "revived":             True if (event.value == LifecycleEvent.REVIVE.value and state_val in (MaskState.PENDING.name, MaskState.CONFIRMED.name)) else None,
+            "frame_id":            int(frame_id),
+            "scores":              self._jsonable_scores(scores) if scores else {},
+            "hash_history":        list(hash_hist or []),
         }
         with self._probe_lock:
             self._events[mask_id] = record
+
+    def emit_detection(self, det):
+        if not self._enabled:
+            return
+        frame_id = int(getattr(det, "frame_id", -1))
+        record = {
+            "frame_id":   frame_id,
+            "rx": float(det.rect[0]), "ry": float(det.rect[1]),
+            "rw": float(det.rect[2]), "rh": float(det.rect[3]),
+            "phash":      det.phash,
+            "source":     det.source,
+            "confidence": float(det.confidence),
+            "scores":     self._jsonable_scores(det.scores),
+        }
+        with self._probe_lock:
+            self._detections[frame_id].append(record)
 
     def snapshot_all(self, window_s: float) -> dict:
         """Snapshot agrégé canal 'agg' — exclut les sondes fast et writer."""
@@ -378,6 +430,14 @@ class BenchRegistry:
             self._events.clear()
         return {"events": {"records": drained}}
 
+    def snapshot_detections(self):
+        if not self._enabled:
+            return {}
+        with self._probe_lock:
+            drained = [r for recs in self._detections.values() for r in recs]
+            self._detections.clear()
+        return {"detections": {"records": drained}}
+
     # ─────────────────────────────────────────────────────────────
     #  Frame push (proxy vers writer frame)
     # ─────────────────────────────────────────────────────────────
@@ -393,6 +453,11 @@ class BenchRegistry:
         writer = self._writers.get("events")
         if writer is not None:
             writer.push_events()
+
+    def push_detections(self):
+        writer = self._writers.get("detections")
+        if writer is not None:
+            writer.push_detections()
 
     # ─────────────────────────────────────────────────────────────
     #  Résumé console
@@ -473,7 +538,7 @@ class BenchRegistry:
         max_chars_cfg = cfg.get("debug.bench.writer.max_chars", None)
         max_chars = int(max_chars_cfg) if max_chars_cfg is not None else None
 
-        for mode in ("agg", "frame", "fast", "events"):
+        for mode in ("agg", "frame", "fast", "events", "detections"):
             if not cfg.get(f"debug.bench.{mode}.enabled", False):
                 continue
             path = cfg.get(f"debug.bench.{mode}.path", f"logs/json/bench_{mode}.jsonl")

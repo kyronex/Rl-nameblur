@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("bench.jsonl_writer")
 
 # ── Modes de snapshot supportés ──────────────────────────────────────────────
-_VALID_MODES = ("agg", "frame", "fast", "events")
+_VALID_MODES = ("agg", "frame", "fast", "events", "detections")
 
 # ── Sections autorisées par canal (cf. docs/bench-jsonl-schema.md §7) ────────
 # Matrice de validation défensive : toute section présente dans le snap mais
@@ -27,6 +27,7 @@ _ALLOWED_SECTIONS: dict[str, frozenset[str]] = {
     "frame": frozenset({"probes", "gauges", "counts"}),
     "fast":  frozenset({"probes", "gauges", "rates"}),
     "events": frozenset({"events"}),
+    "detections": frozenset({"detections"}),
 }
 
 class BenchJsonlWriter:
@@ -202,7 +203,6 @@ class BenchJsonlWriter:
             return
         snap = self._bench.snapshot_frame()
         if not snap:
-            self._bench.count("bench_writer_frame_empty_snap")
             return
         self._enqueue(snap)
 
@@ -215,9 +215,15 @@ class BenchJsonlWriter:
             return
         snap = self._bench.snapshot_events()
         if not snap:
-            self._bench.count("bench_writer_events_empty_snap")
             return
         self._enqueue(snap)
+
+    def push_detections(self):
+        if self._mode != "detections":
+            return
+        snap = self._bench.snapshot_detections()
+        if snap and snap.get("detections", {}).get("records"):
+            self._enqueue(snap)
 
     # ─────────────────────────────────────────────────────────────
     #  Threads internes

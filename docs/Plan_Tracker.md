@@ -40,7 +40,7 @@
    ├── B-05a-instr Instrumentation par-mask                                           ✅
    ├── B-05a-bis Audit non-consolidation : +95 % des masks LOST non CONFIRMED         ✅
    ├── B-05c Recalibrage de la fenêtre de revive & ré-association LOST                ✅
-   ├── B-05d — Audit code-ancré & réorganisation du couple `Mask` / `FastMaskView`
+   ├── B-05d Séparation slow/fast via `MaskKinematics`  `[EN COURS]`
    ├── B-05b Correctifs slow detector (réorienté — levier NCC, pas TTL)
    ├── B-09  TTL différencié par état (PENDING/CONFIRMED)
    └── B-06  Auto-keepalive masks stationnaires (patch tactique)
@@ -652,139 +652,131 @@
 
 ---
 
-### 🔵 B-05d — Audit code-ancré & réorganisation du couple `Mask` / `FastMaskView` (départ `main.py`) — cadrage
+### 🟡 B-05d — Audit complet du workflow slow/fast depuis `main.py` (assainissement `MaskKinematics` / `FastMaskView` / `Mask`) `[EN COURS]`
 
-> **Statut** : `🔵` (cadrage figé — audit réel à exécuter une fois ce plan gelé)
-> **Ouvert** : 2026-07-03 — **Réécrit** : 2026-07-04 (bascule du levier « gating géométrique K » vers « réorganisation du couple Mask/FastMaskView »)
-> **Driver** : le ratio `#3b = 52,6 %` (session 20260703_143412) n'est pas causé par la largeur du gate mais par la **prédiction qui l'alimente** — données figées ou de mauvais référentiels exposées au fast. La distribution near-miss (avg `ratio ≈ 4,69`) prouve qu'aucun `K` borné `[1.0, 3.0]` ne rattrape le retard de prédiction. Le levier géométrique K est donc **abandonné comme levier principal** et rétrogradé en ajustement fin post-réorganisation.
-
----
-
-#### 🎯 Reformulation du besoin
-
-Le vrai objet du travail n'est pas d'élargir un gate, mais de **garantir la cohérence et la fraîcheur des données de mask tout au long de leur cycle de vie**, depuis leur production dans le workflow (`main.py` → threads slow/fast) jusqu'à leur consommation par l'associator. La question centrale : **quelles valeurs exposées au fast via `FastMaskView` sont réellement à jour, lesquelles se figent, et lesquelles sont écrites dans le mauvais référentiel ?**
-
-Décision de cadrage : **réorganisation totale ou partielle du couple `Mask` / `FastMaskView`**, tranchée par l'audit. Ce bloc pose la méthode d'audit ; l'audit réel sera conduit après gel du plan.
+> **Statut** : `🟡` (audit de workflow acté — exécution en cours, propositions en sortie)
+> **Ouvert** : 2026-07-03 — **Réécrit** : 2026-07-05 (bascule cadrage → audit complet du workflow, sur données session `20260705_221213`)
+> **Driver** : la migration `MaskKinematics` (Option B/2-b) a été livrée, mais l'analyse post-patch de la session `20260705_221213` invalide la piste initiale et en révèle une nouvelle :
+>
+> - **Le ratio near-miss `#3b` a empiré : 100 %** des mesures dépassent le seuil `1.0` (130/130 ; avg `4,51` / p50 `4,15` / p95 `9,08`) contre `52,6 %` en session `211105`. Aucun `K` borné `[1.0, 3.0]` ne peut rattraper un retard moyen de `4,51` — le levier K reste **abandonné comme levier principal** (confirmé par la donnée).
+> - **La dérive de staleness (H2) N'EST PAS confirmée** : `motion_staleness_slow_ms` ne croît pas dans le temps (corrélation index de frame = `−0,197` ; médiane `601,8` / p95 `1110,4` / max `1673,4` ms). Les pics sont **sporadiques**, pas dérivants. Le référentiel n'est pas « figé qui se dégrade », il **oscille par à-coups**.
+> - Le lien `mask_lost ↔ staleness` est **réel mais faible** : staleness moyen au moment d'un `mask_lost` = `643,9` ms vs `590,4` ms global ; seulement `30,5 %` des `mask_lost` surviennent au-dessus du p75.
+>
+> **Conclusion de réorientation** : le driver se déplace de H2 (fraîcheur dérivante) vers **H4 (mauvais référentiel de prédiction instantané)** et **H5 (masques LOST invisibles au fast)**. Le problème n'est pas la donnée qui vieillit, mais la donnée écrite/lue dans le **mauvais référentiel** et une **pollution croisée slow↔fast** résiduelle. D'où la décision : **audit complet du workflow depuis `main.py` pour vérifier de bout en bout la séparation slow/fast entre `MaskKinematics`, `FastMaskView` et `Mask`, et l'exactitude des référentiels à chaque calcul et prédiction.**
 
 ---
 
-#### 🔬 Hypothèses ancrées (issues des relectures antérieures — à CONFIRMER par l'audit)
+#### 🎯 Objet de l'audit (reformulation du besoin)
 
-| #   | Hypothèse                                                                          | Point de code présumé                                             | Effet suspecté                                     |
-| --- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
-| H1  | `template` figé à la création slow, jamais rafraîchi                               | `tracker.py` (création mask)                                      | Dérive d'apparence → `fast_mask_lost_total` ↑      |
-| H2  | `vx/vy` remis à 0 au dernier match slow puis tués par damping                      | `motion.py` (`apply_detection`, damping `1 − dt×2.0`)             | Vitesse exposée « morte » après ~0,5 s             |
-| H3  | `last_slow_ts` **écrasé par le fast**                                              | `tracker.py` (`apply_fast_detections`) / `motion.py`              | Prédiction LOST biaisée — cœur du bug `#3b`        |
-| H4  | `vx` (slow, inter-détection) et `vx_f` (fast, inter-frame) partagent le même champ | gate `_geo_gate_passes` lit `mask.vx/vy` sans connaître la source | Référentiels de vitesse hétérogènes (D3)           |
-| H5  | Le fast ne voit jamais un mask `LOST` (filtre `state == CONFIRMED`)                | `tracker.py` (sélection des vues)                                 | Mask ré-ancrable exclu exactement quand nécessaire |
+Vérifier, **du point d'entrée `main.py` jusqu'à l'associator**, que la séparation slow/fast introduite par `MaskKinematics` est **effective et étanche** : aucun champ slow lu là où un champ fast est attendu (et inversement), aucun timestamp ni vélocité écrit dans le mauvais référentiel, aucune valeur consommée hors de sa sémantique. **But : assainir le projet de toute pollution croisée** pour expliquer le ratio `#3b` à 100 %. À l'issue de l'audit, **des propositions de correction seront formulées** (aucun patch n'est décidé dans ce bloc).
 
-> **Note de cohérence (historique)** : l'hypothèse « `vx_f` jamais persisté » (ex-C1) est **infirmée** — `apply_detection(source="fast")` réécrit bien `mask.vx/vy`. Le défaut réel est en amont (H2 : remise à zéro au match slow suivant) et le mélange de référentiels (H4).
+> **Note de cohérence** : la migration `MaskKinematics` (Option B, variante 2-b — dataclass imbriquée `Mask.kin` portant `last_slow_ts`, `last_fast_ts`, `vx/vy` slow, `vx_f/vy_f` fast) a été **livrée** ; l'hypothèse « `vx_f` jamais persisté » reste **infirmée**. Cet audit vérifie que la séparation attendue par construction est bien respectée à l'exécution.
+
+---
+
+#### 🔬 Hypothèses ancrées — statut mis à jour par la donnée `221213`
+
+| #   | Hypothèse                                                                                 | Statut post-`221213`                                                                                                   | Effet                                      |
+| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| H1  | `template` figé à la création slow, jamais rafraîchi                                      | ⏳ à confirmer par l'audit                                                                                             | dérive d'apparence → `F_mask_lost_total` ↑ |
+| H2  | `vx/vy` slow tués par damping puis exposés « morts » (dérive de fraîcheur)                | 🟥 **NON confirmée** — staleness non-dérivant (corr `−0,197`)                                                          | écartée comme cause principale             |
+| H3  | `last_slow_ts` écrasé par le fast                                                         | 🟨 **atténuée** par `MaskKinematics` (ts dédoublés) — vérifier qu'aucun point de code n'écrit encore l'un pour l'autre | régression potentielle si résidu           |
+| H4  | vitesse slow (`kin.vx/vy`) et fast (`kin.vx_f/vy_f`) confondues dans un calcul/prédiction | 🟧 **PISTE PRINCIPALE** — ratio `#3b` à 100 % cohérent avec référentiel de prédiction erroné                           | cœur suspecté du `#3b`                     |
+| H5  | le fast ne voit jamais un mask `LOST` (filtre `state == CONFIRMED` hardcodé)              | 🟧 **PISTE PRINCIPALE** — mask ré-ancrable exclu quand requis                                                          | filet de sécurité perdu                    |
 
 ---
 
 #### 🧭 Méthode d'audit — parcours descendant depuis `main.py`
 
-L'audit suit le **flux de données réel**, pas la structure des fichiers, pour tracer la fraîcheur de chaque champ de bout en bout.
+L'audit suit le **flux de données réel** (pas la structure des fichiers) pour tracer, champ par champ, le **référentiel** (slow/fast) et la **fraîcheur** de bout en bout.
 
-**Étape A0 — Cartographie du point d'entrée (`main.py`)**
+**Étape A0** — Point d'entrée `main.py`
 
-- Identifier où la frame et les vues sont produites (`give_frame_and_views` ou équivalent) et à quelle cadence.
-- Établir la liste exhaustive des champs de `FastMaskView` réellement construits à chaque tick et leur source dans `Mask`.
-- Livrable : table `champ vue → champ Mask → moment d'écriture → fraîcheur`.
+- Identifier la production frame + vues (`give_frame_and_views` ou équivalent) et la cadence.
+- Lister exhaustivement les champs de `FastMaskView` construits à chaque tick et leur source dans `Mask.kin`.
+- Vérifier que le filtre de sélection des vues (`state == CONFIRMED`) n'exclut pas les masques `LOST` (H5).
+- Livrable : table `champ vue → champ Mask.kin → référentiel (slow/fast) → moment d'écriture → fraîcheur`.
 
-**Étape A1** — Traçage du cycle de vie d'un `Mask`
+**Étape A1** — Cycle de vie d'un `Mask` et de `Mask.kin`
 
-- Pour chaque champ (`rect`, `vx`, `vy`, `template`, `last_slow_ts`, `last_fast_ts` s'il existe, `state`) : lister TOUS les points d'écriture (slow, fast, motion, associator) et l'ordre d'exécution par tick.
-- Objectif : détecter les écrasements inter-sources et les référentiels mélangés (confirmer H2, H3, H4).
-- Livrable : diagramme d'écriture par champ + repérage des conflits.
+- Pour chaque champ (`rect`, `kin.vx/vy`, `kin.vx_f/vy_f`, `template`, `kin.last_slow_ts`, `kin.last_fast_ts`, `state`) : lister TOUS les points d'écriture (slow, fast, motion, associator) et l'ordre par tick.
+- Objectif : détecter tout écrasement inter-référentiels résiduel (H3) et toute confusion vitesse slow/fast (H4).
+- Livrable : diagramme d'écriture par champ + repérage des pollutions croisées.
 
-**Étape A2** — Vérification de la cohérence de consommation
+**Étape A2** — Cohérence de consommation (les BONS référentiels)
 
-- Confirmer ce que lit `_geo_gate_passes` / `compute_predicted_rect` et si la valeur lue correspond au référentiel attendu.
+- Confirmer ce que lisent `_geo_gate_passes`, `compute_predicted_rect`, `_adaptive_margin` : la vélocité lue est-elle du bon référentiel (fast pour prédiction inter-frame, slow pour inter-détection) ?
 - Confirmer H1 (template) et H5 (filtre state) côté production des vues.
-- Livrable : liste des incohérences avérées, classées « figée » / « mauvais référentiel » / « écrasée ».
+- Livrable : liste des incohérences avérées, classées `figée` / `mauvais référentiel` / `écrasée` / `pollution croisée`.
 
 **Étape A3** — Décision réorganisation totale vs partielle
 
-- Sur la base de A0-A2, trancher : ajout ciblé de champs (partiel) OU refonte du schéma d'échange Mask↔vue (total).
-- Contrainte : minimiser la surface de changement tant que la cohérence est atteignable par ajout.
+- Sur la base A0–A2, trancher entre correctifs ciblés (partiel) et refonte du schéma d'échange Mask↔vue (total).
+- Contrainte : minimiser la surface de changement tant que la cohérence est atteignable par ajout/redirection.
 
 ---
 
-#### 🔧 Axes de réorganisation candidats (à valider par l'audit — PAS de patch dans ce bloc)
+#### 🩺 Vérifications d'assainissement (anti-pollution croisée) — cœur de l'audit
 
-| Axe       | Intervention                                                                          | Corrige        | Type                                       |
-| --------- | ------------------------------------------------------------------------------------- | -------------- | ------------------------------------------ |
-| **Axe 1** | Dédoubler le référentiel temporel : `last_fast_ts` distinct de `last_slow_ts`         | H3 (bug `#3b`) | **Levier principal candidat**              |
-| **Axe 2** | Exposer `vx_f/vy_f` comme champs propres de `FastMaskView`, séparés de `vx/vy` slow   | H4 (D3)        | Complément structurel                      |
-| **Axe 3** | `live_rect` thread-safe pour la ROI NCC + rafraîchissement conditionnel du `template` | H1             | Optionnel — après A/B                      |
-| **Axe 4** | Réévaluer le filtre `state == CONFIRMED` pour l'exposition des vues (visibilité LOST) | H5             | Sous réserve — attribution non brouillable |
-
-> Ordre anti-big-bang pressenti : **Axe 1 → Axe 2 → (A/B) → Axe 3 / Axe 4**. Chaque axe isolé, A/B iso-footage 143412, garde FP posée AVANT tout élargissement de pool.
-
----
-
-#### 📌 Vigilance cohérence des données (fil rouge)
-
-- Un champ ne doit avoir **qu'une seule source d'autorité** par sémantique (temporel slow ≠ temporel fast ; vitesse slow ≠ vitesse fast).
-- Toute valeur exposée au fast doit être **datée** (savoir de quand elle date) pour éviter de consumir une donnée morte.
-- Aucun champ ne doit être écrasé silencieusement par une source d'un autre référentiel.
+| ID  | Vérification                                                                                                  | Critère de conformité              |
+| --- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| S1  | Aucun point de code n'écrit `kin.last_slow_ts` depuis une source fast (ni l'inverse)                          | 0 écriture croisée                 |
+| S2  | La prédiction LOST utilise `kin.last_fast_ts` pour l'inter-frame et `kin.last_slow_ts` pour l'inter-détection | référentiel temporel exact         |
+| S3  | `_geo_gate_passes` / `compute_predicted_rect` lisent `kin.vx_f/vy_f` (fast) et non `kin.vx/vy` (slow)         | référentiel de vitesse exact       |
+| S4  | `_adaptive_margin` (optical-flow) est calculée sur vitesse fast fraîche, pas slow périmée                     | marge datée fast                   |
+| S5  | `FastMaskView` n'expose aucun champ slow non daté sous un nom ambigu                                          | 1 source d'autorité par sémantique |
+| S6  | Les masques `LOST` sont visibles au fast quand ré-anchrables (H5)                                             | filet de sécurité préservé         |
 
 ---
 
-#### 🔒 Contrats & invariants préservés (inchangés vs historique)
+#### 📊 Preuves de session (ancrage donnée `20260705_221213`)
 
-| Contrat / invariant                                                     | Action                                                              |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Contrat public `tick()`                                                 | **NON touché**                                                      |
-| Schéma `Mask` public                                                    | ajout de champs autorisé (Axe 1/2), **aucun renommage/suppression** |
-| `expire_after_lost_s = 1,5 s`                                           | borne temporelle dure — **non extensible** par la réorganisation    |
-| `match_score_min_slow = 0,25` / `match_score_min_fast = 0,30`           | discriminant FP final — **inchangés**                               |
-| `ncc_threshold = 0,65`                                                  | **inchangé**                                                        |
-| `lost_after_s = 1,2 s` / `confirm_after = 1` / `fast_max_drift_s = 0,5` | **inchangés**                                                       |
-| Invariant `mask_revive_total == count(REVIVE)`                          | réconciliation **maintenue**                                        |
+| Indicateur                   | Valeur                                                                                                              | Lecture                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Ratio `#3b` > 1.0            | **100 %** (130/130) ; avg `4,51` / p50 `4,15` / p95 `9,08`                                                          | K borné `[1.0,3.0]` insuffisant — non levier                   |
+| `motion_staleness_slow_ms`   | méd `601,8` / p95 `1110,4` / max `1673,4` ; corr(frame)=`−0,197`                                                    | staleness **non dérivant** → H2 écartée                        |
+| `mask_lost` vs staleness     | staleness@lost `643,9` ms vs `590,4` global ; `30,5 %` > p75                                                        | lien réel mais **faible**                                      |
+| Patch `_F` (compteurs frame) | `F_mask_lost_total`, `F_wakeup_lag_ms`, `F_n_masks`, `F_margin_px`, `F_ncc_score`, `F_v_px_per_s` présents en frame | **analyse par frame de `fast_track_thread.py` opérationnelle** |
 
----
-
-#### ⚠️ Prérequis bloquants (indépendants du levier)
-
-| ID  | Prérequis                                                                                                                                         | État |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| PR1 | Sonde near-miss instrumentée en **buckets bruts** (pour un vrai p75)                                                                              | ⏳   |
-| PR2 | Garde FP `associator_revive_fp_suspect` réellement **émise** avant tout élargissement de pool                                                     | ⏳   |
-| PR3 | Footage iso 143412 rejouable identique                                                                                                            | ✅   |
-| PR4 | Audit des schémas non encore audités : `tracker/models.py`(`Detection`,`TrackerConfig`,`MatchScore`)+source `give_frame_and_views` dans `main.py` | ⏳   |
+> **Caveats de données (à ne pas surinterpréter)** : `motion_staleness_slow_ms` absent sur ~489 frames de tête et de queue (session tronquée, n=1837/2326). Champ `type` **vide** (`""`) sur tous les records `bench_events` → analyse par type d'événement impossible en l'état ; vérifier le champ discriminant réel dans `bench-jsonl-schema.md` avant toute corrélation événementielle fine.
 
 ---
 
-#### ✅ Critères de sortie / DoD (du cadrage)
+#### 🔒 Contrats & invariants préservés (inchangés)
 
-- [ ] A0 : cartographie `main.py` → vues → Mask livrée (table champ→source→fraîcheur).
-- [ ] A1 : diagramme d'écriture par champ + conflits inter-sources identifiés.
-- [ ] A2 : liste des incohérences avérées (figée / mauvais référentiel / écrasée), H1-H5 confirmées ou infirmées.
+| Contrat / invariant                                                     | Action                                          |
+| ----------------------------------------------------------------------- | ----------------------------------------------- |
+| Schéma `Mask` / `Mask.kin` public                                       | ajout autorisé, **aucun renommage/suppression** |
+| `expire_after_lost_s = 1,5 s`                                           | borne dure — **non extensible**                 |
+| `match_score_min_slow = 0,25` / `match_score_min_fast = 0,30`           | discriminant FP — **inchangés**                 |
+| `ncc_threshold = 0,65` / `ncc_v_gate = 0,55` (provisoire)               | **inchangés**                                   |
+| `lost_after_s = 1,2 s` / `confirm_after = 1` / `fast_max_drift_s = 0,5` | **inchangés**                                   |
+| Invariant `mask_revive_total == count(REVIVE)`                          | réconciliation **maintenue**                    |
+
+---
+
+#### ⚠️ Prérequis bloquants
+
+| ID  | Prérequis                                                                                                                                | État |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| PR1 | Sonde near-miss en buckets bruts (vrai p75)                                                                                              | ⏳   |
+| PR2 | Garde FP `associator_revive_fp_suspect` réellement émise avant tout élargissement de pool                                                | ⏳   |
+| PR3 | Footage iso rejouable (143412 / 221213)                                                                                                  | ✅   |
+| PR4 | Audit schémas restants : `tracker/models.py` (`Detection`, `TrackerConfig`, `MatchScore`) + source `give_frame_and_views` dans `main.py` | ⏳   |
+| PR5 | Champ discriminant réel des `bench_events` identifié (`type` vide en `221213`)                                                           | ⏳   |
+
+---
+
+#### ✅ Critères de sortie / DoD
+
+- [ ] A0 : cartographie `main.py` → vues → `Mask.kin` livrée (table champ→source→référentiel→fraîcheur).
+- [ ] A1 : diagramme d'écriture par champ + pollutions croisées identifiées.
+- [ ] A2 : liste des incohérences (figée / mauvais référentiel / écrasée / pollution croisée), H1/H3/H4/H5 tranchées.
+- [ ] S1–S6 vérifiés (0 pollution croisée résiduelle).
 - [ ] A3 : décision réorganisation totale vs partielle argumentée.
-- [ ] Périmètre des axes retenus figé, avec ordre anti-big-bang.
+- [ ] **Propositions de correction formulées** (priorité H4 puis H5), chacune isolée et A/B-testable.
 - [ ] Contrat `tick()` et schéma public vérifiés non cassés.
-- [ ] PR1 et PR2 levés avant tout A/B.
-
----
-
-#### 🔗 Chaînage & Anti-patterns
-
-- **Précédé de** : B-05c (clos ✅)
-- **Bloque** : B-05b (chaîne inchangée : B-05c → B-05d → B-05b)
-- **Anti-patterns** :
-  - Élargir le gate (K géométrique) comme levier principal — écarté par la donnée.
-  - Toucher le contrat `tick()` ou renommer un champ du schéma public.
-  - Élargir le pool de candidats avant émission effective de la garde FP (PR2).
-  - Coupler plusieurs axes dans une même capture A/B (attribution brouillée).
-  - Étendre la fenêtre temporelle `expire_after_lost_s` par un effet de bord de réorganisation.
-
----
-
-#### 📝 Note de bascule (traçabilité)
-
-Ancien corps B-05d = « Gating LOST-spécifique de l'associator (gate × K) » avec séquencement 4 étapes (sonde near-miss → calibration K → garde FP → A/B). Ce corps est **remplacé** : le levier K devient un ajustement fin optionnel post-réorganisation. La sonde near-miss (Étape 0) et la garde FP (Étape 2) sont **conservées comme prérequis** (PR1/PR2). Rollback conceptuel : `geo_gate_lost_k = 1.0` reste le no-op de référence si le levier K devait être réactivé.
+- [ ] PR1, PR2, PR5 levés avant tout A/B.
 
 ---
 
@@ -1312,6 +1304,94 @@ Ancien corps B-05d = « Gating LOST-spécifique de l'associator (gate × K) » a
 ## 🔬 Audits différés (long terme)
 
 > **Principe** : un audit différé n'est **pas** un ticket d'implémentation. Il s'agit d'une décision documentée d'**investiguer plus tard**, sur la base de métriques collectées entre-temps, avant d'engager un effort d'implémentation potentiellement structurel.
+
+### 🔮 B-10 — Inversion de propriété : le thread fast propriétaire de sa piste cinématique `[BACKLOG LONG TERME]`
+
+> **Statut** : `🔮` (backlog long terme — NON planifié, dépend de B-05d/Option B)
+> **Prérequis dur** : B-05d livré avec MaskKinematics (`kin.last_fast_ts`, `kin.vx_f/vy_f`)
+> **Écart temporel** : non estimable — dépend de la stabilité post-B-05d
+
+---
+
+#### 🎯 Vision long terme
+
+À ce jour, le thread **slow** est propriétaire de la prédiction via `Mask.vx/vy` et `last_slow_ts`.
+Le thread **fast** lit ces champs pour calculer sa marge d'optical flow (`_adaptive_margin`)
+et pour corriger le drift — mais ces champs peuvent être **écrasés, périmés, ou hors référentiel**
+(H2, H3, H4, H5 — cf. audit B-05d).
+
+L'Option D vise une **inversion de propriété** :
+
+```text
+slow  = prédicteur principal + propriétaire de kin.last_slow_ts / vx / vy
+fast  = propriétaire de kin.last_fast_ts / vx_f / vy_f          ← NOUVEAU
+slow  = corrector : ne fait que corriger/ré-ancrer périodiquement
+         (reset de vx/vy depuis fast, schéma predict/update de filtre)
+```
+
+Le fast maintient sa propre piste locale ; slow la ré-ancrage à chaque match slow.
+Le filet de sécurité sur les masques LOST est **rétabli**.
+
+---
+
+#### ✅ Avantages
+
+| Avantage                        | Détail                                                   |
+| ------------------------------- | -------------------------------------------------------- |
+| Résout H3 à la racine           | `last_slow_ts` n'est plus écrasé par le fast             |
+| Résout H4 à la racine           | `vx_f/vy_f` first-class, plus de mélange de référentiels |
+| Résout H5 à la racine           | Le fast peut voir les LOST et les ré-ancrer              |
+| Filet de sécurité rétabli       | Masques LOST visibles et traitables par le fast          |
+| Cohérent avec MaskKinematics    | B-05d/Option B est le prérequis naturel                  |
+| Réduit le couplage tracker/fast | Fast autonome sur sa prédiction locale                   |
+
+---
+
+#### ⚠️ Inconvénients & risques
+
+| Inconvénient / risque               | Détail                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| **Refonte lourde**                  | Impact sur `tracker.py` + `fast_track_thread.py` + logique d'association |
+| **Risque élevé**                    | Multiples fichiers critiques — pas de rollback simple                    |
+| **Non A/B testable simplement**     | Changement de contrat large → difficile d'isoler l'effet d'un axe        |
+| **Gros effort de validation**       | Footage iso multi-sessions + régression complète du fluxo tracker        |
+| **Dette de migration**              | Les champs MaskKinematics (B-05d) doivent être stables avant d'inverser  |
+| **Surface de rupture (~45 points)** | `tracker.py`, `fast_track_thread.py`, `associator.py`                    |
+
+**Décision actée** : réservé à une refonte **planifiée** (Phase 2 — Évolutions conditionnelles),
+PAS dans le cycle B-05. Cette tâche ne sera ouverte qu'après validation stable de B-05d/Option B.
+
+---
+
+#### 🔒 Contrats à redéfinir (en cas d'ouverture)
+
+- Reset de `kin.vx/vy` depuis `kin.vx_f/vy_f` : cadence et condition à définir (après match slow).
+- Qui calcule `_adaptive_margin` ? Fast avec `kin.vx_f` OU slow avec `kin.vx` ?
+- Le filtre `state == CONFIRMED` côté fast : supprimable ou remplaçable par une garde de fraîcheur.
+- Invariant `mask_revive_total == count(REVIVE)` : à revérifier après inversion.
+
+---
+
+#### 🔗 Relation avec le plan
+
+| Tâche                                | Relation B-10                                      |
+| ------------------------------------ | -------------------------------------------------- |
+| B-05d (Option B / MaskKinematics)    | **Prérequis dur** — B-10 ne peut pas démarrer sans |
+| B-05b                                | Bloqué par B-05d — pas de lien direct avec B-10    |
+| B-07 (refonte `last_seen_ts`)        | Complémentaire — B-10 allège la dette sémantique   |
+| Phase 2 — Évolutions conditionnelles | B-10 candidate naturel pour cette phase            |
+
+---
+
+#### 📝 Note (traçabilité)
+
+L'Option D a été évaluée comme alternative à l'Option B lors du cadrage B-05d. Son potentiel
+de résolution à la racine (H3, H4, H5) est supérieur, mais son coût de mise en œuvre
+(refonte multi-fichiers, non A/B simple, risque élevé) est incompatible avec le cycle
+courant de stabilisation (Phase 0 → Lot 1 → Lot 2). Elle est archivée en backlog long terme,
+avec B-05d/Option B comme prérequis acté.
+
+---
 
 ### 🔬 B-07 — Refonte sémantique `last_seen_ts` (options F vs G)
 

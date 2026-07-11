@@ -34,6 +34,7 @@ detect:
     ncc_threshold: 0.4 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
     event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker)..
     max_v_px_per_s: 2000.0 # Vélocité max (px/s) pour clamp de vx_f/vy_f — (fast_track_thread.py › _worker phase NCC).
+    ncc_v_gate: 0.55 # Seuil NCC mini pour accepter une velocie fast (vx_f/vy_f).  En dessous: velocie rejetee, on garde l'ancienne valeur .
   hsv:
     white_core: # Seuils HSV du blanc "strict" (cœur du cartouche) — Zone haute luminance, saturation très basse.
       lower: [0, 0, 200]
@@ -210,6 +211,10 @@ debug:
     events:
       enabled: true
       path: "logs/json/bench_events.jsonl"
+    detections:
+      enabled: true
+      path: logs/json/bench_detections.jsonl
+
     # ── Analyse comparative (bench_compare.py) ───────────────────
     compare:
       buckets:
