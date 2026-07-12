@@ -14,7 +14,6 @@ Référentiel exhaustif des sondes émises par chaque module instrumenté de l'a
 - [Domaine `capture` — `threads/capture_thread.py`](#domaine-capture--threadscapture_threadpy)
 - [Domaine `fast` — `threads/fast_track_thread.py`](#domaine-fast--threadsfast_track_threadpy)
 - [Domaine `mask` — `core/mask.py`](#domaine-mask--coremaskpy)
-- [Domaine `selector` — `capture/selector.py`](#domaine-selector--captureselectorpy)
 - [Domaine `detect` — `detection/detect.py`](#domaine-detect--detectiondetectpy)
 
 ---
@@ -66,21 +65,21 @@ toutes les transitions.
 > Ces gauges (`registry_confirmed/pending/lost`) sont distinctes des gauges
 > `tracker_confirmed/pending/lost` posées dans `tracker.tick()`.
 > Les `registry_*` sont destinées au JSONL et aux analyses post-session.
-> Les `tracker_*` sont la source de vérité consommée par `main.py` au runtime.)`) comme source de vérité runtime — les deux jeux sont distincts et complémentaires.
+> Les `tracker_*` sont la source de vérité consommée par `main.py` au runtime.
 
 ## Domaine `tracker` — `tracker/tracker.py`
 
-| Sonde                          | Type  | Description                                                  | Conditionnel                 |
-| ------------------------------ | ----- | ------------------------------------------------------------ | ---------------------------- |
-| `tracker_apply_detections_ms`  | probe | Durée totale de `apply_detections()` (matching slow → masks) | Non                          |
-| `tracker_detections_in`        | count | Nombre de détections reçues par `apply_detections()`         | Non — 0 si aucune détection  |
-| `tracker_apply_fast_direct_ms` | probe | Durée totale de `apply_fast_direct()` (mise à jour fast)     | Non                          |
-| `tracker_fast_drift_skipped`   | count | Masks ignorés pour drift excessif lors du fast update        | Oui — si `drift_skipped > 0` |
-| `tracker_tick_ms`              | probe | Durée totale de `tick()` (predict + TTL + purge)             | Non                          |
-| `tracker_confirmed`            | gauge | Nombre de masks CONFIRMED (instantané fin de tick)           | Non                          |
-| `tracker_pending`              | gauge | Nombre de masks PENDING (instantané fin de tick)             | Non                          |
-| `tracker_lost`                 | gauge | Nombre de masks LOST (instantané fin de tick)                | Non                          |
-| `tracker_masks_total`          | gauge | Nombre total de masks actifs (tous états)                    | Non                          |
+| Sonde                              | Type  | Description                                                       | Conditionnel                 |
+| ---------------------------------- | ----- | ----------------------------------------------------------------- | ---------------------------- |
+| `tracker_apply_slow_detections_ms` | probe | Durée totale de `apply_slow_detections()` (matching slow → masks) | Non                          |
+| `tracker_detections_in`            | count | Nombre de détections reçues par `apply_slow_detections()`         | Non — 0 si aucune détection  |
+| `tracker_apply_fast_detections_ms` | probe | Durée totale de `apply_fast_detections()` (mise à jour fast)      | Non                          |
+| `tracker_fast_drift_skipped`       | count | Masks ignorés pour drift excessif lors du fast update             | Oui — si `drift_skipped > 0` |
+| `tracker_tick_ms`                  | probe | Durée totale de `tick()` (predict + TTL + purge)                  | Non                          |
+| `tracker_confirmed`                | gauge | Nombre de masks CONFIRMED (instantané fin de tick)                | Non                          |
+| `tracker_pending`                  | gauge | Nombre de masks PENDING (instantané fin de tick)                  | Non                          |
+| `tracker_lost`                     | gauge | Nombre de masks LOST (instantané fin de tick)                     | Non                          |
+| `tracker_masks_total`              | gauge | Nombre total de masks actifs (tous états)                         | Non                          |
 
 > `tracker_confirmed`, `tracker_pending`, `tracker_lost` sont lus par `main.py`
 > via `bench.read_gauge()` pour le log console — source de vérité runtime.
@@ -102,42 +101,38 @@ Sondes émises par le pipeline d'association détections → masks (gating + co�
 | `associator_unmatched_det_total`      | count | Détections sans mask associé (nouvelles plaques potentielles)      | Oui — si au moins une détection non matchée |
 | `associator_unmatched_mask_total`     | count | Masks sans détection associée (candidats LOST)                     | Oui — si au moins un mask non matché        |
 | `associator_score_rejected_total`     | count | Paires rejetées pour score total insuffisant (`< min_score`)       | Oui — si au moins un rejet score            |
+| `associator_reject_in_lost_window`    | count | Rejets score pour masks en état LOST (post-gating)                 | Oui — si au moins un tel rejet              |
 
-> `associator_gated_total` et `associator_candidates_total` sont complémentaires :
-> `gated + candidates = N × M` paires totales évaluées.
-> `associator_hungarian_rejected_total` agrège deux causes distinctes
-> (paire gated et score total < `min_score`) en un seul compteur — non désagrégeable
-> sans modification du code d'émission.
-> `associator_score_rejected_total` permet d'isoler les rejets score seuls,
-> orthogonal à `associator_hungarian_rejected_total`.
-> Les counts conditionnels sont absents du JSONL sur les frames
-> où leur branche n'est pas atteinte.
+> `associator_gated_total` et `associator_candidates_total` sont complémentaires : `gated + candidates = N × M` paires totales évaluées.
+> `associator_hungarian_rejected_total` agrège deux causes distinctes (paire gated et score total < `min_score`) en un seul compteur — non désagrégeable sans modification du code d'émission.
+> `associator_score_rejected_total` permet d'isoler les rejets score seuls, orthogonal à `associator_hungarian_rejected_total`.
+> Les counts conditionnels sont absents du JSONL sur les frames où leur branche n'est pas atteinte.
+> `associator_reject_in_lost_window` est incrémenté dans deux branches : `_build_cost_matrix` (score insuffisant) et `associate()` (hongrois reject).
+> Les counts conditionnels sont absents du JSONL sur les frames où leur branche n'est pas atteinte.
 
 ## Domaine `motion` — `tracker/motion.py`
 
 Fonctions pures (sans état global). Sondes émises par `apply_detection()` et `predict_position()`.
 `compute_predicted_rect()` est intentionnellement sans sonde (appelée N×M fois par l'associator).
 
-| Sonde                      | Type  | Description                                                      | Conditionnel                        |
-| -------------------------- | ----- | ---------------------------------------------------------------- | ----------------------------------- |
-| `motion_apply_ms`          | probe | Durée de `apply_detection()` (mise à jour état cinématique)      | Non                                 |
-| `motion_predict_ms`        | probe | Durée de `predict_position()` (extrapolation position)           | Non                                 |
-| `motion_dt_slow_ms`        | probe | Intervalle de temps réel entre deux détections slow (ms)         | Non                                 |
-| `motion_staleness_slow_ms` | probe | Staleness accumulée depuis la dernière détection slow (ms)       | Oui — si staleness dépasse le seuil |
-| `motion_velocity_pps`      | probe | Vitesse courante du mask (pixels/seconde)                        | Non                                 |
-| `motion_residual_px`       | probe | Résidu entre position prédite et position détectée (px)          | Non                                 |
-| `motion_teleport_total`    | count | Masks dont le saut de position dépasse le seuil de téléportation | Oui — si saut détecté               |
-| `motion_dt_clamped_total`  | count | Masks dont `dt` a été capé par `dt_cap`                          | Oui — si dépassement cap            |
-| `motion_staleness_capped`  | count | Masks dont `abs(staleness)` > `dt_cap`                           | Oui — si dépassement cap            |
-| `motion_alpha`             | probe | Valeur du facteur de lissage exponentiel appliqué                | Non                                 |
-| `motion_predict_dt_ms`     | probe | Intervalle de temps utilisé pour la prédiction (ms)              | Non                                 |
-| `motion_predict_shift_px`  | probe | Déplacement prédit appliqué à la position (px)                   | Non                                 |
+| Sonde                        | Type  | Description                                                      | Conditionnel                        |
+| ---------------------------- | ----- | ---------------------------------------------------------------- | ----------------------------------- |
+| `motion_apply_ms`            | probe | Durée de `apply_detection()` (mise à jour état cinématique)      | Non                                 |
+| `motion_predict_ms`          | probe | Durée de `predict_position()` (extrapolation position)           | Non                                 |
+| `motion_dt_slow_ms`          | probe | Intervalle de temps réel entre deux détections slow (ms)         | Non                                 |
+| `motion_staleness_slow_ms`   | probe | Staleness accumulée depuis la dernière détection slow (ms)       | Oui — si staleness dépasse le seuil |
+| `motion_velocity_pps`        | probe | Vitesse courante du mask (pixels/seconde)                        | Non                                 |
+| `motion_residual_px`         | probe | Résidu entre position prédite et position détectée (px)          | Non                                 |
+| `motion_teleport_total`      | count | Masks dont le saut de position dépasse le seuil de téléportation | Oui — si saut détecté               |
+| `motion_dt_clamped_total`    | count | Masks dont `dt` a été capé par `dt_cap`                          | Oui — si dépassement cap            |
+| `motion_staleness_capped`    | count | Masks dont `abs(staleness)` > `dt_cap`                           | Oui — si dépassement cap            |
+| `motion_predict_source_fast` | count | Prédictions utilisant le triplet FAST (fast_kin)                 | Non                                 |
+| `motion_predict_source_slow` | count | Prédictions utilisant le triplet SLOW (last_detected_rect)       | Non                                 |
 
-> `motion_staleness_slow_ms` est lu par `main.py` via `bench.last()` pour le log console.
-> `motion_velocity_pps` exprime la vitesse en pixels par seconde —
-> ne pas confondre avec `motion_predict_shift_px` qui est un déplacement absolu.
-> Les 3 counts conditionnels sont absents du JSONL sur les frames
-> où leur branche n'est pas atteinte.
+> `motion_staleness_slow_ms` est alimentée **uniquement** depuis `predict_position()` (1×/mask non matché/tick), pas depuis `compute_predicted_rect()`. Sémantique : fraîcheur de la dernière détection slow, pas fraîcheur du suivi global.
+> `motion_velocity_pps` exprime la vitesse en pixels par seconde (norme du vecteur vx/vy).
+> `motion_predict_source_*` reflète le même Branchement que `compute_predicted_rect()` pour la sélection du triplet source.
+> Les counts conditionnels sont absents du JSONL sur les frames où leur branche n'est pas atteinte.
 
 ## Domaine `capture` — `threads/capture_thread.py`
 
@@ -152,33 +147,60 @@ Fonctions pures (sans état global). Sondes émises par `apply_detection()` et `
 
 ## Domaine `fast` — `threads/fast_track_thread.py`
 
-Sondes émises par le thread de suivi inter-frames (NCC). Toutes les sondes NCC
-sont portées ici — `ncc_match()` dans `detect.py` n'émet aucune sonde.
+Sondes émises par le thread de suivi inter-frames (Optical Flow + NCC). Chaque sonde `fast_*` a une variante `F_*` **identique en valeur** émise simultanément :
+les variantes `F_*` sont **non filtrées** par `_is_fast_probe` et apparaissent aussi dans le canal `frame` (mesures exactes non agrégées). Ce comportement
+est intentionnel : les `F_*` fournissent des métriques par frame individualisées.
 
-> **Note — DetectThread non instrumenté** : `DetectThread` (slow) n'émet aucune sonde.
-> Le pipeline slow detect est instrumenté dans `detect.py` (domaine `detect`),
-> qui constitue la source de vérité pour les métriques de détection lente.
+> **Note — DetectThread non instrumenté** : `DetectThread` (slow) n'émet aucune sonde.Le pipeline slow detect est instrumenté dans `detect.py` (domaine `detect`).
 
-| Sonde                       | Type  | Description                                          | Conditionnel                |
-| --------------------------- | ----- | ---------------------------------------------------- | --------------------------- |
-| `fast_wakeup_lag_ms`        | probe | Délai entre signal Event et début de traitement (ms) | Non                         |
-| `fast_tick_total`           | count | Nombre de cycles fast traités                        | Non — 0 si aucune view      |
-| `fast_n_masks`              | probe | Nombre de FastMaskView actives à l'entrée du cycle   | Non                         |
-| `fast_tick_ms`              | timer | Durée totale du cycle fast track (ms)                | Non                         |
-| `fast_cvt_ms`               | timer | Durée conversion BGR→RGB (ms)                        | Non                         |
-| `fast_of_total_ms`          | timer | Durée du tracking Optical Flow global (ms)           | Non — 0 si aucune view      |
-| `fast_mask_processed_total` | count | Vues traitées par le pipeline (OF tenté si template) | Non — 0 si aucune view      |
-| `fast_of_failed_total`      | count | Vues où OF n'a pas réussi à proposer une position    | Oui — OF failed             |
-| `fast_ncc_total_ms`         | timer | Durée des appariements NCC (toutes views) (ms)       | Oui — au moins un NCC tenté |
-| `fast_margin_ms`            | timer | Durée de calcul de la marge adaptive (ms)            | Oui — au moins un NCC tenté |
-| `fast_margin_px`            | probe | Marge adaptive en pixels par view                    | Oui — au moins un NCC tenté |
-| `fast_ncc_score`            | probe | Score NCC par view                                   | Oui — au moins un NCC tenté |
-| `fast_ncc_confirmed_total`  | count | Vues confirmées par NCC (score ≥ `ncc_threshold`)    | Oui — NCC réussi            |
-| `fast_mask_lost_total`      | count | Vues perdues (`stale > max_stale_frames`)            | Oui — stale dépassé         |
-| `fast_stale_skipped_total`  | count | Vues stale tolérées (`stale ≤ max_stale_frames`)     | Oui — stale toléré          |
+### Sondes `fast_*` (agrégées — canal `fast`)
 
-> Les sondes `fast_margin_px`, `fast_ncc_score` sont émises par view — plusieurs émissions possibles par cycle si plusieurs views actives.
-> `fast_ncc_confirmed_total`, `fast_mask_lost_total`, `fast_stale_skipped_total` sont des counts cumulatifs session.
+| Sonde                       | Type  | Description                                           | Conditionnel                |
+| --------------------------- | ----- | ----------------------------------------------------- | --------------------------- |
+| `fast_wakeup_lag_ms`        | probe | Délai entre signal Event et début de traitement (ms)  | Non                         |
+| `fast_tick_total`           | count | Nombre de cycles fast traités                         | Non — 0 si aucune view      |
+| `fast_n_masks`              | probe | Nombre de FastMaskView actives à l'entrée du cycle    | Non                         |
+| `fast_tick_ms`              | timer | Durée totale du cycle fast track (ms)                 | Non                         |
+| `fast_cvt_ms`               | timer | Durée conversion RGB→GRAY (ms)                        | Non                         |
+| `fast_of_total_ms`          | timer | Durée du tracking Optical Flow global (ms)            | Non — 0 si aucune view      |
+| `fast_mask_processed_total` | count | Vues traitées par le pipeline (OF tenté si template)  | Non — 0 si aucune view      |
+| `fast_of_failed_total`      | count | Vues où OF n'a pas réussi à proposer une position     | Oui — OF failed             |
+| `fast_ncc_total_ms`         | timer | Durée des appariements NCC (toutes views) (ms)        | Oui — au moins un NCC tenté |
+| `fast_margin_ms`            | timer | Durée de calcul de la marge adaptive (ms)             | Oui — au moins un NCC tenté |
+| `fast_margin_px`            | probe | Marge adaptive en pixels par view                     | Oui — au moins un NCC tenté |
+| `fast_ncc_score`            | probe | Score NCC par view                                    | Oui — au moins un NCC tenté |
+| `fast_ncc_confirmed_total`  | count | Vues confirmées par NCC (score ≥ `ncc_v_gate`)        | Oui — NCC réussi            |
+| `fast_v_px_per_s`           | probe | Vitesse inter-tick NCC (pixels/seconde, dx/dt, dy/dt) | Oui — NCC confirmé          |
+| `fast_mask_lost_total`      | count | Vues perdues (`stale > max_stale_frames`)             | Oui — stale dépassé         |
+| `fast_stale_skipped_total`  | count | Vues stale tolérées (`stale ≤ max_stale_frames`)      | Oui — stale toléré          |
+
+### Variantes `F_*` (exactes — canal `frame` uniquement)
+
+| Sonde                    | Type  | Description                             | Canal |
+| ------------------------ | ----- | --------------------------------------- | ----- |
+| `F_wakeup_lag_ms`        | probe | Identique à `fast_wakeup_lag_ms`        | frame |
+| `F_tick_total`           | count | Identique à `fast_tick_total`           | frame |
+| `F_n_masks`              | probe | Identique à `fast_n_masks`              | frame |
+| `F_mask_processed_total` | count | Identique à `fast_mask_processed_total` | frame |
+| `F_of_failed_total`      | count | Identique à `fast_of_failed_total`      | frame |
+| `F_ncc_confirmed_total`  | count | Identique à `fast_ncc_confirmed_total`  | frame |
+| `F_margin_px`            | probe | Identique à `fast_margin_px`            | frame |
+| `F_ncc_score`            | probe | Identique à `fast_ncc_score`            | frame |
+| `F_v_px_per_s`           | probe | Identique à `fast_v_px_per_s`           | frame |
+| `F_mask_lost_total`      | count | Identique à `fast_mask_lost_total`      | frame |
+| `F_stale_skipped_total`  | count | Identique à `fast_stale_skipped_total`  | frame |
+
+> Les sondes `fast_margin_px` / `F_margin_px`, `fast_ncc_score` / `F_ncc_score` sont émises par view — plusieurs émissions possibles par cycle si plusieurs views actives.
+> `fast_ncc_confirmed_total` / `F_ncc_confirmed_total` sont des counts cumulatifs session.
+
+### Émissions lifecycle (domaine fast)
+
+Le thread fast émet des événements lifecycle via `bench.emit_lifecycle()` :
+
+| Événement   | Trigger                                 | Source   |
+| ----------- | --------------------------------------- | -------- |
+| `CONFIRMED` | NCC confirme une FastMaskView           | `"fast"` |
+| `LOST`      | FastMaskView dépasse `max_stale_frames` | `"fast"` |
 
 ## Domaine `mask` — `core/mask.py`
 
@@ -219,25 +241,20 @@ Les champs `*_ts` (perf_counter) servent uniquement au **TTL** (perte de vue, ex
 | `last_seen_frame_ts`  | capture       | Latences revive/confirm (via `last_detected_frame_ts`) |
 | `lost_since_frame_ts` | capture       | Latence revive (`prev_lost_since_frame_ts`)            |
 
-## Domaine `selector` — `capture/selector.py`
+### Émissions lifecycle (domaine mask)
 
-Sonde émise une seule fois par session à la sélection de source.
-`_probe()` n'émet aucune sonde bench — les tentatives échouées
-sont tracées en log uniquement.
+| Événement   | Trigger                              | Champs `revived` / `frame_id` |
+| ----------- | ------------------------------------ | ----------------------------- |
+| `CREATED`   | `registry.create()`                  | `revived = null`              |
+| `DETECTED`  | Match slow ou fast (dans tracker.py) | `revived = null`              |
+| `CONFIRMED` | `transition(matched)` PENDING→CONF   | `revived = null`              |
+| `LOST`      | `transition(missing)` (état normal)  | `revived = null`              |
+| `REVIVE`    | `transition(matched)` LOST→CONF      | `revived = True`              |
+| `EXPIRED`   | Purge TTL (`tick_and_expire()`)      | `revived = null`              |
+| `EVICTED`   | Éjection capacité max (`_evict_one`) | `revived = null`              |
 
-| Nom                      | Type  | Description                                | Conditionnel           |
-| ------------------------ | ----- | ------------------------------------------ | ---------------------- |
-| `selector_source_<name>` | count | Source retenue (`dxcam`/`cv2`/`mss`/`wgc`) | Oui — resolve() réussi |
-
-> Famille dynamique : `<name>` est le nom littéral de la source retenue.
-> Zéro émission si `CaptureSourceNotFound` est levée.
->
-> Écart vs Plan_Bench.md : Plan spécifiait `gauge`, implémenté en `count`.
-> Décision définitive : `count` retenu (émission unique par session,
-> la sémantique gauge n'apporte rien ici).
->
-> `bench.count()` n'est émis que sur succès — les tentatives échouées
-> ne produisent aucune sonde. Les tentatives échouées sont tracées en log uniquement.
+> `revived = True` est calculé dans `emit_lifecycle()` : positionné uniquement si `event == REVIVE` **et** `state_val` avant revive est `PENDING` ou `CONFIRMED`.
+> `frame_id` est lu via `getattr(mask, "frame_id", -1)` — valorisé par `tracker.apply_*()`.
 
 ## Domaine `detect` — `detection/detect.py`
 
@@ -251,16 +268,9 @@ sont portées par `fast_track_thread.py`.
 | `detect_slow_ms`               | probe | Durée pipeline slow complet (ms)  | Non                       |
 | `detect_slow_candidates_total` | count | Candidats post-filtre géométrique | Non — 0 si aucun candidat |
 
-> `detect_slow_candidates_total` compte les candidats avant remap
-> vers la résolution d'entrée. Les Box filtrées par clamp
-> (`x1 <= x0`) ne sont pas décomptées séparément.
->
-> Décomposition par étape pipeline (`_run_pipeline`) non instrumentée —
-> commentaire `# Bench.timer potentiel part etape` présent dans le code,
-> non implémenté.
->
-> `detect_slow_candidates_total` est émis avant le guard `if not candidates: return []` —
-> un appel sans candidat produit bien une émission à 0.
+> `detect_slow_candidates_total` compte les candidats avant remap vers la résolution d'entrée. Les Box filtrées par clamp (`x1 <= x0`) ne sont pas décomptées séparément.
+> Décomposition par étape pipeline (`_run_pipeline`) non instrumentée — commentaire `# Bench.timer potentiel part etape` présent dans le code, non implémenté.
+> `detect_slow_candidates_total` est émis avant le guard `if not candidates: return []` un appel sans candidat produit bien une émission à 0.
 
 ## Documentation associée
 

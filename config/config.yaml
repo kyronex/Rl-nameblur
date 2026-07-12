@@ -178,7 +178,7 @@ debug:
       noir: [0, 0, 0]
   bench:
     enabled: true # Active BenchRegistry + démarre les writers si writer.enabled=true
-    history_window_s: 60 # Fenêtre glissante conservée en mémoire pour summary_window() (s)
+    history_window_s: 60 # Fenêtre glissante conservée en mémoire
     # ── Writers JSONL ────────────────────────────────────────────
     writer:
       enabled: true # Maître : false = aucun writer démarré, quelles que soient les clés fille
@@ -211,9 +211,19 @@ debug:
     events:
       enabled: true
       path: "logs/json/bench_events.jsonl"
+
+    # ── Canal Detections
     detections:
       enabled: true
       path: logs/json/bench_detections.jsonl
+
+    frame_dumper:
+      enabled: true
+      path: "logs/frames"
+      jpeg_quality: 75 # configurable
+      tail_frames: 2 # 0 (couvertes) | 2 (étendu)
+      ring_size: 240 # Stratégie B : survie_tracker_max + tail + marge
+      queue_maxsize: 256 # DROP au-delà (put_nowait + except Full)
 
     # ── Analyse comparative (bench_compare.py) ───────────────────
     compare:

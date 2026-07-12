@@ -31,7 +31,6 @@ import logging
 from time import perf_counter, sleep
 from typing import Dict, Optional, Type
 
-from bench import bench
 from capture.base import CaptureSource, CaptureSourceNotFound
 from capture.config import CaptureConfig
 from capture.dxcam_source import DXCamSource
@@ -120,7 +119,6 @@ class SourceSelector:
                 min_frames=config.probe_min_frames,
             ):
                 log.info("[selector] Source retenue : %s", source_name)
-                bench.count(f"selector_source_{source_name}")
                 return source  # arrêtée (β), prête pour start() par CaptureThread
 
         # Aucune source validée

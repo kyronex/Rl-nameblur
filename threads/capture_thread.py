@@ -4,11 +4,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from typing import Optional, Tuple
 
 import numpy as np
 from capture.base import CaptureSource
 from bench import bench
+from config import cfg
 
 log = logging.getLogger("threads.capture_thread")
 
@@ -24,6 +26,10 @@ class CaptureThread:
         self._running: bool = False
         self._thread: Optional[threading.Thread] = None
         self._frame_id: int = 0
+
+        ring_size = cfg.get("debug.bench.frame_dumper.ring_size", 240)
+        self._ring_enabled = cfg.get("debug.bench.frame_dumper.enabled", False)
+        self._frame_ring: Optional[deque] = (deque(maxlen=ring_size) if self._ring_enabled else None)
 
     def start(self) -> None:
         self._source.start(target_fps=self._target_fps)
@@ -51,6 +57,16 @@ class CaptureThread:
         """Retourne l'ID de la dernière frame capturée."""
         with self._frame_lock:
             return self._frame_id
+
+    def get_ring_frame(self, frame_id: int) -> Optional[np.ndarray]:
+        """Retourne la frame copiée pour frame_id, ou None si évincée/absente."""
+        with self._frame_lock:
+            if self._frame_ring is None:
+                return None
+            for fid, buf in reversed(self._frame_ring):
+                if fid == frame_id:
+                    return buf
+        return None
 
     def _worker(self) -> None:
         _diag_count = 0
@@ -82,3 +98,5 @@ class CaptureThread:
                 self._latest_frame = frame
                 self._latest_ts = ts
                 self._frame_id += 1
+                if self._frame_ring is not None:
+                    self._frame_ring.append((self._frame_id, frame.copy()))

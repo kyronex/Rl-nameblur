@@ -1,14 +1,5 @@
 # Schéma JSONL bench — Contrat normatif L0.4
 
-> 🔒 **Statut** : figé.
-> Toute modification du schéma (ajout/suppression/renommage de champ, changement de type, restructuration) requiert :
->
-> 1. Incrément de `schema_version`.
-> 2. Ouverture d'un nouveau ticket dédié.
-> 3. Mise à jour du présent document.
-
----
-
 ## Sommaire
 
 1. [Portée](#1-portée)
@@ -19,30 +10,23 @@
 4. [Canal `fast`](#4-canal-fast)
 5. [Canal `frame`](#5-canal-frame)
 6. [Canal `events`](#6-canal-events)
-7. [Contrat des sections imbriquées](#7-contrat-des-sections-imbriquées)
-   - 7.1 [`probes`](#71-probes)
-   - 7.2 [`gauges`](#72-gauges)
-   - 7.3 [`rates`](#73-rates)
-   - 7.4 [`counts`](#74-counts)
-8. [Matrice des sections par canal](#8-matrice-des-sections-par-canal)
-9. [Référence d'implémentation](#9-référence-dimplémentation)
-10. [Paramètres de configuration](#10-paramètres-de-configuration)
+7. [Canal `detections`](#7-canal-detections)
+8. [Contrat des sections imbriquées](#8-contrat-des-sections-imbriquées)
+   - 8.1 [`probes`](#81-probes)
+   - 8.2 [`gauges`](#82-gauges)
+   - 8.3 [`rates`](#83-rates)
+   - 8.4 [`counts`](#84-counts)
+9. [Matrice des sections par canal](#9-matrice-des-sections-par-canal)
+10. [Référence d'implémentation](#10-référence-dimplémentation)
+11. [Paramètres de configuration](#11-paramètres-de-configuration)
 
 ---
 
 ## 1. Portée
 
-Ce document décrit le format des fichiers JSONL produits par `bench/jsonl_writer.py`.
-
-Trois canaux indépendants, un fichier par canal et par session :
-
-| Canal   | Fichier                          | Cadence d'écriture                 |
-| ------- | -------------------------------- | ---------------------------------- |
-| `frame` | `bench_frame_{session_id}.jsonl` | 1 ligne / appel `push_frame()`     |
-| `agg`   | `bench_agg_{session_id}.jsonl`   | 1 ligne / `agg_interval` (config)  |
-| `fast`  | `bench_fast_{session_id}.jsonl`  | 1 ligne / `fast_interval` (config) |
-
-> **Note canal `frame`** : `push_frame()` est invoqué par la boucle principale (`main.py`) à chaque frame capturée. La cadence est donc gouvernée par le pipeline de capture, pas par un intervalle configurable. Le paramètre `debug.bench.frame.interval_s` est **ignoré** pour ce canal.
+Ce document définit le schéma de chaque ligne JSONL émise par les writers bench (`bench/jsonl_writer.py`).
+Il s'applique aux 5 canaux : `agg`, `fast`, `frame`, `events`, `detections`.
+Le code est source de vérité ; ce document reflète l'implémentation au L0.4.
 
 ---
 
@@ -52,18 +36,18 @@ Trois canaux indépendants, un fichier par canal et par session :
 
 Chaque ligne JSONL, tous canaux confondus, contient au minimum :
 
-| Champ            | Type   | Description                                                    |
-| ---------------- | ------ | -------------------------------------------------------------- |
-| `schema_version` | int    | Version du contrat (valeur courante : `1`).                    |
-| `ts`             | float  | Timestamp wall-clock UNIX (`time.time()`), secondes.           |
-| `mono`           | float  | Horloge monotone (`time.perf_counter()`), secondes.            |
-| `session_id`     | string | Identifiant unique de session, propagé sur les 3 canaux.       |
-| `mode`           | string | Canal d'origine : `"frame"` / `"agg"` / `"fast"` / `"events"`. |
+| Champ            | Type     | Description                                                                     |
+| ---------------- | -------- | ------------------------------------------------------------------------------- |
+| `schema_version` | `int`    | Version du schéma .                                                             |
+| `ts`             | `float`  | Timestamp wall-clock UNIX (secondes,`time.time()`)                              |
+| `mono`           | `float`  | Timestamp monotome (secondes, `time.perf_counter()`)                            |
+| `session_id`     | `string` | Identifiant de session (format horodaté, ex : `20250612_085200`)                |
+| `mode`           | `string` | Canal d'origine : `"frame"` / `"agg"` / `"fast"` / `"events"` / `"detections"`. |
 
 ### 2.2 Règles d'évolution du `schema_version`
 
-- Toute modification **non rétro-compatible** des sections imbriquées (suppression de champ, renommage, changement de type) **doit** incrémenter `schema_version`.
-- L'ajout d'une nouvelle section optionnelle ou d'un nouveau champ optionnel **n'impose pas** d'incrément, à condition que les consommateurs existants puissent l'ignorer sans erreur.
+- Le `schema_version` n'est incrémenté que lors d'un changement de contrat (nouveau champ obligatoire, suppression, changement de type).
+- L'incrément se fait dans `BenchJsonlWriter._enqueue()` (bench/jsonl_writer.py).
 
 ---
 
@@ -86,19 +70,18 @@ Chaque ligne JSONL, tous canaux confondus, contient au minimum :
 
 ### 3.2 Sections — présence
 
-Les sections `probes`, `gauges`, `rates` sont **conditionnellement présentes** :
-
-- Une section est émise **si et seulement si** elle contient au moins une entrée non vide sur la fenêtre temporelle (`interval_s`).
-- Une ligne JSONL est émise uniquement si **au moins une** des trois sections est non vide. Sinon le producteur (`snapshot_all`) retourne `{}` et aucune ligne n'est écrite.
-
-> **Conséquence côté consommateur** : tester systématiquement la présence de chaque section avant lecture. L'absence d'une section signifie _« aucune donnée sur la fenêtre »_, pas une erreur.
+| Section  | Présence    | Condition                                           |
+| -------- | ----------- | --------------------------------------------------- |
+| `probes` | si non vide | au moins une sonde avec des mesures dans la fenêtre |
+| `gauges` | si non vide | au moins une gauge posée                            |
+| `rates`  | si non vide | au moins un count avec total > 0                    |
 
 ### 3.3 Sondes exclues
 
 Le canal `agg` exclut :
 
-- Les sondes commençant par `fast_` (réservées au canal `fast` — cf. §4).
-- Les sondes commençant par `bench_writer_` (auto-instrumentation interne des writers — cf. §9).
+- Les sondes préfixées par `fast_` (`_is_fast_probe` retourne True → exclues).
+- Les sondes préfixées par `bench_writer_` (auto-sondes des writers).
 
 ---
 
@@ -121,13 +104,14 @@ Le canal `agg` exclut :
 
 ### 4.2 Sections — présence
 
-Mêmes règles que §3.2 : présence conditionnelle, ligne émise uniquement si au moins une section non vide.
+Identique à §3.2.
 
 ### 4.3 Sondes incluses / exclues
 
-Le canal `fast` inclut **exclusivement** les sondes, gauges et compteurs dont le nom commence par le préfixe `fast_`.
+Le canal `fast` inclut **uniquement** les sondes préfixées `fast_` (via `_is_fast_probe`).
+Toutes les autres sondes sont exclues.
 
-> ⚠ Le choix du préfixe à l'émission (`bench.probe("fast_xxx", ...)`) détermine **irréversiblement** le canal de destination. Cf. `bench-compare.md` §_Convention de préfixage des canaux_.
+**Note** : les sondes préfixées `F_*` (variantes exactes des probes fast) ne sont **pas** filtrées par `_is_fast_probe` — elles ne sont donc pas inclues dans le canal `fast`. Elles apparaissent dans le canal `frame` pour fournir des mesures exactes par frame.
 
 ---
 
@@ -154,15 +138,15 @@ Mêmes règles que §3.2.
 
 ### 5.3 Sémantique différentielle
 
-Contrairement aux canaux `agg` et `fast` qui agrègent sur une fenêtre temporelle, le canal `frame` est **différentiel** :
-
-- `probes` et `counts` sont vidés après chaque appel à `snapshot_frame()`.
+- Les buffers `_frame_probes` et `_frame_counts` sont **vidés** après chaque appel à `snapshot_frame()`.
+- `probes` contient les agrégats des mesures accumulées depuis le dernier snapshot.
+- `counts` contient les totaux incrémentaux depuis le dernier snapshot.
 - `gauges` reste un état instantané (pas de vidage).
-- Pour reconstituer un cumulatif depuis le début de session, sommer les `counts` ligne à ligne en post-analyse.
 
 ### 5.4 Sondes exclues
 
-Mêmes exclusions que §3.3 (`fast_*` et `bench_writer_*`).
+Mêmes exclusions que `agg` : `fast_*` et `bench_writer_*`.
+**Exception** : les sondes préfixées `F_*` ne sont pas filtrées et apparaissent dans ce canal (mesures exactes par frame).
 
 ---
 
@@ -185,40 +169,70 @@ Mêmes exclusions que §3.3 (`fast_*` et `bench_writer_*`).
 
 ### 6.2 Section `events.records` — présence
 
-La section `events` est **conditionnellement présente** :
-
-- `events.records` est une **liste** (peut être vide).
-- La ligne JSONL est émise uniquement si `events` est non vide (au moins un record). Si `events` est absent ou `records` est vide, `snapshot_events()` retourne `{}` et aucune ligne n'est écrite.
-- Conséquence côté consommateur : la présence de `events` signifie « au moins un événement lifecycle sur cette fenêtre ». L'absence signifie « aucun événement ».
+Présente si et seulement si au moins un événement lifecycle a été émis depuis le dernier snapshot.
+Le buffer est **drainé** après lecture.
 
 ### 6.3 LifecycleRecord — champs
 
-Chaque élément de `records` contient **exactement** les champs suivants :
-
-| Champ                 | Type     | Description                                                                                                                                      |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `event`               | `string` | Valeur attendue : `"LifecycleEvent.CREATED"` / `"EXPIRED"` / `"LOST"` / `"REVIVE"` (format long). CONFIRMED et EVICTED absents du corpus actuel. |
-| `mask_id`             | `int`    | UID unique du mask.                                                                                                                              |
-| `rx`, `ry`            | `float`  | Coin supérieur-gauche du rectangle de détection.                                                                                                 |
-| `rw`, `rh`            | `float`  | Largeur / hauteur du rectangle.                                                                                                                  |
-| `confidence`          | `float`  | Score de confiance (0.0 – 1.0).                                                                                                                  |
-| `created_ts`          | `float`  | Timestamp `perf_counter` de création du mask.                                                                                                    |
-| `event_ts`            | `float`  | Timestamp `perf_counter` de l'événement.                                                                                                         |
-| `total_matches_cumul` | `int`    | Compteur cumulatif de toutes les détections.                                                                                                     |
-| `source`              | `string` | `"slow"` ou `"fast"` — **uniquement pour CREATED** ; `null` sinon.                                                                               |
-| `frames_matched`      | `int`    | Frames consécutifs avec match (1 sur CREATED/REVIVE, 0 sur LOST/EXPIRED).                                                                        |
-| `lost_since_ts`       | `float`  | Timestamp du passage à LOST — `null` pour CREATED/REVIVE.                                                                                        |
-| `state`               | `string` | État machine : `"PENDING"` (CREATED) / `"CONFIRMED"` (REVIVE) / `"LOST"` / `"EXPIRED"`.                                                          |
-| `reason`              | `string` | `null` pour CREATED/LOST/REVIVE ; `"timeout_after_lost"` pour EXPIRED.                                                                           |
-| `revived`             | `bool`   | Toujours `null` (pas encore peuplé côté producteur).                                                                                             |
+| Champ                  | Type           | Description                                                                                                      |
+| ---------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `event`                | `string`       | Valeur de `LifecycleEvent` : `CREATED` / `DETECTED` / `CONFIRMED` / `LOST` / `REVIVE` / `EXPIRED` / `EVICTED`    |
+| `mask_id`              | `int`          | Identifiant unique du mask                                                                                       |
+| `state`                | `string`       | État du mask au moment de l'événement : `PENDING` / `CONFIRMED` / `LOST` (jamais `EXPIRED`, `CREATED`, `REVIVE`) |
+| `rx`, `ry`, `rw`, `rh` | `float`        | Géométrie du mask au moment de l'événement                                                                       |
+| `confidence`           | `float`        | Score de confiance au moment de l'événement (0.0 – 1.0).                                                         |
+| `created_ts`           | `float`        | Timestamp de création du mask (epoch, `time.perf_counter()`)                                                     |
+| `event_ts`             | `float`        | Timestamp de l'événement (epoch, `time.perf_counter()`)                                                          |
+| `total_matches_cumul`  | `int`          | Compteur cumulé de détections depuis la création                                                                 |
+| `frames_matched`       | `int`          | Nombre de frames matchées au moment de l'événement                                                               |
+| `source`               | `string\|null` | Dernière source de détection : `"slow"` / `"fast"`                                                               |
+| `lost_since_ts`        | `float\|null`  | Timestamp d'entrée en état LOST (positionné pour CONFIRMED/LOST/REVIVE/EXPIRED ; null pour CREATED)              |
+| `reason`               | `string\|null` | Raison optionnelle de l'événement (ex : `"ttl_expired"`, `"max_capacity"`)                                       |
+| `revived`              | `bool\|null`   | `True` si événement `REVIVE` et mask en état `PENDING` ou `CONFIRMED` avant le revive ; `null` sinon             |
+| `frame_id`             | `int`          | Identifiant de la frame au moment de l'événement                                                                 |
+| `scores`               | `dict`         | Scores de matching au moment de l'événement (dict JSON-safe, peut être vide `{}`)                                |
+| `hash_history`         | `list`         | Historique des phash du mask au moment de l'événement (liste de `int`, peut être vide `[]`)                      |
 
 ---
 
-## 7. Contrat des sections imbriquées
+## 7. Canal `detections`
 
-### 7.1 `probes`
+### 7.1 Structure
 
-Chaque entrée est un objet de statistiques agrégées sur la fenêtre temporelle du canal.
+```json
+{
+  "schema_version": <int>,
+  "ts": <float>,
+  "mono": <float>,
+  "session_id": <string>,
+  "mode": "detections",
+  "detections": {
+    "records": [<DetectionRecord>, ...]
+  }
+}
+```
+
+### 7.2 Section `detections.records` — présence
+
+Présente si et seulement si au moins une détection slow a été émise depuis le dernier snapshot.
+Le buffer est **drainé** après lecture.
+
+### 7.3 DetectionRecord — champs
+
+| Champ                  | Type        | Description                                                               |
+| ---------------------- | ----------- | ------------------------------------------------------------------------- |
+| `frame_id`             | `int`       | Identifiant de la frame de détection                                      |
+| `rx`, `ry`, `rw`, `rh` | `float`     | Coordonnées du rectangle de détection                                     |
+| `phash`                | `int\|None` | Phash perceptuel de la crop (ou `null` si indisponible)                   |
+| `source`               | `string`    | Source de la détection (actuellement `"slow"`)                            |
+| `confidence`           | `float`     | Score de confiance de la détection                                        |
+| `scores`               | `dict`      | Scores additionnels de la détection (dict JSON-safe, peut être vide `{}`) |
+
+---
+
+## 8. Contrat des sections imbriquées
+
+### 8.1 `probes`
 
 ```json
 "<probe_name>": {
@@ -229,26 +243,20 @@ Chaque entrée est un objet de statistiques agrégées sur la fenêtre temporell
 }
 ```
 
-| Champ   | Description                                                      |
-| ------- | ---------------------------------------------------------------- |
-| `avg`   | Moyenne arithmétique des mesures sur la fenêtre.                 |
-| `max`   | Valeur maximale observée.                                        |
-| `min`   | Valeur minimale observée.                                        |
-| `count` | Nombre de mesures agrégées (toujours ≥ 1 si la sonde est émise). |
+- `avg` = moyenne des valeurs sur la fenêtre (ou 0 si vide).
+- `max` = maximum des valeurs sur la fenêtre.
+- `min` = minimum des valeurs sur la fenêtre.
+- `count` = nombre de mesures dans la fenêtre.
 
-**Invariant** : une probe avec `count == 0` n'est **jamais** émise — elle est filtrée à la source par les méthodes `snapshot_*()`.
-
-### 7.2 `gauges`
-
-État instantané — dernière valeur posée via `bench.gauge(name, value)`.
+### 8.2 `gauges`
 
 ```json
 "<gauge_name>": <float>
 ```
 
-Aucun agrégat : la valeur publiée est celle au moment du snapshot.
+Valeur instantanée écrasante (pas de historique ni de vidage automatique).
 
-### 7.3 `rates`
+### 8.3 `rates`
 
 Débit moyen sur la fenêtre du canal.
 
@@ -259,9 +267,7 @@ Débit moyen sur la fenêtre du canal.
 - Pour `agg` : `rate = total_count / agg.interval_s`.
 - Pour `fast` : `rate = total_count / history_window_s`.
 
-**Invariant** : un rate de valeur `0.0` n'est **jamais** émis — filtré à la source.
-
-### 7.4 `counts`
+### 8.4 `counts`
 
 Compteur différentiel sur la fenêtre entre deux appels à `snapshot_frame()`.
 
@@ -269,79 +275,92 @@ Compteur différentiel sur la fenêtre entre deux appels à `snapshot_frame()`.
 "<count_name>": <int>
 ```
 
-La valeur est remise à zéro après chaque appel à `snapshot_frame()` — elle n'est donc **pas** cumulative depuis le démarrage de session. Pour reconstituer un cumulatif en post-analyse, sommer les `counts` ligne à ligne dans le fichier `bench_frame_*.jsonl`.
-
-**Invariant** : un count de valeur `0` n'est **jamais** émis — filtré à la source.
+**Exclusivement sur le canal `frame`** : totaux différentiels depuis le dernier snapshot (buffer vidangé).
 
 ---
 
-## 8. Matrice des sections par canal
+## 9. Matrice des sections par canal
 
-| Section  | `frame` | `agg` | `fast` |
-| -------- | ------- | ----- | ------ |
-| `probes` | ✅      | ✅    | ✅     |
-| `gauges` | ✅      | ✅    | ✅     |
-| `counts` | ✅      | ❌    | ❌     |
-| `rates`  | ❌      | ✅    | ✅     |
+| Section              | `frame` | `agg` | `fast` | `events` | `detections` |
+| -------------------- | ------- | ----- | ------ | -------- | ------------ |
+| `probes`             | ✅      | ✅    | ✅     | ❌       | ❌           |
+| `gauges`             | ✅      | ✅    | ✅     | ❌       | ❌           |
+| `counts`             | ✅      | ❌    | ❌     | ❌       | ❌           |
+| `rates`              | ❌      | ✅    | ✅     | ❌       | ❌           |
+| `events.records`     | ❌      | ❌    | ❌     | ✅       | ❌           |
+| `detections.records` | ❌      | ❌    | ❌     | ❌       | ✅           |
 
 Légende :
 
 - ✅ = section autorisée (présente si non vide).
-- ❌ = section interdite (rejetée par `_validate_snap` côté writer).
+- ❌ = section non applicable à ce canal.
 
 ---
 
-## 9. Référence d'implémentation
+## 10. Référence d'implémentation
 
-- **Producteur unique des lignes JSONL** : `bench/jsonl_writer.py`, méthode `_enqueue()`.
-- **Producteurs des snapshots** : `bench/bench.py`, méthodes `snapshot_all()` (canal `agg`), `snapshot_frame()` (canal `frame`), `snapshot_fast()` (canal `fast`).
-- **Filtre défensif §7** : `jsonl_writer.py::_validate_snap()` rejette toute section non autorisée pour le canal + tout snap non conforme structurellement.
+### Sources
+
+| Fichier                 | Rôle                                                                    |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `bench/bench.py`        | Registre central, snapshots, `emit_lifecycle`, `emit_detection`         |
+| `bench/jsonl_writer.py` | Writers, validation par canal, rotation fichiers                        |
+| `bench/lifecycle.py`    | Enum `LifecycleEvent`, TypedDict `LifecycleRecord` et `DetectionRecord` |
+
+### Filtres de sondes
+
+| Filtre             | Condition                          | Canal affecté                                   |
+| ------------------ | ---------------------------------- | ----------------------------------------------- |
+| `_is_fast_probe`   | `name.startswith("fast_")`         | `agg` (exclu), `frame` (exclu), `fast` (inclus) |
+| `_is_writer_probe` | `name.startswith("bench_writer_")` | `agg` (exclu), `frame` (exclu), `fast` (non)    |
+| `F_*` (variantes)  | `name.startswith("F_")`            | Non filtrées → canal `frame` uniquement         |
 
 ### Conventions d'auto-instrumentation
 
-- Les sondes, compteurs et **gauges** dont le nom commence par `bench_writer_` sont des auto-mesures internes des writers JSONL.
-- **Convention** : les writers JSONL n'émettent **jamais** de gauge. Seules des `probe()` (taille queue) et des `count()` (drops, rejets) sont autorisées sous ce préfixe.
-- Conséquence : le filtre `_is_writer_probe` n'est appliqué qu'aux sections `probes`, `rates` et `counts`. La section `gauges` n'a pas de filtre explicite car aucune gauge writer ne doit exister par construction.
-- **Toute évolution introduisant une gauge writer requiert** : (a) mise à jour de cette convention, (b) ajout du filtre `_is_writer_probe` aux blocs `gauges` de `snapshot_all` et `snapshot_frame`.
+Les writers émettent des sondes automatiques préfixées `bench_writer_*` :
 
-Toute divergence entre ce document et l'implémentation est un bug de l'un ou de l'autre — la résolution est arbitrée par l'équipe avant merge.
+- `bench_writer_<mode>_queue_size` — taille courante de la queue (probe, ms, valeur = qsize)
+- `bench_writer_<mode>_dropped` — nombre de lignes droppées (count)
+- `bench_writer_<mode>_rejected_*` — lignes rejetées pour motif (count)
 
----
-
-## 10. Paramètres de configuration
-
-Tous les paramètres ci-dessous sont définis dans `config/config.yaml` sous la clé racine `debug.bench`.
-
-### 10.1 Activation globale
-
-| Clé YAML                       | Type  | Défaut | Effet sur le JSONL                                                |
-| ------------------------------ | ----- | ------ | ----------------------------------------------------------------- |
-| `debug.bench.enabled`          | bool  | —      | Si `false` : `BenchRegistry` désactivé, aucune ligne JSONL émise. |
-| `debug.bench.history_window_s` | float | `60.0` | Fenêtre glissante en mémoire pour `snapshot_fast` et `summary()`. |
-
-### 10.2 Writers JSONL — paramètres communs
-
-| Clé YAML                                | Type   | Défaut          | Effet sur le JSONL                                                    |
-| --------------------------------------- | ------ | --------------- | --------------------------------------------------------------------- |
-| `debug.bench.writer.enabled`            | bool   | —               | Maître : si `false`, aucun fichier `.jsonl` créé.                     |
-| `debug.bench.writer.queue_maxsize`      | int    | `10000`         | Taille max de la queue producteur→fichier.                            |
-| `debug.bench.writer.shutdown_timeout_s` | float  | `2.0`           | Délai max accordé à chaque writer pour drain à l'arrêt.               |
-| `debug.bench.writer.session_id_format`  | string | `%Y%m%d_%H%M%S` | Format `session_id` injecté dans chaque ligne et dans le nom fichier. |
-
-### 10.3 Canaux
-
-| Clé YAML                       | Type   | Défaut                        | Effet sur le JSONL                                                    |
-| ------------------------------ | ------ | ----------------------------- | --------------------------------------------------------------------- |
-| `debug.bench.agg.enabled`      | bool   | —                             | Active le canal `agg`.                                                |
-| `debug.bench.agg.path`         | string | `logs/json/bench_agg.jsonl`   | Chemin de base — `session_id` inséré avant l'extension.               |
-| `debug.bench.agg.interval_s`   | float  | `1.0`                         | Période entre deux snapshots agrégés. Définit la fenêtre des `rates`. |
-| `debug.bench.frame.enabled`    | bool   | —                             | Active le canal `frame`.                                              |
-| `debug.bench.frame.path`       | string | `logs/json/bench_frame.jsonl` | Chemin de base — `session_id` inséré avant l'extension.               |
-| `debug.bench.frame.interval_s` | float  | (ignoré)                      | **Inutilisé** — le canal `frame` est piloté par `push_frame()`.       |
-| `debug.bench.fast.enabled`     | bool   | —                             | Active le canal `fast`.                                               |
-| `debug.bench.fast.path`        | string | `logs/json/bench_fast.jsonl`  | Chemin de base — `session_id` inséré avant l'extension.               |
-| `debug.bench.fast.interval_s`  | float  | `1.0`                         | Période entre deux snapshots fast.                                    |
-
-> **Note** : les clés `debug.bench.compare.*` (`buckets`, `shape`, `anomalies`, `frame_budget`) ne sont **pas** lues par le runtime bench. Elles sont la propriété exclusive de l'outil de post-analyse `bench_compare.py` et n'ont aucun impact sur la production des fichiers JSONL. Voir `bench-compare.md`.
+Ces sondes sont **toujours exclues** des snapshots métier ( `_is_writer_probe`).
 
 ---
+
+## 11. Paramètres de configuration
+
+### 11.1 Activation globale
+
+`debug.bench.enabled` (`bool`) — master switch. Positionné dans `main.py` au boot.
+
+### 11.2 Writers JSONL — paramètres communs
+
+| Clé                                     | Type        | Default           | Description                                             |
+| --------------------------------------- | ----------- | ----------------- | ------------------------------------------------------- |
+| `debug.bench.writer.enabled`            | `bool`      | `false`           | Active les writers                                      |
+| `debug.bench.writer.queue_maxsize`      | `int`       | `10000`           | Taille max de la queue du writer                        |
+| `debug.bench.writer.session_id_format`  | `string`    | `"%Y%m%d_%H%M%S"` | Format horodaté du session_id                           |
+| `debug.bench.writer.shutdown_timeout_s` | `float`     | `2.0`             | Timeout d'arrêt des threads                             |
+| `debug.bench.writer.max_chars`          | `int\|null` | `null`            | Rotation fichier après N caractères (`null` = illimité) |
+| `debug.bench.history_window_s`          | `float`     | `60.0`            | Fenêtre de rétention pour snapshots agg/fast            |
+
+### 11.3 Canaux
+
+Pour chaque canal `mode` ∈ {`agg`, `fast`, `frame`, `events`, `detections`} :
+
+| Clé                             | Type     | Default                          | Description                                    |
+| ------------------------------- | -------- | -------------------------------- | ---------------------------------------------- |
+| `debug.bench.<mode>.enabled`    | `bool`   | `false`                          | Active le canal                                |
+| `debug.bench.<mode>.path`       | `string` | `"logs/json/bench_<mode>.jsonl"` | Chemin du fichier de sortie                    |
+| `debug.bench.<mode>.interval_s` | `float`  | `1.0`                            | Intervalle du snapshot (agg / fast uniquement) |
+
+### 11.4 Frame Dumper
+
+| Clé                                      | Type     | Default         | Description                                |
+| ---------------------------------------- | -------- | --------------- | ------------------------------------------ |
+| `debug.bench.frame_dumper.enabled`       | `bool`   | `false`         | Active le frame dumper                     |
+| `debug.bench.frame_dumper.path`          | `string` | `"logs/frames"` | Répertoire de sortie                       |
+| `debug.bench.frame_dumper.jpeg_quality`  | `int`    | `75`            | Qualité JPEG (0-100)                       |
+| `debug.bench.frame_dumper.tail_frames`   | `int`    | `0`             | Nombre de frames après l'event àダMP (0-2) |
+| `debug.bench.frame_dumper.ring_size`     | `int`    | `240`           | Taille du buffer circulaire de frames      |
+| `debug.bench.frame_dumper.queue_maxsize` | `int`    | `256`           | Taille max de la queue                     |

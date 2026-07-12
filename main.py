@@ -29,6 +29,8 @@ from core.blur               import apply_blur
 from core.mask               import MaskState
 from tracker.tracker         import Tracker
 from tracker.models          import TrackerConfig , Detection
+from bench.frame_dumper      import FrameDumperWriter
+
 log = logging.getLogger("main")
 
 # ── PARAMÈTRES ──
@@ -62,6 +64,12 @@ except CaptureSourceNotFound:
 # ═══════════════════════════════════════════════════════
 capturer = CaptureThread(source=_source, target_fps=CAPTURE_FPS)
 capturer.start()
+
+# ── Frame Dumper
+frame_dumper = None
+if cfg.get("debug.bench.frame_dumper.enabled", False):
+    frame_dumper = FrameDumperWriter(capturer, bench._session_id)
+    frame_dumper.start()
 
 detector = DetectThread()
 detector.start()
@@ -182,6 +190,9 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 with bench.timer("main_stats_ms"):
                     bench.count("main_frames_total")
                     bench.gauge("main_masks_total", len(confirmed_masks))
+
+                if frame_dumper is not None:
+                    frame_dumper.on_events(bench.last_events())
                 bench.push_frame()
                 bench.push_events()
                 bench.push_detections()
@@ -198,7 +209,6 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     n_lost      = bench.read_gauge("tracker_lost")      or 0
 
                     # Stats motion — bench.last = valeur instantanée la plus récente
-                    # (approximation court terme, remplacé par summary_window à l'étape 2)
                     stale_last = bench.last("motion_staleness_slow_ms")
                     if stale_last is not None:
                         motion_tag = f"staleness_slow last={stale_last:.1f}ms"
@@ -220,6 +230,9 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
         log.info("\n🛑 Arrêt propre")
 
     finally:
+        if frame_dumper is not None:
+            frame_dumper.stop()
+            log.info("FrameDumper stats: %s", frame_dumper.stats())
         sender.stop()
         if fast_enabled:
             fast_tracker.stop()

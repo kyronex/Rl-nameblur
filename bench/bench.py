@@ -166,26 +166,6 @@ class BenchRegistry:
             total = sum(n for _, n in hist)
             return total / window_s
 
-    def summary_window(self, name: str, window_s: float):
-        """Agrégat avg/max/min/count sur fenêtre glissante."""
-        if not self._enabled:
-            return None
-        now = time.perf_counter()
-        cutoff = now - window_s
-        with self._probe_lock:
-            hist = self._probe_history.get(name) or self._gauge_history.get(name)
-            if not hist:
-                return None
-            values = [v for ts, v in hist if ts >= cutoff]
-            if not values:
-                return None
-            return {
-                "avg": sum(values) / len(values),
-                "max": max(values),
-                "min": min(values),
-                "count": len(values),
-            }
-
     # ─────────────────────────────────────────────────────────────
     #  Snapshots pour writers
     # ─────────────────────────────────────────────────────────────
@@ -458,6 +438,15 @@ class BenchRegistry:
         writer = self._writers.get("detections")
         if writer is not None:
             writer.push_detections()
+
+    def last_events(self) -> list[dict]:
+        """Lecture NON-destructive des LifecycleRecords courants (le buffer n'est pas vidé : snapshot_events() du writer reste intact).
+        Retourne [] si le writer events est inactif."""
+        writer = self._writers.get("events")
+        if writer is None:
+            return []
+        return list(self._events.values())
+
 
     # ─────────────────────────────────────────────────────────────
     #  Résumé console
