@@ -33,7 +33,7 @@ T-3  Sémantique des snapshot_*() :
 _WRITER_PROBE_PREFIX = "bench_writer_"
 
 # ── Sondes considérées "fast" (canal dédié snapshot_fast) ──
-_FAST_PROBE_PREFIXES = ("fast_",)
+_FAST_PROBE_PREFIXES = ("fastC_",)
 
 class BenchRegistry:
     """Registre centralisé + timer + snapshots multi-canaux."""
@@ -287,13 +287,19 @@ class BenchRegistry:
                 values = [v for ts, v in hist if ts >= cutoff]
                 if not values:
                     continue
-                probes[name] = {
-                    "avg": sum(values) / len(values),
-                    "max": max(values),
-                    "min": min(values),
-                    "count": len(values),
-                }
-
+                try:
+                    probes[name] = {
+                        "avg": sum(values) / len(values),
+                        "max": max(values),
+                        "min": min(values),
+                        "count": len(values),
+                    }
+                except TypeError:
+                    log.warning(
+                        "[snapshot_all] probe '%s' has non-numeric values (first=%s type=%s) — skipping",
+                        name, values[0], type(values[0]).__name__
+                    )
+                    continue
             for name, value in self._gauges.items():
                 if self._is_fast_probe(name):
                     continue
@@ -330,12 +336,19 @@ class BenchRegistry:
                     continue
                 if not values:
                     continue
-                probes[name] = {
-                    "avg": sum(values) / len(values),
-                    "max": max(values),
-                    "min": min(values),
-                    "count": len(values),
-                }
+                try:
+                    probes[name] = {
+                        "avg": sum(values) / len(values),
+                        "max": max(values),
+                        "min": min(values),
+                        "count": len(values),
+                    }
+                except TypeError:
+                    log.warning(
+                        "[snapshot_frame] probe '%s' has non-numeric values (first=%s type=%s) — skipping",
+                        name, values[0], type(values[0]).__name__
+                    )
+                    continue
 
             counts = {}
             for name, n in self._frame_counts.items():
@@ -379,12 +392,19 @@ class BenchRegistry:
                 values = [v for ts, v in hist if ts >= cutoff]
                 if not values:
                     continue
-                probes[name] = {
-                    "avg": sum(values) / len(values),
-                    "max": max(values),
-                    "min": min(values),
-                    "count": len(values),
-                }
+                try:
+                    probes[name] = {
+                        "avg": sum(values) / len(values),
+                        "max": max(values),
+                        "min": min(values),
+                        "count": len(values),
+                    }
+                except TypeError:
+                    log.warning(
+                        "[snapshot_fast] probe '%s' has non-numeric values (first=%s type=%s) — skipping",
+                        name, values[0], type(values[0]).__name__
+                    )
+                    continue
 
             for name, value in self._gauges.items():
                 if self._is_fast_probe(name):

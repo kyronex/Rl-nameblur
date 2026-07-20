@@ -74,12 +74,10 @@ class FrameDumperWriter:
     # ingestion : appelé sur le flux events (list[LifecycleRecord])
     # ------------------------------------------------------------------
     def on_events(self, events: list[LifecycleRecord]):
-        log.info(f"FrameDumper: {len(events)} events")
         if not self._running:
             return
         for event in events:
             frame_id: int = event.get("frame_id", -1)
-            log.info(f"frame_id: {frame_id} ")
             if frame_id == -1:
                 self._skip_invalid_frame_id += 1
                 continue
