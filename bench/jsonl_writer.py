@@ -24,7 +24,7 @@ _VALID_MODES = ("agg", "frame", "fast", "events", "detections")
 # d'une section autorisée est légitime (pas de donnée sur la fenêtre).
 _ALLOWED_SECTIONS: dict[str, frozenset[str]] = {
     "agg":   frozenset({"probes", "gauges", "rates"}),
-    "frame": frozenset({"probes", "gauges", "counts"}),
+    "frame": frozenset({"probes", "gauges", "counts", "notes"}),
     "fast":  frozenset({"probes", "gauges", "rates"}),
     "events": frozenset({"events"}),
     "detections": frozenset({"detections"}),

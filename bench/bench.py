@@ -60,6 +60,7 @@ class BenchRegistry:
                     # Buffer frame : sondes accumulées entre 2 appels snapshot_frame()
                     inst._frame_probes = defaultdict(list)
                     inst._frame_counts = defaultdict(int)
+                    inst._frame_notes = defaultdict(list)
                     inst._events = {}
                     inst._detections = defaultdict(list)
                     cls._instance = inst
@@ -106,6 +107,12 @@ class BenchRegistry:
             self._purge_history(hist, cutoff)
             # Buffer frame
             self._frame_probes[name].append(duration_ms)
+
+    def note(self, name: str, value):
+        if not self._enabled:
+            return
+        with self._probe_lock:
+            self._frame_notes[name].append(self._jsonable_val(value))
 
     def timer(self, name: str) -> "_BenchTimer":
         """Context manager mesurant un bloc et écrivant via probe(name, ms)."""
@@ -327,34 +334,24 @@ class BenchRegistry:
             return {}
 
         with self._probe_lock:
-            if not self._frame_probes and not self._frame_counts:
+            if not self._frame_probes and not self._frame_counts and not self._frame_notes:
                 return {}
 
-            probes = {}
+            probes_raw = {}
             for name, values in self._frame_probes.items():
                 if self._is_writer_probe(name) or self._is_fast_probe(name):
                     continue
-                if not values:
+                probes_raw[name] = list(values)
+
+            notes = {}
+            for name, values in self._frame_notes.items():
+                if self._is_writer_probe(name) or self._is_fast_probe(name):
                     continue
-                try:
-                    probes[name] = {
-                        "avg": sum(values) / len(values),
-                        "max": max(values),
-                        "min": min(values),
-                        "count": len(values),
-                    }
-                except TypeError:
-                    log.warning(
-                        "[snapshot_frame] probe '%s' has non-numeric values (first=%s type=%s) — skipping",
-                        name, values[0], type(values[0]).__name__
-                    )
-                    continue
+                notes[name] = list(values)
 
             counts = {}
             for name, n in self._frame_counts.items():
                 if self._is_writer_probe(name) or self._is_fast_probe(name):
-                    continue
-                if n == 0:
                     continue
                 counts[name] = n
 
@@ -368,10 +365,12 @@ class BenchRegistry:
             # Vidage buffers
             self._frame_probes.clear()
             self._frame_counts.clear()
+            self._frame_notes.clear()
 
-        if not (probes or counts or gauges):
+
+        if not (probes_raw or counts or gauges or notes):
             return {}
-        return {"probes": probes, "counts": counts, "gauges": gauges}
+        return {"probes": probes_raw, "counts": counts, "gauges": gauges, "notes": notes}
 
     def snapshot_fast(self) -> dict:
         """Snapshot des sondes fast_* sur la fenêtre de rétention."""
@@ -526,6 +525,8 @@ class BenchRegistry:
             self._gauge_history.clear()
             self._frame_probes.clear()
             self._frame_counts.clear()
+            self._frame_notes.clear()
+
 
     # ─────────────────────────────────────────────────────────────
     #  Writers JSONL — cycle de vie
