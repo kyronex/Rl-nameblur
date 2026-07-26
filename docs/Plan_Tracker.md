@@ -652,9 +652,8 @@
 
 ---
 
-### 🟡 B-05d — Audit complet du workflow slow/fast depuis `main.py` (assainissement `MaskKinematics` / `FastMaskView` / `Mask`) `[EN COURS]`
+### 🟢 B-05d — Audit complet du workflow slow/fast depuis `main.py` (assainissement `MaskKinematics` / `FastMaskView` / `Mask`) `[LIVRÉ]`
 
-> **Statut** : `🟡` (audit de workflow acté — exécution en cours, propositions en sortie)
 > **Ouvert** : 2026-07-03 — **Réécrit** : 2026-07-05 (bascule cadrage → audit complet du workflow, sur données session `20260705_221213`)
 > **Driver** : la migration `MaskKinematics` (Option B/2-b) a été livrée, mais l'analyse post-patch de la session `20260705_221213` invalide la piste initiale et en révèle une nouvelle :
 >
@@ -671,18 +670,6 @@
 Vérifier, **du point d'entrée `main.py` jusqu'à l'associator**, que la séparation slow/fast introduite par `MaskKinematics` est **effective et étanche** : aucun champ slow lu là où un champ fast est attendu (et inversement), aucun timestamp ni vélocité écrit dans le mauvais référentiel, aucune valeur consommée hors de sa sémantique. **But : assainir le projet de toute pollution croisée** pour expliquer le ratio `#3b` à 100 %. À l'issue de l'audit, **des propositions de correction seront formulées** (aucun patch n'est décidé dans ce bloc).
 
 > **Note de cohérence** : la migration `MaskKinematics` (Option B, variante 2-b — dataclass imbriquée `Mask.kin` portant `last_slow_ts`, `last_fast_ts`, `vx/vy` slow, `vx_f/vy_f` fast) a été **livrée** ; l'hypothèse « `vx_f` jamais persisté » reste **infirmée**. Cet audit vérifie que la séparation attendue par construction est bien respectée à l'exécution.
-
----
-
-#### 🔬 Hypothèses ancrées — statut mis à jour par la donnée `221213`
-
-| #   | Hypothèse                                                                                 | Statut post-`221213`                                                                                                   | Effet                                      |
-| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| H1  | `template` figé à la création slow, jamais rafraîchi                                      | ⏳ à confirmer par l'audit                                                                                             | dérive d'apparence → `F_mask_lost_total` ↑ |
-| H2  | `vx/vy` slow tués par damping puis exposés « morts » (dérive de fraîcheur)                | 🟥 **NON confirmée** — staleness non-dérivant (corr `−0,197`)                                                          | écartée comme cause principale             |
-| H3  | `last_slow_ts` écrasé par le fast                                                         | 🟨 **atténuée** par `MaskKinematics` (ts dédoublés) — vérifier qu'aucun point de code n'écrit encore l'un pour l'autre | régression potentielle si résidu           |
-| H4  | vitesse slow (`kin.vx/vy`) et fast (`kin.vx_f/vy_f`) confondues dans un calcul/prédiction | 🟧 **PISTE PRINCIPALE** — ratio `#3b` à 100 % cohérent avec référentiel de prédiction erroné                           | cœur suspecté du `#3b`                     |
-| H5  | le fast ne voit jamais un mask `LOST` (filtre `state == CONFIRMED` hardcodé)              | 🟧 **PISTE PRINCIPALE** — mask ré-ancrable exclu quand requis                                                          | filet de sécurité perdu                    |
 
 ---
 
@@ -729,19 +716,6 @@ L'audit suit le **flux de données réel** (pas la structure des fichiers) pour 
 
 ---
 
-#### 📊 Preuves de session (ancrage donnée `20260705_221213`)
-
-| Indicateur                   | Valeur                                                                                                              | Lecture                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Ratio `#3b` > 1.0            | **100 %** (130/130) ; avg `4,51` / p50 `4,15` / p95 `9,08`                                                          | K borné `[1.0,3.0]` insuffisant — non levier                   |
-| `motion_staleness_slow_ms`   | méd `601,8` / p95 `1110,4` / max `1673,4` ; corr(frame)=`−0,197`                                                    | staleness **non dérivant** → H2 écartée                        |
-| `mask_lost` vs staleness     | staleness@lost `643,9` ms vs `590,4` global ; `30,5 %` > p75                                                        | lien réel mais **faible**                                      |
-| Patch `_F` (compteurs frame) | `F_mask_lost_total`, `F_wakeup_lag_ms`, `F_n_masks`, `F_margin_px`, `F_ncc_score`, `F_v_px_per_s` présents en frame | **analyse par frame de `fast_track_thread.py` opérationnelle** |
-
-> **Caveats de données (à ne pas surinterpréter)** : `motion_staleness_slow_ms` absent sur ~489 frames de tête et de queue (session tronquée, n=1837/2326). Champ `type` **vide** (`""`) sur tous les records `bench_events` → analyse par type d'événement impossible en l'état ; vérifier le champ discriminant réel dans `bench-jsonl-schema.md` avant toute corrélation événementielle fine.
-
----
-
 #### 🔒 Contrats & invariants préservés (inchangés)
 
 | Contrat / invariant                                                     | Action                                          |
@@ -777,6 +751,63 @@ L'audit suit le **flux de données réel** (pas la structure des fichiers) pour 
 - [ ] **Propositions de correction formulées** (priorité H4 puis H5), chacune isolée et A/B-testable.
 - [ ] Contrat `tick()` et schéma public vérifiés non cassés.
 - [ ] PR1, PR2, PR5 levés avant tout A/B.
+
+---
+
+#### ✅ Table de couverture (audit de workflow)
+
+| ID    | Vérification                                        | Statut       | Preuve                                                                                                 |
+| ----- | --------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------ |
+| A0    | Init FastTrackThread + câblage imports              | ✅ OK        | `main.py:82` ; `fast_track_thread.py:9-12`                                                             |
+| A1    | MaskKinematics / écritures `kin` / Box / cycle Mask | ✅ OK        | `mask.py:25-28` ; `motion.py:123-124` (fast→`fast_kin`) ; `registry.py:78` (slow→`last_slow_ts`)       |
+| A2/H1 | Écrasements cycle Mask                              | ✅ OK        | `mask.py:108-128` — `transition()` ne touche aucun champ cinématique                                   |
+| A2/H3 | Écrasements via lifecycle                           | ✅ OK        | `lifecycle.py` = TypedDict/Enum, aucune mutation                                                       |
+| S1    | Référentiel slow/fast, ordre écriture, hasher       | ✅ OK        | `motion.py:148-158` ; `tracker.py:78,136` ; `hasher.py:32`                                             |
+| S2    | `geo_gate` / `predicted_rect` / LOST                | ✅ OK        | `associator.py:55-66` ; `motion.py:139-167` ; `tracker.py:174`                                         |
+| S3    | `_adaptive_margin`                                  | **N/A slow** | Méthode privée FastTrackThread (`fast_track_thread.py:132`) — pas d'équivalent tracker slow ;          |
+| S6/H5 | Filtre CONFIRMED + gate NCC                         | ✅ OK        | `main.py:74` ; `fast_track_thread.py:270`                                                              |
+| PR1   | Sonde near-miss (ncc+of)                            | ✅ OK        | `fast_track_thread.py:225-242` ; `associator.py:60-64` ; `detect.py:152-175` ; `optical_flow.py:16-41` |
+| PR4   | Schéma Detection/TrackerConfig/MatchScore           | ✅ OK        | `models.py:11-56, 58-100` (frozen+slots), `102-109`                                                    |
+
+### 🟠 B-05e — Audit complet du workflow Fast depuis `main.py` `[LIVRÉ]`
+
+> **Objectif** : analyser et auditer la branche Fast pour pouvoir l'optimiser (perf + robustesse).
+
+**Périmètre** : `fast_track_thread.py`, `fast_track_config.py`, interactions fast dans `motion.py`, `tracker.py`, `optical_flow.py`, `detect.py`.
+**Hors périmètre** : branche slow (couverte par B-05d).
+
+#### Phase 1 — Analyse statique ✅
+
+| ID  | Point audité               | OK? | Constat clé (preuve `fichier:ligne`)                                                                                                           |
+| --- | -------------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | Câblage + filtre CONFIRMED | ✅  | Instancié/démarré/alimenté, filtre CONFIRMED en 2 points (`main.py:82,127,161-168` ; `fast_track_thread.py:36,279`)                            |
+| F2  | Cadence boucle             | ✅  | Purement event-driven (`Event.wait timeout=0.5`), aucun sleep interne — cadence = appels `give_frame_and_views` (`fast_track_thread.py:181`)   |
+| F3  | Gate NCC / OF              | ✅  | Two-phase séquentiel : OF sur toutes les views puis NCC si template — pas de gate conditionnelle (`fast_track_thread.py:225,237`)              |
+| F4  | `_adaptive_margin`         | ✅  | `margin = 10 + speed·dt·1.5` clampé [10,80], utilise vitesse slow `vx/vy` (pas `vx_f/vy_f`), coût négligeable (`fast_track_thread.py:132-140`) |
+| F5  | Staleness / `last_fast_ts` | ⚠️  | Écrit uniquement si NCC ≥ 0.55 ; pas d'incrément explicite du compteur staleness visible — à confirmer(`fast_track_thread.py` ; `motion.py`)   |
+| F6  | Coût CPU/frame             | ✅  | 5 sources : matchTemplate×N (dominant), calcOpticalFlowPyrLK×N, cvtColor 1×, 2 crops ROI/view, pas de resize (`fast_track_thread.py:203`)      |
+| F7  | Contention / latence       | ⚠️  | 3 locks ; `MaskRegistry` sans lock → accès concurrent main/worker (`fast_track_thread.py:45,51,59`)                                            |
+| F8  | Hypothèses d'optim         | ✅  | 6 pistes, 2 critiques : `frame.copy()` commenté (risque data race) + OF inconditionnel (`fast_track_thread.py:105,205,225`)                    |
+
+#### Phase 2 — Corrélation JSONL ✅ (session `20260712_154105`, 43,86 s, ~72 fps)
+
+- **OF + NCC dominent le tick** : OF avg 14,7 ms (max 80) + NCC avg 15,6 ms (max 62) sur un tick de ~40 ms.
+- **Tick > 50 ms généralisé** (max 104,5 ms) → risque de drop vs budget frame.
+- **Wakeup lag** avg ~20 ms, max 95 ms.
+- **NCC anomalie** : score moyen 0,412, min −0,228, **0/44 fenêtres ≥ 0,55**.
+- **Stale ~50 %** des ticks ; **OF failed** sur 44/44 fenêtres.
+- **Coût croît linéairement** avec le nb de masques (2,0 → 3,8).
+
+#### Phase 3 — Refacto / optimisation (à réaliser)
+
+| ID   | Chantier                                                              | Fichiers cibles                                    | Dépend de | Statut |
+| ---- | --------------------------------------------------------------------- | -------------------------------------------------- | --------- | ------ |
+| F3-1 | Élucider l'anomalie NCC (scores < 0,55 / négatifs) avant toute optim  | `fast_track_thread.py`, `detect.py`, `config.yaml` | —         | 🟢     |
+| F3-2 | Réduire coût OF+NCC par masque (crops, ROI, template)                 | `fast_track_thread.py`, `optical_flow.py`          | F3-1      | 🟢     |
+| F3-3 | OF conditionnel (bypass quand NCC suffit)                             | `fast_track_thread.py`                             | F3-1      | 🟠     |
+| F3-4 | Sécuriser `MaskRegistry` (lock) + trancher `frame.copy()` (data race) | `fast_track_thread.py`, `registry.py`              | —         | 🟢     |
+| F3-5 | Confirmer/corriger le mécanisme staleness (F5)                        | `fast_track_thread.py`, `motion.py`                | Phase 2   | 🟠     |
+| F3-6 | Réduire wakeup lag / lisser cadence tick (< budget frame)             | `fast_track_thread.py`, `main.py`                  | F3-2      | 🟠     |
 
 ---
 

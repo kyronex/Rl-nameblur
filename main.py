@@ -79,7 +79,7 @@ tracker = Tracker(TrackerConfig())
 fast_enabled = cfg.get("detect.fast.enabled", True)
 fast_tracker = None
 if fast_enabled:
-    fast_tracker = FastTrackThread()
+    fast_tracker = FastTrackThread(registry=tracker.registry)
     fast_tracker.start()
 
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
@@ -168,10 +168,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     confirmed_masks = tracker.tick(now, updated_uids, last_detected_frame_ts)
                 # ── 5. Blur / debug draw ──
                 with bench.timer("main_prepare_ms"):
-                    blur_zones = [
-                        (int(m.rect[0]), int(m.rect[1]), int(m.rect[2]), int(m.rect[3]))
-                        for m in confirmed_masks
-                    ]
+                    blur_zones = [(m.rect[0], m.rect[1], m.rect[2], m.rect[3]) for m in confirmed_masks]
                     buf = sender.borrow()
 
                 with bench.timer("main_copy_ms"):

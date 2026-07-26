@@ -81,6 +81,7 @@ class Tracker:
                 mask.confidence = det.confidence
                 if det.template is not None:
                     mask.template = det.template
+                    mask.template_capture_ts = detected_frame_ts
                 if det.scores:
                     mask.scores = det.scores
                 bench.emit_lifecycle(LifecycleEvent.DETECTED, mask, reason="slow_detections")
@@ -95,6 +96,7 @@ class Tracker:
                     mask.hash_history.append(det.phash)
                 mask.confidence = det.confidence
                 mask.template = det.template
+                mask.template_capture_ts = detected_frame_ts
                 mask.scores = det.scores
                 bench.emit_lifecycle(LifecycleEvent.CREATED, mask, reason=None)
                 created_uids.add(mask.uid)
@@ -147,11 +149,8 @@ class Tracker:
                     + (f" max_drift={drift_max_seen:.1f}s" if drift_skipped else "")
                 )
                 # Warning agrégé si drift dégradé (signal B-04b)
-                if drift_skipped and drift_skipped >= len(uid_to_rect) // 2:
-                    log.warning(
-                        f"[FAST-APPLY] drift dégradé : {drift_skipped}/{len(uid_to_rect)} "
-                        f"max_drift={drift_max_seen:.1f}s"
-                    )
+                #if drift_skipped and drift_skipped >= len(uid_to_rect) // 2:
+                    #log.warning(f"[FAST-APPLY] drift dégradé : {drift_skipped}/{len(uid_to_rect)} "f"max_drift={drift_max_seen:.1f}s")
             return matched_uids
 
     def tick(self,ts: float = None,updated_uids: set = None,detected_frame_ts: float = None) -> list:

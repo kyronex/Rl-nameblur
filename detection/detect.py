@@ -203,4 +203,16 @@ def ncc_match(roi_gray, template_gray, threshold):
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
     if max_val < threshold:
         return round(max_val, 3), None
-    return round(max_val, 3), max_loc
+    mx, my = max_loc
+    dx_f, dy_f = float(mx), float(my)
+    if 0 < mx < result.shape[1] - 1:
+        cl, cc, cr = result[my, mx - 1], result[my, mx], result[my, mx + 1]
+        denom = cl - 2.0 * cc + cr
+        if denom != 0.0:
+            dx_f = mx + 0.5 * (cl - cr) / denom
+    if 0 < my < result.shape[0] - 1:
+        ct, cc, cb = result[my - 1, mx], result[my, mx], result[my + 1, mx]
+        denom = ct - 2.0 * cc + cb
+        if denom != 0.0:
+            dy_f = my + 0.5 * (ct - cb) / denom
+    return round(max_val, 3), (float(dx_f), float(dy_f))

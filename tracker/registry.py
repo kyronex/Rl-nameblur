@@ -1,6 +1,7 @@
 # tracker/registry.py
 from __future__ import annotations
 import logging
+import threading
 from typing import Dict, List, Optional
 from core.mask import Mask, MaskState
 from tracker.models import TrackerConfig
@@ -14,14 +15,17 @@ class MaskRegistry:
         self._masks: Dict[int, Mask] = {}
         self._next_uid: int = 0
         self.cfg = config
+        self._lock = threading.Lock()
 
     # ── accès ─────────────────────────────────────────────
     @property
     def masks(self) -> List[Mask]:
-        return list(self._masks.values())
+        with self._lock:
+            return list(self._masks.values())
 
     def get(self, uid: int) -> Optional[Mask]:
-        return self._masks.get(uid)
+        with self._lock:
+            return self._masks.get(uid)
 
     def __len__(self) -> int:
         return len(self._masks)
@@ -39,43 +43,46 @@ class MaskRegistry:
         return mask
 
     def create(self, rect: tuple, ts: float, source: str = "slow",detected_frame_ts: float = None,**kwargs) -> Mask:
-        uid = self._next_uid
-        self._next_uid += 1
-        _frame_ts = detected_frame_ts if detected_frame_ts is not None else ts
-        mask = Mask(
-            uid=uid,
-            rect=rect,
-            last_detected_rect=rect,
-            last_detected_ts=ts,
-            last_source=source,
-            confidence=kwargs.pop("confidence", 1.0),
-            confirm_after=self.cfg.confirm_after,
-            lost_after_s=(self.cfg.fast_lost_after_s if source == "fast" else self.cfg.lost_after_s),
-            hash_history_max=self.cfg.hash_history_max,
-            state=MaskState.PENDING,
-            frames_matched=1,
-            last_seen_ts=_frame_ts,
-            last_seen_frame_ts=_frame_ts,
-            created_ts=_frame_ts,
-            lost_since_ts=None,
-            **kwargs,
-        )
-        added = self._add(mask)
-        bench.count("registry_create_total")
-        return added
+        with self._lock:
+            uid = self._next_uid
+            self._next_uid += 1
+            _frame_ts = detected_frame_ts if detected_frame_ts is not None else ts
+            mask = Mask(
+                uid=uid,
+                rect=rect,
+                last_detected_rect=rect,
+                last_detected_ts=ts,
+                last_source=source,
+                confidence=kwargs.pop("confidence", 1.0),
+                confirm_after=self.cfg.confirm_after,
+                lost_after_s=(self.cfg.fast_lost_after_s if source == "fast" else self.cfg.lost_after_s),
+                hash_history_max=self.cfg.hash_history_max,
+                state=MaskState.PENDING,
+                frames_matched=1,
+                last_seen_ts=_frame_ts,
+                last_seen_frame_ts=_frame_ts,
+                created_ts=_frame_ts,
+                lost_since_ts=None,
+                **kwargs,
+            )
+            added = self._add(mask)
+            bench.count("registry_create_total")
+            return added
 
     def remove(self, uid: int) -> Optional[Mask]:
-        return self._masks.pop(uid, None)
+        with self._lock:
+            return self._masks.pop(uid, None)
 
     # ── mise à jour post-match ────────────────────────────
     def mark_matched(self,uid: int,ts: float,detected_frame_ts: float = None,source: str = "unknown") -> None:
-        mask = self._masks.get(uid)
-        if mask is None:
-            return
-        _frame_ts = detected_frame_ts if detected_frame_ts is not None else ts
-        mask.transition("matched", ts, detected_frame_ts=_frame_ts)
-        if source == "slow":
-            mask.last_slow_ts = ts
+        with self._lock:
+            mask = self._masks.get(uid)
+            if mask is None:
+                return
+            _frame_ts = detected_frame_ts if detected_frame_ts is not None else ts
+            mask.transition("matched", ts, detected_frame_ts=_frame_ts)
+            if source == "slow":
+                mask.last_slow_ts = ts
 
     # ── expiration ────────────────────────────────────────
     def tick_and_expire(self,ts: float,updated_uids: set = None,detected_frame_ts: float = None) -> List[Mask]:
@@ -84,37 +91,51 @@ class MaskRegistry:
           - mask non-matché depuis > lost_after_s         → état LOST
           - mask LOST depuis > expire_after_lost_s        → purge
         """
-        if updated_uids is None:
-            updated_uids = set()
-        if detected_frame_ts is None:
-            detected_frame_ts = ts   # fallback
-        expired: List[Mask] = []
-        expire_after_lost_s = self.cfg.expire_after_lost_s
-        for mask in list(self._masks.values()):
-            is_matched_this_tick = mask.uid in updated_uids
+        with self._lock:
+            if updated_uids is None:
+                updated_uids = set()
+            if detected_frame_ts is None:
+                detected_frame_ts = ts   # fallback
+            expired: List[Mask] = []
+            expire_after_lost_s = self.cfg.expire_after_lost_s
+            for mask in list(self._masks.values()):
+                is_matched_this_tick = mask.uid in updated_uids
 
-            if not is_matched_this_tick:
-                # Transition vers LOST si hors-vue depuis trop longtemps
-                if mask.state in (MaskState.PENDING, MaskState.CONFIRMED):
-                    if (ts - mask.last_seen_ts) >= mask.lost_after_s:
-                        mask.transition("missing", ts, detected_frame_ts=detected_frame_ts)
-                        bench.count("registry_lost_total")
+                if not is_matched_this_tick:
+                    # Transition vers LOST si hors-vue depuis trop longtemps
+                    if mask.state in (MaskState.PENDING, MaskState.CONFIRMED):
+                        if (ts - mask.last_seen_ts) >= mask.lost_after_s:
+                            mask.transition("missing", ts, detected_frame_ts=detected_frame_ts)
+                            bench.count("registry_lost_total")
 
-            # Purge des LOST trop vieux (qu'ils aient été ré-évalués ce tick ou non)
-            if mask.state == MaskState.LOST and mask.lost_since_ts is not None:
-                if (ts - mask.lost_since_ts) >= expire_after_lost_s:
-                    expired.append(mask)
-                    del self._masks[mask.uid]
-                    bench.count("registry_expire_total")
-                    bench.emit_lifecycle(LifecycleEvent.EXPIRED, mask, reason="ttl_expired")
-        # L3.2 — gauges états courants (fin de boucle, après toutes transitions)
-        confirmed = sum(1 for m in self._masks.values() if m.state == MaskState.CONFIRMED)
-        pending   = sum(1 for m in self._masks.values() if m.state == MaskState.PENDING)
-        lost      = sum(1 for m in self._masks.values() if m.state == MaskState.LOST)
-        bench.gauge("registry_confirmed", confirmed)
-        bench.gauge("registry_pending",   pending)
-        bench.gauge("registry_lost",      lost)
-        return expired
+                # Purge des LOST trop vieux (qu'ils aient été ré-évalués ce tick ou non)
+                if mask.state == MaskState.LOST and mask.lost_since_ts is not None:
+                    if (ts - mask.lost_since_ts) >= expire_after_lost_s:
+                        expired.append(mask)
+                        del self._masks[mask.uid]
+                        bench.count("registry_expire_total")
+                        bench.emit_lifecycle(LifecycleEvent.EXPIRED, mask, reason="ttl_expired")
+            # L3.2 — gauges états courants (fin de boucle, après toutes transitions)
+            confirmed = sum(1 for m in self._masks.values() if m.state == MaskState.CONFIRMED)
+            pending   = sum(1 for m in self._masks.values() if m.state == MaskState.PENDING)
+            lost      = sum(1 for m in self._masks.values() if m.state == MaskState.LOST)
+            bench.gauge("registry_confirmed", confirmed)
+            bench.gauge("registry_pending",   pending)
+            bench.gauge("registry_lost",      lost)
+            return expired
+
+    def force_lost(self, uid, ts, reason="forced"):
+        """3-2c : transition LOST synchrone forcée (RC-bypass-immortel).
+        Réutilise le chemin transition("missing", ...) — aucune sémantique d'état nouvelle."""
+        with self._lock:
+            mask = self._masks.get(uid)
+            if mask is None:
+                return False
+            if mask.state in (MaskState.PENDING, MaskState.CONFIRMED):
+                mask.transition("missing", ts, mask.last_seen_frame_ts , reason=reason)
+                bench.count("registry_force_lost_total")
+                return True
+            return False
 
     # ── interne ───────────────────────────────────────────
     def _evict_one(self) -> None:

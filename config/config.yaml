@@ -30,11 +30,15 @@ detect:
     scale: 2.0 # Facteur de downscale de la frame (detect.py › detect_plates / _build_params)
   fast:
     enabled: true # Active le FastTracker (thread parallèle de suivi inter-frames ) — (main.py › bootstrap).
+    template_refresh_ms: 350 # RC-NCC-age : âge max (ms) avant re-capture.
+    ncc_refresh_gate: 0.35 # Seuil NCC mini pour rafraîchir le template. Indépendant de ncc_v_gate (suivi).
     max_stale_frames: 15 # Nbr de frames consécutives où le tracking NCC échoue avant d'émettre rect=None  — (fast_track_thread.py › _worker).
     ncc_threshold: 0.4 # Seuil NCC mini pour valider un match template→ROI — (fast_track_thread.py › _ncc_on_roi via detect.py › ncc_match).
     event_timeout_s: 0.5 # Timeout max (s) d'attente d'une nouvelle frame dans le worker — (fast_track_thread.py › _worker)..
     max_v_px_per_s: 2000.0 # Vélocité max (px/s) pour clamp de vx_f/vy_f — (fast_track_thread.py › _worker phase NCC).
     ncc_v_gate: 0.55 # Seuil NCC mini pour accepter une velocie fast (vx_f/vy_f).  En dessous: velocie rejetee, on garde l'ancienne valeur .
+    drift_sync_threshold_px: 20.0 # re-sync template si drift OF > seuil au skip
+    bypass_streak_max: 2 # LOST forcé au-delà de N bypass consécutifs
   hsv:
     white_core: # Seuils HSV du blanc "strict" (cœur du cartouche) — Zone haute luminance, saturation très basse.
       lower: [0, 0, 200]
@@ -218,7 +222,7 @@ debug:
       path: logs/json/bench_detections.jsonl
 
     frame_dumper:
-      enabled: true
+      enabled: false
       path: "logs/frames"
       jpeg_quality: 75 # configurable
       tail_frames: 2 # 0 (couvertes) | 2 (étendu)

@@ -13,6 +13,7 @@ class Box:
     h: int
     scores: dict = field(default_factory=dict)
     template: Optional[np.ndarray] = field(default=None, repr=False)
+    template_capture_ts: float = 0.0
 
     @property
     def rect(self):

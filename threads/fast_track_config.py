@@ -16,6 +16,8 @@ class FastTrackConfig:
     # NCC / ROI
     ncc_threshold: float = field(default_factory=lambda: cfg.get("detect.fast.ncc_threshold"))
     # Stale tracking
+    template_refresh_ms: float = field(default_factory=lambda: cfg.get("detect.fast.template_refresh_ms"))
+    ncc_refresh_gate: float = field(default_factory=lambda: cfg.get("detect.fast.ncc_refresh_gate"))
     max_stale_frames: int = field(default_factory=lambda: cfg.get("detect.fast.max_stale_frames"))
     # Worker loop
     event_timeout_s: float = field(default_factory=lambda: cfg.get("detect.fast.event_timeout_s"))
@@ -27,6 +29,8 @@ class FastTrackConfig:
 
     max_v_px_per_s: float = field(default_factory=lambda: cfg.get("detect.fast.max_v_px_per_s"))
     ncc_v_gate: float = field(default_factory=lambda: cfg.get("detect.fast.ncc_v_gate"))
+    drift_sync_threshold_px: float = field(default_factory=lambda: cfg.get("detect.fast.drift_sync_threshold_px"))
+    bypass_streak_max: int = field(default_factory=lambda: cfg.get("detect.fast.bypass_streak_max"))
 
     def __post_init__(self):
         # Bornes adaptive_margin cohérentes
@@ -67,4 +71,14 @@ class FastTrackConfig:
             raise ValueError(
                 f"FastTrackConfig: screen_w/h invalides "
                 f"({self.screen_w}×{self.screen_h})"
+            )
+        if self.drift_sync_threshold_px <= 0:
+            raise ValueError(
+                f"FastTrackConfig: drift_sync_threshold_px doit être > 0 "
+                f"(reçu {self.drift_sync_threshold_px})"
+            )
+        if self.bypass_streak_max < 0:
+            raise ValueError(
+                f"FastTrackConfig: bypass_streak_max doit être >= 0 "
+                f"(reçu {self.bypass_streak_max})"
             )

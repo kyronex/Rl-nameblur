@@ -27,7 +27,7 @@ class MaskKinematics:
     vy_f:         float = 0.0
     last_fast_ts: float = 0.0
 
-@dataclass( slots=True)
+@dataclass(slots=True)
 class FastMaskView:
     """
     Évolution du contrat fast :
@@ -46,7 +46,7 @@ class FastMaskView:
     frame_id:           int            = -1
     fast_kin:  Optional[MaskKinematics] = None
     current_rect: Optional[tuple] = None
-
+    template_capture_ts: float         = 0.0
 
     # -- proprietes compat lecture: .vx_f/.vy_f/.last_fast_ts delegues a fast_kin --
     @property
@@ -91,6 +91,7 @@ class Mask:
     # --- Cinématique fast ---
     confidence:         float          = 0.0
     template:           Optional[np.ndarray] = None
+    template_capture_ts: float         = 0.0
     fast_miss_count:    int            = 0
     fast_kin: MaskKinematics = field(default_factory=lambda: MaskKinematics())
     scores:             dict           = field(default_factory=dict)
@@ -123,7 +124,7 @@ class Mask:
         if self.created_ts == 0.0:
             self.created_ts = self.last_detected_ts
 
-    def transition(self, event: str, ts: float, detected_frame_ts: float) -> MaskState:
+    def transition(self, event: str, ts: float, detected_frame_ts: float ,reason: str = "unknown") -> MaskState:
         """Fait progresser l'état du mask en fonction d'un événement.
             `last_seen_ts` est rafraîchi exclusivement sur `event="matched"` toute sonde mesurant l'âge du dernier match doit lire `last_seen_ts`.
             Séparation stricte des deux bases de temps :
@@ -174,6 +175,7 @@ class Mask:
             frame_id=self.frame_id,
             rect=self.rect,
             template=self.template,
+            template_capture_ts=self.template_capture_ts,
             last_detected_ts=self.last_detected_ts,
             vx=self.vx,
             vy=self.vy,
