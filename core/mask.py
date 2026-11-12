@@ -8,6 +8,7 @@ import numpy as np
 from core.box import Box
 from bench.bench     import bench
 from bench.lifecycle import LifecycleEvent
+from core.signature import serialize_signature
 
 
 class MaskState(Enum):
@@ -43,10 +44,22 @@ class FastMaskView:
     vh:               float
     state:            MaskState
     confidence:       float
+    created_frame_id:           int            = -1
     frame_id:           int            = -1
     fast_kin:  Optional[MaskKinematics] = None
     current_rect: Optional[tuple] = None
     template_capture_ts: float         = 0.0
+    signature:          Optional[dict] = None
+
+    last_slow_ts:        float          = 0.0
+    last_source:         str            = "unknown"
+    total_matches_cumul: int            = 0
+    frames_matched:      int            = 0
+    fast_miss_count:     int            = 0
+    created_ts:          float          = 0.0
+    lost_since_ts:       Optional[float] = None
+    scores:              dict           = field(default_factory=dict)
+    hash_history:        list           = field(default_factory=list)
 
     # -- proprietes compat lecture: .vx_f/.vy_f/.last_fast_ts delegues a fast_kin --
     @property
@@ -59,7 +72,7 @@ class FastMaskView:
     def last_fast_ts(self) -> float:
         return self.fast_kin.last_fast_ts if self.fast_kin is not None else 0.0
 
-def _serialize_scores(scores: dict) -> dict:
+def serialize_scores(scores: dict) -> dict:
     """Sérialise le dict scores (hétérogène) pour export/log."""
     out = {}
     for k, v in scores.items():
@@ -78,6 +91,7 @@ class Mask:
     rect:               tuple   # (x, y, w, h)
     last_detected_rect: tuple
     last_detected_ts:   float
+    created_frame_id:           int            = -1
     frame_id:           int            = -1
     last_slow_ts:       float          = 0.0
     last_source:        str            = "new"
@@ -92,6 +106,7 @@ class Mask:
     confidence:         float          = 0.0
     template:           Optional[np.ndarray] = None
     template_capture_ts: float         = 0.0
+    signature:          Optional[dict] = None
     fast_miss_count:    int            = 0
     fast_kin: MaskKinematics = field(default_factory=lambda: MaskKinematics())
     scores:             dict           = field(default_factory=dict)
@@ -173,6 +188,7 @@ class Mask:
         return FastMaskView(
             uid=self.uid,
             frame_id=self.frame_id,
+            created_frame_id=self.created_frame_id,
             rect=self.rect,
             template=self.template,
             template_capture_ts=self.template_capture_ts,
@@ -184,7 +200,17 @@ class Mask:
             state=self.state,
             confidence=self.confidence,
             fast_kin=self.fast_kin,
-            current_rect=self.rect
+            current_rect=self.rect,
+            signature=self.signature,
+            last_slow_ts=self.last_slow_ts,
+            last_source=self.last_source,
+            total_matches_cumul=self.total_matches_cumul,
+            frames_matched=self.frames_matched,
+            fast_miss_count=self.fast_miss_count,
+            created_ts=self.created_ts,
+            lost_since_ts=self.lost_since_ts,
+            scores=dict(self.scores),
+            hash_history=list(self.hash_history),
         )
 
     def to_dict(self) -> dict:
@@ -206,11 +232,12 @@ class Mask:
             "vh":                round(self.vh, 2),
             "confidence":        round(self.confidence, 4),
             "fast_miss_count":   self.fast_miss_count,
-            "scores":            _serialize_scores(self.scores),
+            "scores":            serialize_scores(self.scores),
             "state":             self.state.name,
             "frames_matched":    self.frames_matched,
             "total_matches_cumul":  self.total_matches_cumul,
             "last_seen_ts":      round(self.last_seen_ts, 4),
             "created_ts":        round(self.created_ts, 4),
             "lost_since_ts":     round(self.lost_since_ts, 4) if self.lost_since_ts is not None else None,
+            **serialize_signature(self.signature),
         }

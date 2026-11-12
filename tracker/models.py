@@ -121,4 +121,5 @@ class Detection:
     confidence: float = 1.0
     template: Optional[np.ndarray] = None
     scores: dict = field(default_factory=dict)
+    signature: Optional[dict] = None
     frame_id: int = -1

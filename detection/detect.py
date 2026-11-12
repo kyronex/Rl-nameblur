@@ -7,6 +7,7 @@ from detection.tools import write_circles , write_rects , get_color
 from detection.mask import compute_white_mask, compute_sobel_interior_unified, refine_and_merge ,saturation_variance_mask
 from detection.boxes import process_channel
 from core.box import Box
+from core.signature import compute_signature
 from bench import bench
 
 log = logging.getLogger("detection.detect")
@@ -173,9 +174,11 @@ def _run_pipeline(frame, scale):
         y1 = min(H_full, y + h)
         if x1 > x0 and y1 > y0:
             template = gray_full[y0:y1, x0:x1].copy()
+            crop_color = frame[y0:y1, x0:x1]
         else:
             template = None
-        plates.append(Box(x, y, w, h, scores=dict(b.scores), template=template))
+            crop_color = None
+        plates.append(Box(x, y, w, h, scores=dict(b.scores), template=template,signature=compute_signature(template, b.rect, source="slow", crop_color=crop_color)))
     return plates
 
 # ═══════════════════════════════════════════════════════

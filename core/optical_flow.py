@@ -9,6 +9,7 @@ _LK_PARAMS = dict(
     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
 )
 
+#TDOO: _ROI_PAD adaptatif (aligné sur la logique NCC) Prioritaire si pertes de mask observez en boost/replay rapide — mesurable via F_of_good_points_pct déjà en place
 _ROI_PAD = 40
 
 _GRID_N = 7  # nb de points par axe (A-1, calage)

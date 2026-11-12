@@ -14,6 +14,7 @@ class Box:
     scores: dict = field(default_factory=dict)
     template: Optional[np.ndarray] = field(default=None, repr=False)
     template_capture_ts: float = 0.0
+    signature: Optional[dict] = field(default=None, repr=False)
 
     @property
     def rect(self):
@@ -31,6 +32,8 @@ class Box:
             h=h if h is not None else self.h,
             scores=dict(self.scores),
             template=self.template,
+            template_capture_ts=self.template_capture_ts,
+            signature=self.signature,
         )
 
     @staticmethod

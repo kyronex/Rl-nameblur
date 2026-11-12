@@ -7,7 +7,7 @@ import logging
 import numpy as np
 
 from typing import List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from config import cfg as _global_cfg
 from core.mask import FastMaskView
 from detection.detect import ncc_match
@@ -34,6 +34,7 @@ class _FastLifecyclePayload:
         self.state              = view.state
         self.rect               = view.rect
         self.confidence         = view.confidence
+        self.created_frame_id   = view.created_frame_id
         self.frame_id           = view.frame_id
         self.total_matches_cumul = 0   # fast thread doesn't track cumul
         self.frames_matched     = 0    # fast thread doesn't track per-frame
@@ -53,6 +54,7 @@ class FastTrackThread:
         self._cfg_version = _global_cfg.version
         # Frame courante (input)
         self._latest_frame = None
+        self._latest_frame_id: int = -1
         self._latest_frame_ts = 0.0
         self._latest_views: List[FastMaskView] = []
         self._frame_lock = threading.Lock()
@@ -106,12 +108,13 @@ class FastTrackThread:
 
     # ──────────── Interface ────────────
 
-    def give_frame_and_views(self, frame, views: List[FastMaskView], frame_ts: float):
+    def give_frame_and_views(self, frame, views: List[FastMaskView], frame_ts: float, frame_id: int = -1):
         with self._frame_lock:
             self._latest_frame = frame
             #self._latest_frame = frame.copy()
-            self._latest_frame_ts = frame_ts
             self._latest_views = list(views)
+            self._latest_frame_ts = frame_ts
+            self._latest_frame_id = frame_id
         bench.count("F_frame_deposited_total")
         # A5-1 + R2-B: reset_from_snapshot called BEFORE worker triggers
         self.reset_from_snapshot(views)
@@ -190,6 +193,7 @@ class FastTrackThread:
                 with self._frame_lock:
                     frame = self._latest_frame
                     frame_ts = self._latest_frame_ts
+                    frame_id = self._latest_frame_id
                     views = self._latest_views
                 if frame is None or not views:
                     self._prev_gray = None
@@ -212,7 +216,7 @@ class FastTrackThread:
                         results = []
                         for v in views:
                             self._last_known[v.uid] = {"rect": v.rect, "stale": 0, "ts": frame_ts}
-                            results.append((v.uid, v.rect, 1.0,0.0,0.0))
+                            results.append((v.uid, v.rect, 1.0, 0.0, 0.0,replace(v, current_rect=v.rect, confidence=1.0,last_source="fast",frame_id=frame_id)))
                         with self._results_lock:
                             self._results = results
                             self._results_ts = frame_ts
@@ -338,7 +342,7 @@ class FastTrackThread:
                                 last_state["stale"] = 0
                                 last_state["bypass_streak"] = 0
                                 last_state["ts"]   = frame_ts
-                                results.append((v.uid, ncc_rect, score,last_state.get("vx_f", 0.0),last_state.get("vy_f", 0.0)))
+                                results.append((v.uid, ncc_rect, score,last_state.get("vx_f", 0.0),last_state.get("vy_f", 0.0),replace(v, current_rect=ncc_rect, confidence=score,last_source="fast",frame_id=frame_id)))
                                 v.current_rect = ncc_rect
                                 # ── Lifecycle: NCC a confirmé le mask (source=fast) ──
                                 bench.emit_lifecycle(LifecycleEvent.CONFIRMED, _FastLifecyclePayload(v, source="fast"), reason="ncc_fast")
@@ -359,7 +363,7 @@ class FastTrackThread:
                                 last_state["rect"] = candidate_rect
                                 last_state["stale"] = 0
                                 last_state["ts"]    = frame_ts
-                                results.append((v.uid, candidate_rect, 1.0,last_state.get("vx_f", 0.0), last_state.get("vy_f", 0.0)))
+                                results.append((v.uid, candidate_rect, 1.0,last_state.get("vx_f", 0.0), last_state.get("vy_f", 0.0),replace(v, current_rect=candidate_rect, confidence=1.0,last_source="fast",frame_id=frame_id)))
                                 v.current_rect = candidate_rect
                                 bench.emit_lifecycle(LifecycleEvent.CONFIRMED, _FastLifecyclePayload(v, source="fast"), reason="of_bypass")
                             else:

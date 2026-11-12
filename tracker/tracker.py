@@ -63,6 +63,7 @@ class Tracker:
                     confidence=d.confidence,
                     template=d.template,
                     scores=d.scores,
+                    signature=d.signature,
                     frame_id=d.frame_id
                 ))
             for det in det_objects:
@@ -84,6 +85,9 @@ class Tracker:
                     mask.template_capture_ts = detected_frame_ts
                 if det.scores:
                     mask.scores = det.scores
+                if det.signature is not None:
+                    mask.signature = det.signature
+                mask.frame_id = det.frame_id
                 bench.emit_lifecycle(LifecycleEvent.DETECTED, mask, reason="slow_detections")
                 self.registry.mark_matched(mask.uid, ts=ts,detected_frame_ts=detected_frame_ts,source="slow")
                 matched_uids.add(mask.uid)
@@ -91,13 +95,14 @@ class Tracker:
             created_uids = set()
             for det_idx in unmatched_dets:
                 det = det_objects[det_idx]
-                mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts,frame_id=det.frame_id)
+                mask = self.registry.create(det.rect, ts, source=det.source,detected_frame_ts=detected_frame_ts,frame_id=det.frame_id,created_frame_id=det.frame_id)
                 if det.phash is not None:
                     mask.hash_history.append(det.phash)
                 mask.confidence = det.confidence
                 mask.template = det.template
                 mask.template_capture_ts = detected_frame_ts
                 mask.scores = det.scores
+                mask.signature = det.signature
                 bench.emit_lifecycle(LifecycleEvent.CREATED, mask, reason=None)
                 created_uids.add(mask.uid)
             return matched_uids, created_uids

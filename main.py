@@ -27,6 +27,7 @@ from threads                 import CaptureThread, DetectThread, FastTrackThread
 from core.mask_manager       import draw_debug, pad_rect
 from core.blur               import apply_blur
 from core.mask               import MaskState
+from core.bank               import Bank
 from tracker.tracker         import Tracker
 from tracker.models          import TrackerConfig , Detection
 from bench.frame_dumper      import FrameDumperWriter
@@ -82,6 +83,8 @@ if fast_enabled:
     fast_tracker = FastTrackThread(registry=tracker.registry)
     fast_tracker.start()
 
+bank = Bank()
+
 with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS) as vcam:
     log.info(f"✅ Caméra virtuelle prête → {vcam.device}")
     debug_draw = cfg.get("debug.overlay.enabled", False)
@@ -96,6 +99,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
 
     try:
         confirmed_masks       = []
+        fast_views            = []
         last_detect_version   = 0
         last_fast_version     = 0
         last_frame_id         = 0
@@ -124,10 +128,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         last_frame_id = frame_id
                         detector.give_frame(frame, frame_ts)
                         if fast_enabled :
-                            snapshot = [m for m in tracker.all_masks() if m.state == MaskState.CONFIRMED]
+                            snapshot = [m for m in tracker.all_masks() if m.state == MaskState.CONFIRMED or m.state == MaskState.PENDING]
                             if snapshot:
                                 views = [m.to_fast_view() for m in snapshot]
-                                fast_tracker.give_frame_and_views(frame, views, frame_ts)
+                                fast_tracker.give_frame_and_views(frame, views, frame_ts, frame_id)
                 updated_uids = set()
                 # ── 3. Slow detect ──
                 with bench.timer("main_slow_poll_ms"):
@@ -145,6 +149,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                             confidence=box.confidence,
                             template=box.template,
                             scores=box.scores,
+                            signature=box.signature,
                             frame_id=frame_id,
                         ) for box in new_plates]
                         matched, created = tracker.apply_slow_detections(frame, dets, detected_frame_ts)
@@ -155,9 +160,10 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                         fast_version, fast_results, fast_ts = fast_tracker.get_results()
                     if fast_version > last_fast_version:
                         last_fast_version = fast_version
+                        fast_views = [t[5] for t in fast_results]
                         uid_to_rect = {
                             uid: (pad_rect(*new_rect, SCREEN_WIDTH, SCREEN_HEIGHT), vx_f, vy_f)
-                            for uid, new_rect, _score, vx_f, vy_f in fast_results
+                            for uid, new_rect, _score, vx_f, vy_f, _view in fast_results
                             if new_rect is not None
                         }
                         if uid_to_rect:
@@ -166,6 +172,18 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                 # ── 4. Tick (predict + TTL + purge) ──
                 with bench.timer("main_predict_ms"):
                     confirmed_masks = tracker.tick(now, updated_uids, last_detected_frame_ts)
+
+                # ── 4bis. Bank (observation passive) ──
+                bank.add_observation(
+                    source="fast" if fast_enabled and not slow_updated else "slow",
+                    frame_id=frame_id,
+                    frame_ts=frame_ts,
+                    masks=tracker.registry.masks,
+                    views=fast_views,
+                )
+                bank.flush_if_needed(frame_id)
+                fast_views = []
+
                 # ── 5. Blur / debug draw ──
                 with bench.timer("main_prepare_ms"):
                     blur_zones = [(m.rect[0], m.rect[1], m.rect[2], m.rect[3]) for m in confirmed_masks]
@@ -215,7 +233,7 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
                     ts_str = datetime.now().strftime("%H:%M:%S")
 
                     log.info(
-                        f"[{ts_str}] ⚡ {fps:.1f} FPS | "
+                        f"[{ts_str}] ⚡ {fps:.1f} FPS | fid={frame_id} |"
                         f"masks C={n_confirmed} P={n_pending} L={n_lost} | "
                         f"{motion_tag} | "
                         f"{mode} {fast_tag}"
@@ -235,4 +253,5 @@ with pyvirtualcam.Camera(width=SCREEN_WIDTH, height=SCREEN_HEIGHT, fps=VCAM_FPS)
             fast_tracker.stop()
         detector.stop()
         capturer.stop()
+        bank.stop()
         bench.shutdown()

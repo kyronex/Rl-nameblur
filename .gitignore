@@ -5,6 +5,7 @@ venv/
 debug_output/
 logs/backup
 logs/frames
+logs/json
 assets/video
 # ─────────────────────────────────────────
 # PYTHON

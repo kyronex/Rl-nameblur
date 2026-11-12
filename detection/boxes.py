@@ -23,10 +23,8 @@ class ScoreRecipe:
     w_s_hreg: Final[float] = 1.5   # cheap["s_hreg"]
     w_s_pf:   Final[float] = 0.8   # heavy["s_pf"]
     w_s_cc:   Final[float] = 1.0   # cheap["s_cc"]
-
     # ── Normalizer ──────────────────────────────────────────
     _normalizer: Final[float] = 5.3   # / 5.3
-
     # ── False-positive penalties ─────────────────────────────
     fp_ar_narrow_no_trans:          Final[float] = 0.10   # ar<2.0, no trans
     fp_density_too_high:           Final[float] = 0.20   # density_raw>0.85
@@ -905,7 +903,6 @@ def process_channel(masked,rgb, mask_white, h_img, params, kernels):
     expanded = _expand_plates(merge_ar,rgb)
     banded = _filter_horizontal_bands(expanded, mask_white, params)
     aligned = _filter_horizontal_alignment(banded, mask_white, params)
-    plates = _filter_perspective_gradient(aligned, mask_white, params)
-    for box in plates:
-        box.template = _make_template(box.rect, rgb)
+    gradiented = _filter_perspective_gradient(aligned, mask_white, params)
+    plates = _filter_geometry(gradiented, masked, params)
     return plates

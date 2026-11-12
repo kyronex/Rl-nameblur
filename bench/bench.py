@@ -533,7 +533,7 @@ class BenchRegistry:
     # ─────────────────────────────────────────────────────────────
 
     def _maybe_start_writers(self):
-        """Démarre les 3 writers (agg / frame / fast) selon config R6."""
+        """Démarre les writers (agg / frame / fast / events / detections) selon config."""
         if self._writers:
             return
         if not cfg.get("debug.bench.writer.enabled", False):
